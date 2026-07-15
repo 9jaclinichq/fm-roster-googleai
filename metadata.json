@@ -1,0 +1,6 @@
+{
+  "name": "FM Roster",
+  "description": "A lightweight monthly workforce information collection system for the Department of Family Medicine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
