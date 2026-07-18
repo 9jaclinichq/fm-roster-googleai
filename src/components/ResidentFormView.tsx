@@ -96,7 +96,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
         }
       } catch (err) {
         console.warn('Error fetching resident form details:', err);
-        setErrorMessage('Failed to load roster collection details.');
+        setErrorMessage('Failed to load collection details.');
       } finally {
         setIsLoading(false);
       }
@@ -272,13 +272,13 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
 
       const result = await databaseService.submitRoster(submissionPayload);
       setSubmission(result);
-      setSuccessMessage('Roster information submitted successfully!');
+      setSuccessMessage('Information submitted successfully!');
       
       // Scroll to top to see success message
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       console.warn(err);
-      setErrorMessage('Failed to submit roster information. Please try again.');
+      setErrorMessage('Failed to submit information. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -299,7 +299,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
         <AlertTriangle size={40} className="text-amber-500 mx-auto mb-3" />
         <h3 className="text-lg font-bold text-slate-900">No Active Collection Found</h3>
         <p className="text-sm text-slate-500 mt-2">
-          The Department of Family Medicine does not have an active monthly roster collection open right now.
+          The Department of Family Medicine does not have an active monthly collection open right now.
           Please check back when your Chief Resident opens the collection.
         </p>
         <button
@@ -327,7 +327,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
           {submission ? (
             <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs px-3 py-1.5 rounded-full font-semibold flex items-center space-x-1 shrink-0">
               <CheckCircle size={13} />
-              <span>Roster Submitted</span>
+              <span>Info Submitted</span>
             </div>
           ) : (
             <div className="bg-amber-50 text-amber-800 border border-amber-200 text-xs px-3 py-1.5 rounded-full font-semibold flex items-center space-x-1 shrink-0 animate-pulse">
@@ -434,7 +434,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
                 placeholder="e.g. Community Health, Pediatrics"
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition disabled:opacity-60"
               />
-              <p className="text-[10px] text-slate-500">Your upcoming deployment posting as assigned in the forecast roster.</p>
+              <p className="text-[10px] text-slate-500">Your upcoming deployment posting as assigned in the forecast.</p>
             </div>
           </div>
 
@@ -703,7 +703,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
                     <span>Saving...</span>
                   </>
                 ) : (
-                  <span>{submission ? 'Update Submission' : 'Submit Roster Info'}</span>
+                  <span>{submission ? 'Update Submission' : 'Submit Info'}</span>
                 )}
               </button>
             )}

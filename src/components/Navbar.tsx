@@ -30,7 +30,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               FM
             </div>
             <div>
-              <h1 className="font-bold text-slate-900 tracking-tight text-base sm:text-lg leading-tight">Roster <span className="text-blue-600 font-semibold">v0.1</span></h1>
+              <h1 className="font-bold text-slate-900 tracking-tight text-base sm:text-lg leading-tight">Residents <span className="text-blue-600 font-semibold">Dashboard</span></h1>
               <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Department of Family Medicine</p>
             </div>
           </div>

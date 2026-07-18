@@ -187,7 +187,7 @@ function MainAppContent() {
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400 font-medium shrink-0">
         <div className="max-w-7xl mx-auto px-4">
           <p>&copy; {new Date().getFullYear()} Department of Family Medicine. All rights reserved.</p>
-          <p className="mt-1 text-[10px] text-slate-300">FM Roster Portal &bull; Production Version 0.1</p>
+          <p className="mt-1 text-[10px] text-slate-300">FM Residents Dashboard &bull; Production Version 0.1</p>
         </div>
       </footer>
     </div>

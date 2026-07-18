@@ -10,7 +10,7 @@ export const supabase = supabaseUrl && supabaseAnonKey
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
 
-console.log(`[FM Roster] Live Supabase service initialized. Connected: ${!!supabase}`);
+console.log(`[FM Residents Dashboard] Live Supabase service initialized. Connected: ${!!supabase}`);
 
 function checkSupabase() {
   if (!supabase) {

@@ -170,7 +170,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
     const link = document.createElement('a');
     link.href = url;
     const sanitizedTitle = collection.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-    link.setAttribute('download', `fm_roster_${sanitizedTitle}.csv`);
+    link.setAttribute('download', `fm_residents_dashboard_${sanitizedTitle}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -503,7 +503,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
         {/* KPI: Deadline */}
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
-          <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Roster Deadline</span>
+          <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Submission Deadline</span>
           {collection ? (
             <div className="mt-2">
               <div className={`font-extrabold text-sm leading-tight truncate ${isPastDeadline ? 'text-rose-600' : 'text-slate-900'}`}>
@@ -732,7 +732,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-6 space-y-4">
             <div className="pb-3 border-b border-slate-100">
               <h3 className="font-bold text-slate-800 text-sm md:text-base">Pending Submissions</h3>
-              <p className="text-xs text-slate-500">Active residents who have not yet submitted their roster information for the current collection.</p>
+              <p className="text-xs text-slate-500">Active residents who have not yet submitted their information for the current collection.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

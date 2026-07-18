@@ -61,7 +61,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
           </div>
           <h2 className="text-xl font-bold tracking-tight">Chief Resident Portal</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            Department administrative login & roster dashboard
+            Department administrative login & residents dashboard
           </p>
         </div>
 
@@ -119,7 +119,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
             onClick={onNavigateToResident}
             className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
           >
-            Go back to Resident Roster Submission form &rarr;
+            Go back to Resident Dashboard &rarr;
           </button>
         </div>
       </div>

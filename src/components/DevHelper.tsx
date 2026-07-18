@@ -51,7 +51,7 @@ export const DevHelper: React.FC<DevHelperProps> = ({ onSelectResident, onSelect
               <Sparkles size={18} />
             </div>
             <div>
-              <h3 className="font-bold text-amber-900 text-sm md:text-base">FM Roster Explorer (Live Supabase)</h3>
+              <h3 className="font-bold text-amber-900 text-sm md:text-base">FM Residents Dashboard Explorer (Live Supabase)</h3>
               <p className="text-xs text-amber-700">
                 Reveal the randomly generated resident codes and admin keys stored in the database.
               </p>
