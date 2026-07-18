@@ -11,7 +11,6 @@
 -- --------------------------------------------------
 -- 1. CLEANUP (Optional - warning: drops existing tables for clean slate)
 -- --------------------------------------------------
-DROP TRIGGER IF EXISTS update_submissions_updated_at ON submissions CASCADE;
 DROP FUNCTION IF EXISTS update_updated_at_column CASCADE;
 DROP TABLE IF EXISTS settings CASCADE;
 DROP TABLE IF EXISTS submissions CASCADE;
