@@ -33,9 +33,16 @@ interface ChiefDashboardViewProps {
 }
 
 export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout }) => {
+  // The verified admin code, retained in localStorage at login time
+  // (App.tsx). It authorizes the chief_* RPCs, which re-verify it
+  // server-side on every call — it is never trusted blindly. Kept in state
+  // (not a one-shot ref) so it stays current if the code is changed mid-session.
+  const [adminCode, setAdminCode] = useState<string | null>(() => localStorage.getItem('fm_admin_code'));
+
   const [collection, setCollection] = useState<Collection | null>(null);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [workforce, setWorkforce] = useState<WorkforceMember[]>([]);
+  const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'settings'>('submissions');
@@ -88,7 +95,6 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
     try {
       // 1. Get settings
       const settings = await databaseService.getSettings();
-      setAdminAccessCodeValue(settings.admin_access_code);
 
       // 2. Get collections
       const collectionsList = await databaseService.getCollections();
@@ -96,7 +102,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
       const activeColl = collectionsList.find(c => c.id === settings.current_collection_id) || collectionsList[0] || null;
       setCollection(activeColl);
-      
+
       if (activeColl) {
         setChangeDeadlineValue(activeColl.deadline.substring(0, 16));
         // 3. Get submissions for active collection
@@ -106,9 +112,18 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         setSubmissions([]);
       }
 
-      // 4. Get workforce
+      // 4. Get workforce (codes are fetched separately via a privileged RPC)
       const wf = await databaseService.getWorkforce();
       setWorkforce(wf);
+
+      if (adminCode) {
+        try {
+          const codes = await databaseService.getWorkforceCodes(adminCode);
+          setResidentCodes(codes);
+        } catch (codeErr) {
+          console.warn('Failed to load resident codes:', codeErr);
+        }
+      }
 
     } catch (err) {
       console.warn('Failed to load dashboard data:', err);
@@ -118,7 +133,13 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   };
 
   useEffect(() => {
+    if (!adminCode) {
+      // Session lost its verified admin code (e.g. storage cleared) — bounce back to login.
+      onLogout();
+      return;
+    }
     loadDashboardData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const triggerSuccess = (msg: string) => {
@@ -250,18 +271,28 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const handleUpdateAdminCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setAdminAccessCodeError('');
-    
+
+    if (!adminCode) {
+      setAdminAccessCodeError('Session expired. Please log in again.');
+      return;
+    }
+
     if (!adminAccessCodeValue || adminAccessCodeValue.length < 4) {
-      setAdminAccessCodeError('Admin code must be at least 4 characters.');
+      setAdminAccessCodeError('New admin code must be at least 4 characters.');
       return;
     }
 
     try {
-      await databaseService.updateSettings({ admin_access_code: adminAccessCodeValue });
+      await databaseService.updateAdminCode(adminCode, adminAccessCodeValue);
+      // Keep the stored session code in sync so subsequent privileged calls
+      // (reset code, add member, etc.) keep working without re-login.
+      localStorage.setItem('fm_admin_code', adminAccessCodeValue);
+      setAdminCode(adminAccessCodeValue);
+      setAdminAccessCodeValue('');
       triggerSuccess('Admin security access code updated.');
     } catch (err) {
       console.warn(err);
-      setAdminAccessCodeError('Failed to save admin code.');
+      setAdminAccessCodeError('Failed to save admin code. Double-check your session is still valid.');
     }
   };
 
@@ -278,11 +309,12 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
   // Workforce: Reset Resident Access Code
   const handleResetCode = async (memberId: string) => {
-    const randomCode = Math.floor(100000 + Math.random() * 900000).toString();
+    if (!adminCode) return;
     try {
-      const updated = await databaseService.resetResidentAccessCode(memberId, randomCode);
-      setWorkforce(prev => prev.map(w => w.id === memberId ? updated : w));
-      triggerSuccess(`Access code for "${updated.full_name}" reset to ${randomCode}.`);
+      const newCode = await databaseService.resetResidentAccessCode(adminCode, memberId);
+      setResidentCodes(prev => ({ ...prev, [memberId]: newCode }));
+      const member = workforce.find(w => w.id === memberId);
+      triggerSuccess(`Access code for "${member?.full_name || 'resident'}" reset to ${newCode}.`);
     } catch (err) {
       console.warn(err);
     }
@@ -293,22 +325,28 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
     e.preventDefault();
     setNewMemberError('');
 
+    if (!adminCode) {
+      setNewMemberError('Session expired. Please log in again.');
+      return;
+    }
+
     if (!newMemberName.trim()) {
       setNewMemberError('Full name is required.');
       return;
     }
 
     try {
-      const generatedCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const newMember = await databaseService.addWorkforceMember({
+      const newMember = await databaseService.addWorkforceMember(adminCode, {
         full_name: newMemberName.trim(),
         category: newMemberCategory,
-        resident_code: generatedCode,
       });
 
-      setWorkforce(prev => [...prev, newMember].sort((a,b) => a.full_name.localeCompare(b.full_name)));
+      setWorkforce(prev => [...prev, newMember].sort((a, b) => a.full_name.localeCompare(b.full_name)));
+      if (newMember.resident_code) {
+        setResidentCodes(prev => ({ ...prev, [newMember.id]: newMember.resident_code! }));
+      }
       setNewMemberName('');
-      triggerSuccess(`Added ${newMember.full_name} with Access Code: ${generatedCode}`);
+      triggerSuccess(`Added ${newMember.full_name} with Access Code: ${newMember.resident_code}`);
     } catch (err) {
       console.warn(err);
       setNewMemberError('Failed to add workforce member.');
@@ -753,7 +791,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                     <div className="bg-white border border-slate-200 rounded-lg p-2.5 flex items-center justify-between text-xs">
                       <div>
                         <span className="text-slate-400 font-medium">Access Code:</span>
-                        <div className="font-mono font-extrabold text-slate-800 tracking-wider mt-0.5">{member.resident_code}</div>
+                        <div className="font-mono font-extrabold text-slate-800 tracking-wider mt-0.5">{residentCodes[member.id] || '······'}</div>
                       </div>
                       <button
                         onClick={() => handleResetCode(member.id)}
@@ -799,7 +837,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                         <td className="px-4 py-3 text-slate-500">{member.category}</td>
                         <td className="px-4 py-3">
                           <span className="font-mono font-extrabold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
-                            {member.resident_code}
+                            {residentCodes[member.id] || '······'}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -1085,14 +1123,18 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
                 <form onSubmit={handleUpdateAdminCode} className="space-y-3 text-xs sm:text-sm">
                   <div className="space-y-1">
-                    <label htmlFor="change-admin-code" className="text-xs font-bold text-slate-700 uppercase">Change Admin Access Code</label>
+                    <label htmlFor="change-admin-code" className="text-xs font-bold text-slate-700 uppercase">Set New Admin Access Code</label>
                     <input
                       id="change-admin-code"
                       type="text"
+                      placeholder="Enter a new admin access code"
                       value={adminAccessCodeValue}
                       onChange={(e) => setAdminAccessCodeValue(e.target.value.trim())}
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
                     />
+                    <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
+                      For security, the current code is never displayed here. Entering a new one replaces it immediately.
+                    </p>
                   </div>
                   <button
                     type="submit"

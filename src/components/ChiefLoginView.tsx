@@ -3,7 +3,7 @@ import { databaseService } from '../lib/databaseService';
 import { ShieldAlert, AlertCircle, Key, RefreshCw } from 'lucide-react';
 
 interface ChiefLoginViewProps {
-  onLoginSuccess: () => void;
+  onLoginSuccess: (adminCode: string) => void;
   onNavigateToResident: () => void;
   presetCode?: string;
 }
@@ -35,11 +35,11 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
 
     setIsLoggingIn(true);
     try {
-      const settings = await databaseService.getSettings();
-      
-      if (settings.admin_access_code === adminCode) {
-        // Success
-        onLoginSuccess();
+      // Verified server-side — the admin_access_code column is never sent to the client.
+      const verified = await databaseService.verifyChiefLogin(adminCode);
+
+      if (verified) {
+        onLoginSuccess(adminCode);
       } else {
         setError('Incorrect Admin Access Code. Access Denied.');
       }

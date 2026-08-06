@@ -38,11 +38,11 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
     loadWorkforce();
   }, []);
 
-  // Update selection if pre-selected from DevHelper
+  // Update selection if pre-selected from DevHelper (code is left blank —
+  // resident codes are no longer readable by the client, see DevHelper.tsx)
   useEffect(() => {
     if (presetResident) {
       setSelectedId(presetResident.id);
-      setAccessCode(presetResident.resident_code);
       setError('');
     }
   }, [presetResident]);
@@ -75,13 +75,14 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
         return;
       }
 
-      // Check access code
-      if (selectedResident.resident_code === accessCode) {
-        // Success
+      // Verified server-side — the resident_code column is never sent to the client.
+      const verified = await databaseService.verifyResidentLogin(selectedResident.id, accessCode);
+
+      if (verified) {
         onLoginSuccess({
-          id: selectedResident.id,
-          name: selectedResident.full_name,
-          category: selectedResident.category,
+          id: verified.id,
+          name: verified.full_name,
+          category: verified.category,
         });
       } else {
         setError('Incorrect 6-digit Access Code. Please check and try again.');

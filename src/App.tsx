@@ -62,9 +62,12 @@ function MainAppContent() {
     navigate('/resident/login');
   };
 
-  const handleChiefLogin = () => {
+  const handleChiefLogin = (adminCode: string) => {
     setIsChiefAuthenticated(true);
     localStorage.setItem('fm_session_chief', 'true');
+    // Retained only to authorize the chief_* RPCs (workforce codes, admin
+    // code changes) — the server re-verifies it on every privileged call.
+    localStorage.setItem('fm_admin_code', adminCode);
     navigate('/chief/dashboard');
     // Clear preset
     setPresetAdminCode('');
@@ -73,6 +76,7 @@ function MainAppContent() {
   const handleChiefLogout = () => {
     setIsChiefAuthenticated(false);
     localStorage.removeItem('fm_session_chief');
+    localStorage.removeItem('fm_admin_code');
     navigate('/chief/login');
   };
 
@@ -100,11 +104,14 @@ function MainAppContent() {
         currentView={getCurrentViewName()}
       />
 
-      {/* Dev helper panels (Displays ONLY in local storage mode) */}
-      <DevHelper
-        onSelectResident={handleSelectResidentFromHelper}
-        onSelectAdmin={handleSelectAdminFromHelper}
-      />
+      {/* Dev helper panel — local development builds only. Never rendered
+          in a production/preview build, so it can't leak into a deployed site. */}
+      {import.meta.env.DEV && (
+        <DevHelper
+          onSelectResident={handleSelectResidentFromHelper}
+          onSelectAdmin={handleSelectAdminFromHelper}
+        />
+      )}
 
       {/* Main page canvas */}
       <main className="flex-grow pb-12">
