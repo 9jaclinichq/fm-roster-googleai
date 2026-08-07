@@ -184,3 +184,34 @@ export interface CaseReport {
   created_at: string;
   updated_at: string;
 }
+
+export interface ExamReadiness {
+  id: string;
+  workforce_id: string;
+  evidemy_completed_count: number;
+  evidemy_total_required: number;
+  physical_logbook_verified: boolean;
+  exam_fees_paid: boolean;
+  college_forms_submitted: boolean;
+  oral_practice_score: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScoringBreakdown {
+  diagnostic_reasoning: number; // 0-100
+  management: number; // 0-100
+  safety: number; // 0-100
+  communication: number; // 0-100
+}
+
+export interface VivaSimulation {
+  id: string;
+  workforce_id: string;
+  case_title: string;
+  category: string | null;
+  duration_seconds: number | null;
+  scoring_breakdown: ScoringBreakdown | Record<string, never>;
+  feedback_summary: string | null;
+  created_at: string;
+}

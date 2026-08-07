@@ -1,6 +1,6 @@
 import React from 'react';
 import { databaseService } from '../lib/databaseService';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic } from 'lucide-react';
 
 interface NavbarProps {
   currentResident: { id: string; name: string; category: string } | null;
@@ -14,18 +14,30 @@ interface NavbarProps {
   onNavigateToDissertation: () => void;
   onNavigateToCasebook: () => void;
   onNavigateToLibrary: () => void;
+  onNavigateToExamReadiness: () => void;
+  onNavigateToVivaSimulator: () => void;
   currentView:
     | 'resident'
     | 'resident-announcements'
     | 'resident-dissertation'
     | 'resident-casebook'
     | 'resident-library'
+    | 'resident-exam-readiness'
+    | 'resident-viva-simulator'
     | 'chief'
     | 'resident-login'
     | 'chief-login';
 }
 
-const RESIDENT_VIEWS = ['resident', 'resident-announcements', 'resident-dissertation', 'resident-casebook', 'resident-library'];
+const RESIDENT_VIEWS = [
+  'resident',
+  'resident-announcements',
+  'resident-dissertation',
+  'resident-casebook',
+  'resident-library',
+  'resident-exam-readiness',
+  'resident-viva-simulator',
+];
 
 export const Navbar: React.FC<NavbarProps> = ({
   currentResident,
@@ -39,6 +51,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigateToDissertation,
   onNavigateToCasebook,
   onNavigateToLibrary,
+  onNavigateToExamReadiness,
+  onNavigateToVivaSimulator,
   currentView
 }) => {
   return (
@@ -183,6 +197,28 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Library size={13} />
               <span>Library</span>
+            </button>
+            <button
+              onClick={onNavigateToExamReadiness}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
+                currentView === 'resident-exam-readiness'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Gauge size={13} />
+              <span>Exam Readiness</span>
+            </button>
+            <button
+              onClick={onNavigateToVivaSimulator}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
+                currentView === 'resident-viva-simulator'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Mic size={13} />
+              <span>Viva Simulator</span>
             </button>
           </div>
         )}

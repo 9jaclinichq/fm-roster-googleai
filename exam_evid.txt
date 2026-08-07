@@ -1,0 +1,26 @@
+Execute Day 4: Exam Readiness Scorecard, Mock Viva Orals, Evidemy Tracker & Pre-Launch Hardening
+
+1. DATABASE SCHEMA MIGRATION:
+   - Create `supabase/migrations/05_exam_readiness_and_orals.sql` containing:
+     a) `exam_readiness` table (id, workforce_id, evidemy_completed_count, evidemy_total_required, physical_logbook_verified, exam_fees_paid, college_forms_submitted, oral_practice_score, updated_at).
+     b) `viva_simulations` table (id, workforce_id, case_title, category, duration_seconds, scoring_breakdown [jsonb], feedback_summary, created_at).
+     c) Enable RLS policies and grant standard SELECT/INSERT/UPDATE permissions.
+
+2. EXAM READINESS SCORECARD UI (`src/components/ExamReadinessView.tsx`):
+   - Executive readiness dashboard calculating a consolidated percentage score based on:
+     * Proposal & Ethics status (from dissertations table).
+     * 15-Casebook completion rate (from case_reports table).
+     * Rotation postings & roster compliance.
+     * Evidemy module progress, fee payments, and physical logbook sign-offs.
+   - Dynamic alert indicators highlighting missing requirements (e.g., "Missing 3 Case Reports for Part 2 Exam Eligibility").
+
+3. MOCK VIVA ORAL EXAM SIMULATOR (`src/components/OralExamSimulatorView.tsx`):
+   - Interactive viva voce practice interface for Family Medicine Part II exams.
+   - Presents clinical vignettes with timed examiner questions, structured viva prompts, and scoring evaluations across Diagnostic Reasoning, Management, Safety, and Communication.
+
+4. APPLICATION INTEGRATION & NAVIGATION:
+   - Add database helper functions to `src/lib/databaseService.ts`.
+   - Update `App.tsx` and `Navbar.tsx` to include "Exam Readiness" and "Viva Simulator".
+   - Execute production build verification (`npm run build`).
+
+Run type checks (`npx tsc --noEmit`) when finished and report status.

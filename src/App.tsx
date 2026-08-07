@@ -8,6 +8,8 @@ import { AnnouncementBoardView } from './components/AnnouncementBoardView';
 import { DissertationAssistantView } from './components/DissertationAssistantView';
 import { KnowledgeLibraryView } from './components/KnowledgeLibraryView';
 import { CasebookBuilderView } from './components/CasebookBuilderView';
+import { ExamReadinessView } from './components/ExamReadinessView';
+import { OralExamSimulatorView } from './components/OralExamSimulatorView';
 import { ChiefLoginView } from './components/ChiefLoginView';
 import { ChiefDashboardView } from './components/ChiefDashboardView';
 import { WorkforceMember } from './types';
@@ -52,6 +54,8 @@ function MainAppContent() {
     if (path.startsWith('/resident/dissertation')) return 'resident-dissertation';
     if (path.startsWith('/resident/casebook')) return 'resident-casebook';
     if (path.startsWith('/resident/library')) return 'resident-library';
+    if (path.startsWith('/resident/exam-readiness')) return 'resident-exam-readiness';
+    if (path.startsWith('/resident/viva-simulator')) return 'resident-viva-simulator';
     if (path.startsWith('/resident-form')) return 'resident';
     return 'resident-login';
   };
@@ -114,6 +118,8 @@ function MainAppContent() {
         onNavigateToDissertation={() => navigate('/resident/dissertation')}
         onNavigateToCasebook={() => navigate('/resident/casebook')}
         onNavigateToLibrary={() => navigate('/resident/library')}
+        onNavigateToExamReadiness={() => navigate('/resident/exam-readiness')}
+        onNavigateToVivaSimulator={() => navigate('/resident/viva-simulator')}
         currentView={getCurrentViewName()}
       />
 
@@ -212,6 +218,30 @@ function MainAppContent() {
             element={
               currentResident ? (
                 <KnowledgeLibraryView />
+              ) : (
+                <Navigate to="/resident/login" replace />
+              )
+            }
+          />
+
+          {/* Exam Readiness Scorecard */}
+          <Route
+            path="/resident/exam-readiness"
+            element={
+              currentResident ? (
+                <ExamReadinessView resident={currentResident} />
+              ) : (
+                <Navigate to="/resident/login" replace />
+              )
+            }
+          />
+
+          {/* Mock Viva Oral Exam Simulator */}
+          <Route
+            path="/resident/viva-simulator"
+            element={
+              currentResident ? (
+                <OralExamSimulatorView resident={currentResident} />
               ) : (
                 <Navigate to="/resident/login" replace />
               )

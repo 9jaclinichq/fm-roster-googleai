@@ -18,6 +18,9 @@ import {
   KnowledgePack,
   KnowledgePackCategory,
   CaseReport,
+  ExamReadiness,
+  VivaSimulation,
+  ScoringBreakdown,
 } from '../types';
 
 // Read from import.meta.env
@@ -842,5 +845,95 @@ export const databaseService = {
 
     const { data: publicUrlData } = supabase!.storage.from('academic-documents').getPublicUrl(filePath);
     return publicUrlData.publicUrl;
+  },
+
+  // --- EXAM READINESS ---
+  async getOrCreateExamReadiness(workforceId: string): Promise<ExamReadiness> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('exam_readiness')
+      .select('*')
+      .eq('workforce_id', workforceId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Error fetching exam readiness:', error);
+      throw error;
+    }
+    if (data) return data;
+
+    const { data: created, error: createErr } = await supabase!
+      .from('exam_readiness')
+      .insert([{ workforce_id: workforceId }])
+      .select()
+      .single();
+
+    if (createErr) {
+      console.warn('Error creating exam readiness record:', createErr);
+      throw createErr;
+    }
+    return created;
+  },
+
+  async upsertExamReadiness(
+    workforceId: string,
+    updates: Partial<Pick<ExamReadiness, 'evidemy_completed_count' | 'evidemy_total_required' | 'physical_logbook_verified' | 'exam_fees_paid' | 'college_forms_submitted'>>
+  ): Promise<ExamReadiness> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('exam_readiness')
+      .upsert([{ workforce_id: workforceId, ...updates }], { onConflict: 'workforce_id' })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating exam readiness:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- MOCK VIVA ORAL EXAM SIMULATOR ---
+  async createVivaSimulation(entry: {
+    workforce_id: string;
+    case_title: string;
+    category?: string | null;
+    duration_seconds?: number | null;
+    scoring_breakdown: ScoringBreakdown;
+    feedback_summary?: string | null;
+  }): Promise<VivaSimulation> {
+    checkSupabase();
+
+    // The sync_oral_practice_score trigger recomputes exam_readiness's
+    // running average as soon as this insert commits.
+    const { data, error } = await supabase!
+      .from('viva_simulations')
+      .insert([entry])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error recording viva simulation:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async getVivaSimulations(workforceId: string): Promise<VivaSimulation[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('viva_simulations')
+      .select('*')
+      .eq('workforce_id', workforceId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('Error fetching viva simulations:', error);
+      throw error;
+    }
+    return data || [];
   },
 };
