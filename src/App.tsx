@@ -4,6 +4,7 @@ import { Navbar } from './components/Navbar';
 import { DevHelper } from './components/DevHelper';
 import { ResidentLoginView } from './components/ResidentLoginView';
 import { ResidentFormView } from './components/ResidentFormView';
+import { AnnouncementBoardView } from './components/AnnouncementBoardView';
 import { ChiefLoginView } from './components/ChiefLoginView';
 import { ChiefDashboardView } from './components/ChiefDashboardView';
 import { WorkforceMember } from './types';
@@ -44,6 +45,7 @@ function MainAppContent() {
     const path = location.pathname;
     if (path.startsWith('/chief/dashboard')) return 'chief';
     if (path.startsWith('/chief')) return 'chief-login';
+    if (path.startsWith('/resident/announcements')) return 'resident-announcements';
     if (path.startsWith('/resident-form')) return 'resident';
     return 'resident-login';
   };
@@ -101,6 +103,8 @@ function MainAppContent() {
         onChiefLogout={handleChiefLogout}
         onNavigateToChief={() => navigate('/chief/login')}
         onNavigateToResident={() => navigate('/resident/login')}
+        onNavigateToResidentForm={() => navigate('/resident-form')}
+        onNavigateToAnnouncements={() => navigate('/resident/announcements')}
         currentView={getCurrentViewName()}
       />
 
@@ -151,6 +155,18 @@ function MainAppContent() {
                   resident={currentResident}
                   onLogout={handleResidentLogout}
                 />
+              ) : (
+                <Navigate to="/resident/login" replace />
+              )
+            }
+          />
+
+          {/* Resident Announcement Board */}
+          <Route
+            path="/resident/announcements"
+            element={
+              currentResident ? (
+                <AnnouncementBoardView resident={currentResident} />
               ) : (
                 <Navigate to="/resident/login" replace />
               )

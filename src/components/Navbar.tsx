@@ -1,6 +1,6 @@
 import React from 'react';
 import { databaseService } from '../lib/databaseService';
-import { Shield, Users, LogOut, Database, Wifi } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone } from 'lucide-react';
 
 interface NavbarProps {
   currentResident: { id: string; name: string; category: string } | null;
@@ -9,7 +9,9 @@ interface NavbarProps {
   onChiefLogout: () => void;
   onNavigateToChief: () => void;
   onNavigateToResident: () => void;
-  currentView: 'resident' | 'chief' | 'resident-login' | 'chief-login';
+  onNavigateToResidentForm: () => void;
+  onNavigateToAnnouncements: () => void;
+  currentView: 'resident' | 'resident-announcements' | 'chief' | 'resident-login' | 'chief-login';
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -19,6 +21,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onChiefLogout,
   onNavigateToChief,
   onNavigateToResident,
+  onNavigateToResidentForm,
+  onNavigateToAnnouncements,
   currentView
 }) => {
   return (
@@ -105,6 +109,34 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </div>
         </div>
+
+        {/* Resident sub-navigation */}
+        {currentResident && (currentView === 'resident' || currentView === 'resident-announcements') && (
+          <div className="flex items-center space-x-4 border-t border-slate-100 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8">
+            <button
+              onClick={onNavigateToResidentForm}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer ${
+                currentView === 'resident'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <FileText size={13} />
+              <span>My Form</span>
+            </button>
+            <button
+              onClick={onNavigateToAnnouncements}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer ${
+                currentView === 'resident-announcements'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Megaphone size={13} />
+              <span>Announcements</span>
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { databaseService } from '../lib/databaseService';
-import { Collection, Submission } from '../types';
+import { Collection, Submission, Rotation } from '../types';
 import { 
   ClipboardList, 
   Calendar, 
@@ -31,6 +31,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
   const [successMessage, setSuccessMessage] = useState<string>('');
 
   // Form states
+  const [rotations, setRotations] = useState<Rotation[]>([]);
   const [currentRotation, setCurrentRotation] = useState<string>('');
   const [nextRotation, setNextRotation] = useState<string>('');
   const [takingLeave, setTakingLeave] = useState<boolean>(false);
@@ -104,6 +105,12 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
 
     fetchCollectionAndSubmission();
   }, [resident.id]);
+
+  useEffect(() => {
+    databaseService.getRotations()
+      .then(setRotations)
+      .catch(err => console.warn('Error fetching rotations:', err));
+  }, []);
 
   // Handle countdown calculation
   useEffect(() => {
@@ -259,8 +266,10 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
       const submissionPayload = {
         collection_id: collection!.id,
         workforce_id: resident.id,
-        current_rotation: currentRotation.trim(),
-        next_rotation: nextRotation.trim(),
+        current_rotation: currentRotation,
+        next_rotation: nextRotation,
+        current_rotation_id: rotations.find(r => r.name === currentRotation)?.id || null,
+        next_rotation_id: rotations.find(r => r.name === nextRotation)?.id || null,
         taking_leave: takingLeave,
         leave_type: takingLeave ? leaveType : null,
         leave_start: takingLeave ? leaveStart : null,
@@ -408,15 +417,21 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
               <label htmlFor="current-rotation" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
                 Current Rotation / Unit
               </label>
-              <input
+              <select
                 id="current-rotation"
-                type="text"
                 disabled={isFormReadOnly}
                 value={currentRotation}
                 onChange={(e) => setCurrentRotation(e.target.value)}
-                placeholder="e.g. Geriatrics, Trauma, Outpatient"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition disabled:opacity-60"
-              />
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition disabled:opacity-60 cursor-pointer"
+              >
+                <option value="">Select your current rotation...</option>
+                {currentRotation && !rotations.some(r => r.name === currentRotation) && (
+                  <option value={currentRotation}>{currentRotation} (previously recorded)</option>
+                )}
+                {rotations.map(r => (
+                  <option key={r.id} value={r.name}>{r.name}</option>
+                ))}
+              </select>
               <p className="text-[10px] text-slate-500">The unit or ward where you are deployed this current month.</p>
             </div>
 
@@ -425,15 +440,21 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
               <label htmlFor="next-rotation" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
                 Expected Rotation / Unit Next Month
               </label>
-              <input
+              <select
                 id="next-rotation"
-                type="text"
                 disabled={isFormReadOnly}
                 value={nextRotation}
                 onChange={(e) => setNextRotation(e.target.value)}
-                placeholder="e.g. Community Health, Pediatrics"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition disabled:opacity-60"
-              />
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition disabled:opacity-60 cursor-pointer"
+              >
+                <option value="">Select your expected rotation...</option>
+                {nextRotation && !rotations.some(r => r.name === nextRotation) && (
+                  <option value={nextRotation}>{nextRotation} (previously recorded)</option>
+                )}
+                {rotations.map(r => (
+                  <option key={r.id} value={r.name}>{r.name}</option>
+                ))}
+              </select>
               <p className="text-[10px] text-slate-500">Your upcoming deployment posting as assigned in the forecast.</p>
             </div>
           </div>

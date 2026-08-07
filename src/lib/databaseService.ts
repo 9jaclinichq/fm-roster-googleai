@@ -593,6 +593,23 @@ export const databaseService = {
     return data;
   },
 
+  async updateAnnouncement(id: string, updates: Partial<Pick<Announcement, 'title' | 'body' | 'category' | 'pinned'>>): Promise<Announcement> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('announcements')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating announcement:', error);
+      throw error;
+    }
+    return data;
+  },
+
   async markAnnouncementRead(announcementId: string, workforceId: string): Promise<AnnouncementRead> {
     checkSupabase();
 
@@ -609,5 +626,20 @@ export const databaseService = {
       throw error;
     }
     return data;
+  },
+
+  async getAnnouncementReadsForWorkforce(workforceId: string): Promise<AnnouncementRead[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('announcement_reads')
+      .select('*')
+      .eq('workforce_id', workforceId);
+
+    if (error) {
+      console.warn('Error fetching announcement read receipts:', error);
+      throw error;
+    }
+    return data || [];
   },
 };

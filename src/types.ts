@@ -91,7 +91,7 @@ export interface FileUpload {
   created_at: string;
 }
 
-export type AnnouncementCategory = 'Roster' | 'Exam' | 'CME';
+export type AnnouncementCategory = 'Roster' | 'Exam' | 'CME' | 'Admin';
 
 export interface Announcement {
   id: string;

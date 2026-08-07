@@ -1,0 +1,17 @@
+Execute Day 2: Department Announcement Board & Rotation UI Integration
+
+1. ANNOUNCEMENT BOARD COMPONENT:
+   - Create `src/components/AnnouncementBoardView.tsx` supporting:
+     a) Dynamic categories (`#Roster`, `#Exam`, `#CME`, `#Admin`).
+     b) Filter tags and search input.
+     c) Pinned notice highlight section at top.
+     d) Read-receipt tracking calling `databaseService.markAnnouncementRead()`.
+   - Update `src/components/ChiefDashboardView.tsx` with an "Announcements Admin" tab to create, pin, and categorize new department broadcasts using `databaseService.createAnnouncement()`.
+
+2. ROTATION SELECTOR UI INTEGRATION:
+   - Update the resident schedule submission form to fetch active rotations via `databaseService.getRotations()` and render a clean dropdown selector instead of free-text inputs.
+
+3. ROUTING & NAVIGATION:
+   - Add the Announcement Board as a visible tab/view in the main resident workspace (`App.tsx`).
+
+Run type checks (`npx tsc --noEmit`) when finished and report status.
