@@ -1,0 +1,18 @@
+Execute Step 2 (Security Hardening & Database Schema Migration):
+
+1. SECURITY FIXES:
+   - Remove or environment-gate `DevHelper.tsx` so access codes are never leaked in preview/production builds.
+   - Clean up unused dependencies in `package.json` (`express`, `dotenv`, `@google/genai`).
+
+2. SUPABASE MIGRATION SCRIPT GENERATION:
+   - Create a new migration file `supabase/migrations/01_rbac_and_rotations.sql` containing:
+     a) `roles` and `user_roles` tables (supporting: super_admin, hod, rtc, cme_coord, consultant, resident).
+     b) `rotations` reference table (for standardized department postings) and migrate current/next rotation logic.
+     c) `file_uploads` table tracking file metadata (file_name, storage_path, user_id, mime_type, file_size, created_at).
+     d) Updated Row Level Security (RLS) policies replacing blanket `USING (true)` with role-based policies.
+     e) `announcements` table (supporting categories: #Roster, #Exam, #CME, pinned posts, read receipts).
+
+3. APPLICATION INTEGRATION:
+   - Update `src/lib/databaseService.ts` (or equivalent client file) to support the new role fetching, file metadata recording, and rotation references.
+
+Output the SQL migration script clearly so it can be executed in the Supabase SQL Editor.
