@@ -1,0 +1,27 @@
+Execute Phase 2 (Option C) using the Feature Branch & Pull Request workflow:
+
+1. GIT BRANCH SETUP:
+   - Create and switch to a new branch: `feature/predictive-nudges-and-perf`.
+
+2. DATABASE SCHEMA MIGRATION:
+   - Create `supabase/migrations/09_predictive_nudges_and_activity.sql` containing:
+     a) `resident_activity_logs` table (id, workforce_id, activity_type ['roster_submission', 'dissertation_milestone', 'case_report', 'viva_simulation', 'announcement_read'], activity_date, metadata [jsonb]).
+     b) View or helper function `get_resident_activity_matrix(p_workforce_id)` returning daily aggregated activity counts for the GitHub-style contribution graph over the past 365 days.
+     c) Table or view `compliance_nudges` (id, workforce_id, nudge_type, severity ['high', 'medium', 'info'], title, action_link, resolved, created_at).
+     d) Enable RLS policies and grant proper SELECT/INSERT/UPDATE permissions.
+
+3. PREDICTIVE COMPLIANCE ENGINE & ACTIVITY GRAPH:
+   - Create `src/components/ResidentActivityGraph.tsx`:
+     * Rendering a GitHub-style 52-week activity contribution grid (intensity color scale) mapping research, cases, rosters, and viva practice.
+   - Create `src/components/ComplianceNudgesView.tsx` (and embed summary cards on the Resident Home Workspace):
+     * Evaluates real-time compliance metrics (e.g., "Exam in 6 months: Proposal pending ethics approval", "Missing 4 Case Reports for Part 2 Eligibility", "CME modules unverified").
+     * Direct action buttons leading directly to the relevant workspace ("Go to Dissertation", "Upload Case").
+
+4. VITE CODE-SPLITTING & BUNDLE OPTIMIZATION:
+   - Refactor route loading in `App.tsx` using `React.lazy()` and `<Suspense fallback={<LoadingShell />}>` for heavy views:
+     * `DissertationAssistantView`, `CasebookBuilderView`, `KnowledgeLibraryView`, `KnowledgePackManagerView`, `OralExamSimulatorView`, `ExamReadinessView`, `ConsultantReviewView`.
+   - Ensure the initial JS bundle chunk drops from >600KB down to <150KB.
+
+5. PR & VERIFICATION:
+   - Run `npx tsc --noEmit` and execute `npm run build` to verify clean chunk splitting without build warnings.
+   - Commit changes, push `feature/predictive-nudges-and-perf` to GitHub, and open a Pull Request against `main`.

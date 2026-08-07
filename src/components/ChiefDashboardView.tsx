@@ -1,6 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { databaseService } from '../lib/databaseService';
-import { KnowledgePackManagerView } from './KnowledgePackManagerView';
+import { LoadingShell } from './LoadingShell';
+
+// Lazy-loaded: this tab pulls in its own document-upload/search UI and is
+// only needed when the Chief actually opens the Knowledge Packs tab.
+const KnowledgePackManagerView = lazy(() =>
+  import('./KnowledgePackManagerView').then(m => ({ default: m.KnowledgePackManagerView }))
+);
 import { Collection, WorkforceMember, SubmissionWithWorkforce, Category, Submission, Announcement, AnnouncementCategory, DelegatedRole, SubadminRoleId } from '../types';
 import {
   Users,
@@ -1380,7 +1386,11 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         )}
 
         {/* TAB 6: KNOWLEDGE PACKS */}
-        {activeTab === 'knowledge' && <KnowledgePackManagerView />}
+        {activeTab === 'knowledge' && (
+          <Suspense fallback={<LoadingShell />}>
+            <KnowledgePackManagerView />
+          </Suspense>
+        )}
 
         {/* TAB 7: SETTINGS & COLLECTIONS */}
         {activeTab === 'settings' && (

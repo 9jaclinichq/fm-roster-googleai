@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { databaseService } from '../lib/databaseService';
+import { ResidentActivityGraph } from './ResidentActivityGraph';
+import { ComplianceNudgesView } from './ComplianceNudgesView';
 import { Collection, Submission, Rotation } from '../types';
 import { 
   ClipboardList, 
@@ -304,28 +306,35 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
 
   if (!collection) {
     return (
-      <div className="max-w-2xl mx-auto my-12 p-8 text-center bg-white border border-slate-200 rounded-2xl shadow-sm">
-        <AlertTriangle size={40} className="text-amber-500 mx-auto mb-3" />
-        <h3 className="text-lg font-bold text-slate-900">No Active Collection Found</h3>
-        <p className="text-sm text-slate-500 mt-2">
-          The Department of Family Medicine does not have an active monthly collection open right now.
-          Please check back when your Chief Resident opens the collection.
-        </p>
-        <button
-          onClick={onLogout}
-          className="mt-6 inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-bold cursor-pointer shadow-sm"
-        >
-          <LogOut size={13} />
-          <span>Exit Portal</span>
-        </button>
+      <div className="max-w-3xl mx-auto my-8 px-4 space-y-6">
+        <ResidentActivityGraph workforceId={resident.id} />
+        <ComplianceNudgesView resident={resident} compact />
+        <div className="max-w-2xl mx-auto p-8 text-center bg-white border border-slate-200 rounded-2xl shadow-sm">
+          <AlertTriangle size={40} className="text-amber-500 mx-auto mb-3" />
+          <h3 className="text-lg font-bold text-slate-900">No Active Collection Found</h3>
+          <p className="text-sm text-slate-500 mt-2">
+            The Department of Family Medicine does not have an active monthly collection open right now.
+            Please check back when your Chief Resident opens the collection.
+          </p>
+          <button
+            onClick={onLogout}
+            className="mt-6 inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-bold cursor-pointer shadow-sm"
+          >
+            <LogOut size={13} />
+            <span>Exit Portal</span>
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-3xl mx-auto my-8 px-4">
+    <div className="max-w-3xl mx-auto my-8 px-4 space-y-6">
+      <ResidentActivityGraph workforceId={resident.id} />
+      <ComplianceNudgesView resident={resident} compact />
+
       {/* Status Warning & Clock Banner */}
-      <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Resident Header */}
         <div className="md:col-span-2 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center justify-between">
           <div>

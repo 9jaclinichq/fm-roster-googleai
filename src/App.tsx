@@ -1,20 +1,47 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { DevHelper } from './components/DevHelper';
+import { LoadingShell } from './components/LoadingShell';
 import { ResidentLoginView } from './components/ResidentLoginView';
 import { ResidentFormView } from './components/ResidentFormView';
 import { AnnouncementBoardView } from './components/AnnouncementBoardView';
-import { DissertationAssistantView } from './components/DissertationAssistantView';
-import { KnowledgeLibraryView } from './components/KnowledgeLibraryView';
-import { CasebookBuilderView } from './components/CasebookBuilderView';
-import { ExamReadinessView } from './components/ExamReadinessView';
-import { OralExamSimulatorView } from './components/OralExamSimulatorView';
-import { ConsultantReviewView } from './components/ConsultantReviewView';
-import { ChiefLoginView } from './components/ChiefLoginView';
-import { ChiefDashboardView } from './components/ChiefDashboardView';
 import { databaseService } from './lib/databaseService';
 import { WorkforceMember } from './types';
+
+// Code-split the heavier resident views — each pulls its own weight in
+// icons/logic and is only needed once a resident actually navigates to it.
+// Named exports need the .then() wrapper since React.lazy expects a
+// default export from the dynamic import.
+//
+// ChiefLoginView/ChiefDashboardView are lazy too, beyond the originally
+// requested list — ChiefDashboardView alone is ~1900 lines, and the vast
+// majority of sessions are residents who never touch a /chief/* route, so
+// this was the single biggest lever toward the stated <150KB target.
+const ChiefLoginView = lazy(() =>
+  import('./components/ChiefLoginView').then(m => ({ default: m.ChiefLoginView }))
+);
+const ChiefDashboardView = lazy(() =>
+  import('./components/ChiefDashboardView').then(m => ({ default: m.ChiefDashboardView }))
+);
+const DissertationAssistantView = lazy(() =>
+  import('./components/DissertationAssistantView').then(m => ({ default: m.DissertationAssistantView }))
+);
+const KnowledgeLibraryView = lazy(() =>
+  import('./components/KnowledgeLibraryView').then(m => ({ default: m.KnowledgeLibraryView }))
+);
+const CasebookBuilderView = lazy(() =>
+  import('./components/CasebookBuilderView').then(m => ({ default: m.CasebookBuilderView }))
+);
+const ExamReadinessView = lazy(() =>
+  import('./components/ExamReadinessView').then(m => ({ default: m.ExamReadinessView }))
+);
+const OralExamSimulatorView = lazy(() =>
+  import('./components/OralExamSimulatorView').then(m => ({ default: m.OralExamSimulatorView }))
+);
+const ConsultantReviewView = lazy(() =>
+  import('./components/ConsultantReviewView').then(m => ({ default: m.ConsultantReviewView }))
+);
 
 const SUBADMIN_ROLE_IDS = ['hod', 'rtc', 'cme_coord', 'consultant', 'super_admin'];
 
@@ -163,6 +190,7 @@ function MainAppContent() {
 
       {/* Main page canvas */}
       <main className="flex-grow pb-12">
+        <Suspense fallback={<LoadingShell />}>
         <Routes>
           {/* Default entry point */}
           <Route 
@@ -322,6 +350,7 @@ function MainAppContent() {
           {/* Catch-all route */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </main>
 
       {/* Humble Footer */}

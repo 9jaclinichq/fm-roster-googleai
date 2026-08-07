@@ -272,3 +272,31 @@ export interface AiActionLog {
   output_result: Record<string, unknown>;
   created_at: string;
 }
+
+export type ActivityType = 'roster_submission' | 'dissertation_milestone' | 'case_report' | 'viva_simulation' | 'announcement_read';
+
+export interface ActivityMatrixDay {
+  activity_date: string; // YYYY-MM-DD
+  activity_count: number;
+}
+
+export type NudgeSeverity = 'high' | 'medium' | 'info';
+
+export interface ComplianceNudge {
+  id: string;
+  workforce_id: string;
+  nudge_type: string;
+  severity: NudgeSeverity;
+  title: string;
+  action_link: string | null;
+  resolved: boolean;
+  created_at: string;
+}
+
+// A nudge computed client-side before it's synced/persisted — no `id` yet.
+export interface DerivedNudge {
+  nudge_type: string;
+  severity: NudgeSeverity;
+  title: string;
+  action_link: string | null;
+}
