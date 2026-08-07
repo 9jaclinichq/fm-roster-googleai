@@ -215,3 +215,39 @@ export interface VivaSimulation {
   feedback_summary: string | null;
   created_at: string;
 }
+
+export type ReviewTargetType = 'dissertation_milestone' | 'case_report';
+export type ReviewStatus = 'approved' | 'revisions_requested';
+export type SubadminRoleId = Exclude<RoleId, 'super_admin' | 'resident'>;
+
+export interface ConsultantReview {
+  id: string;
+  target_type: ReviewTargetType;
+  target_id: string;
+  reviewer_workforce_id: string | null;
+  status: ReviewStatus;
+  feedback_notes: string | null;
+  // The reviewer's role at the time of review ('resident' for a
+  // co-resident peer-assist review, or the subadmin role_id otherwise).
+  reviewer_role: string | null;
+  created_at: string;
+}
+
+export interface DelegatedRole extends UserRole {
+  workforce: {
+    full_name: string;
+    category: Category;
+  } | null;
+}
+
+export interface DissertationMilestoneWithContext extends DissertationMilestone {
+  dissertations: {
+    title: string;
+    workforce_id: string;
+    workforce: { full_name: string; category: Category } | null;
+  } | null;
+}
+
+export interface CaseReportWithWorkforce extends CaseReport {
+  workforce: { full_name: string; category: Category } | null;
+}

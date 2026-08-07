@@ -10,14 +10,23 @@ import { KnowledgeLibraryView } from './components/KnowledgeLibraryView';
 import { CasebookBuilderView } from './components/CasebookBuilderView';
 import { ExamReadinessView } from './components/ExamReadinessView';
 import { OralExamSimulatorView } from './components/OralExamSimulatorView';
+import { ConsultantReviewView } from './components/ConsultantReviewView';
 import { ChiefLoginView } from './components/ChiefLoginView';
 import { ChiefDashboardView } from './components/ChiefDashboardView';
+import { databaseService } from './lib/databaseService';
 import { WorkforceMember } from './types';
+
+const SUBADMIN_ROLE_IDS = ['hod', 'rtc', 'cme_coord', 'consultant', 'super_admin'];
 
 interface ResidentSession {
   id: string;
   name: string;
   category: string;
+  // Populated after login (and refreshed on session restore) by checking
+  // user_roles — see del_hitl.txt's design note: there is no separate
+  // "consultant" login, a subadmin is just a resident whose workforce_id
+  // holds one of these roles.
+  subadminRoles: string[];
 }
 
 function MainAppContent() {
@@ -36,7 +45,11 @@ function MainAppContent() {
   useEffect(() => {
     const residentSession = localStorage.getItem('fm_session_resident');
     if (residentSession) {
-      setCurrentResident(JSON.parse(residentSession));
+      const parsed: ResidentSession = JSON.parse(residentSession);
+      setCurrentResident(parsed);
+      // Re-check roles on every restore (not just at login) so a role the
+      // Chief delegates/revokes mid-session takes effect on next refresh.
+      refreshSubadminRoles(parsed);
     }
 
     const chiefSession = localStorage.getItem('fm_session_chief');
@@ -44,6 +57,18 @@ function MainAppContent() {
       setIsChiefAuthenticated(true);
     }
   }, []);
+
+  const refreshSubadminRoles = async (resident: ResidentSession) => {
+    try {
+      const roles = await databaseService.getUserRolesForWorkforce(resident.id);
+      const subadminRoles = roles.map(r => r.role_id).filter(r => SUBADMIN_ROLE_IDS.includes(r));
+      const updated = { ...resident, subadminRoles };
+      setCurrentResident(updated);
+      localStorage.setItem('fm_session_resident', JSON.stringify(updated));
+    } catch (err) {
+      console.warn('Failed to refresh subadmin roles:', err);
+    }
+  };
 
   // Determine current active view category for navigation rendering
   const getCurrentViewName = () => {
@@ -56,16 +81,19 @@ function MainAppContent() {
     if (path.startsWith('/resident/library')) return 'resident-library';
     if (path.startsWith('/resident/exam-readiness')) return 'resident-exam-readiness';
     if (path.startsWith('/resident/viva-simulator')) return 'resident-viva-simulator';
+    if (path.startsWith('/resident/consultant-review')) return 'resident-consultant-review';
     if (path.startsWith('/resident-form')) return 'resident';
     return 'resident-login';
   };
 
-  const handleResidentLogin = (resident: ResidentSession) => {
-    setCurrentResident(resident);
-    localStorage.setItem('fm_session_resident', JSON.stringify(resident));
+  const handleResidentLogin = (resident: { id: string; name: string; category: string }) => {
+    const session: ResidentSession = { ...resident, subadminRoles: [] };
+    setCurrentResident(session);
+    localStorage.setItem('fm_session_resident', JSON.stringify(session));
     navigate('/resident-form');
     // Clear preset
     setPresetResident(null);
+    refreshSubadminRoles(session);
   };
 
   const handleResidentLogout = () => {
@@ -120,6 +148,7 @@ function MainAppContent() {
         onNavigateToLibrary={() => navigate('/resident/library')}
         onNavigateToExamReadiness={() => navigate('/resident/exam-readiness')}
         onNavigateToVivaSimulator={() => navigate('/resident/viva-simulator')}
+        onNavigateToConsultantReview={() => navigate('/resident/consultant-review')}
         currentView={getCurrentViewName()}
       />
 
@@ -242,6 +271,20 @@ function MainAppContent() {
             element={
               currentResident ? (
                 <OralExamSimulatorView resident={currentResident} />
+              ) : (
+                <Navigate to="/resident/login" replace />
+              )
+            }
+          />
+
+          {/* Review Workspace — open to every logged-in resident (co-resident
+              peer-assist review), with subadmin roles additionally able to
+              grant final approval (see ConsultantReviewView's canApprove prop). */}
+          <Route
+            path="/resident/consultant-review"
+            element={
+              currentResident ? (
+                <ConsultantReviewView reviewer={currentResident} canApprove={currentResident.subadminRoles.length > 0} />
               ) : (
                 <Navigate to="/resident/login" replace />
               )

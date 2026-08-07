@@ -21,6 +21,13 @@ import {
   ExamReadiness,
   VivaSimulation,
   ScoringBreakdown,
+  ConsultantReview,
+  ReviewTargetType,
+  ReviewStatus,
+  SubadminRoleId,
+  DelegatedRole,
+  DissertationMilestoneWithContext,
+  CaseReportWithWorkforce,
 } from '../types';
 
 // Read from import.meta.env
@@ -935,5 +942,109 @@ export const databaseService = {
       throw error;
     }
     return data || [];
+  },
+
+  // --- SUBADMIN ROLE DELEGATION (Chief-only, admin-code gated) ---
+  async getDelegatedRoles(): Promise<DelegatedRole[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('user_roles')
+      .select('*, workforce(full_name, category)')
+      .in('role_id', ['hod', 'rtc', 'cme_coord', 'consultant'])
+      .order('role_id', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching delegated roles:', error);
+      throw error;
+    }
+    return (data || []) as unknown as DelegatedRole[];
+  },
+
+  async assignUserRole(adminCode: string, workforceId: string, roleId: SubadminRoleId): Promise<void> {
+    checkSupabase();
+
+    const { error } = await supabase!.rpc('chief_assign_user_role', {
+      p_admin_code: adminCode,
+      p_workforce_id: workforceId,
+      p_role_id: roleId,
+    });
+
+    if (error) {
+      console.warn('Error assigning role:', error);
+      throw error;
+    }
+  },
+
+  async removeUserRole(adminCode: string, userRoleId: string): Promise<boolean> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_remove_user_role', {
+      p_admin_code: adminCode,
+      p_user_role_id: userRoleId,
+    });
+
+    if (error) {
+      console.warn('Error removing role:', error);
+      throw error;
+    }
+    return !!data;
+  },
+
+  // --- CONSULTANT HITL REVIEW WORKSPACE ---
+  async getPendingDissertationMilestones(): Promise<DissertationMilestoneWithContext[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('dissertation_milestones')
+      .select('*, dissertations(title, workforce_id, workforce(full_name, category))')
+      .eq('status', 'in_review')
+      .order('updated_at', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching pending dissertation milestones:', error);
+      throw error;
+    }
+    return (data || []) as unknown as DissertationMilestoneWithContext[];
+  },
+
+  async getPendingCaseReports(): Promise<CaseReportWithWorkforce[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('case_reports')
+      .select('*, workforce(full_name, category)')
+      .eq('status', 'pending_supervisor')
+      .order('updated_at', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching pending case reports:', error);
+      throw error;
+    }
+    return (data || []) as unknown as CaseReportWithWorkforce[];
+  },
+
+  async submitConsultantReview(
+    reviewerWorkforceId: string,
+    targetType: ReviewTargetType,
+    targetId: string,
+    status: ReviewStatus,
+    feedbackNotes: string
+  ): Promise<ConsultantReview> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('submit_consultant_review', {
+      p_reviewer_workforce_id: reviewerWorkforceId,
+      p_target_type: targetType,
+      p_target_id: targetId,
+      p_status: status,
+      p_feedback_notes: feedbackNotes || null,
+    });
+
+    if (error) {
+      console.warn('Error submitting consultant review:', error);
+      throw error;
+    }
+    return data;
   },
 };

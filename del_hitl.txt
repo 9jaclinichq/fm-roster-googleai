@@ -1,0 +1,26 @@
+Execute Phase 2 (Option A): Subadmin Role Delegation UI & Consultant HITL Review Workspace
+
+1. DATABASE SCHEMA MIGRATION:
+   - Create `supabase/migrations/06_subadmins_and_hitl.sql` containing:
+     a) `consultant_reviews` table (id, target_type ['dissertation_milestone', 'case_report'], target_id, reviewer_workforce_id, status ['approved', 'revisions_requested'], feedback_notes, created_at).
+     b) RPC function `chief_assign_user_role(p_admin_code, p_workforce_id, p_role_id)` to assign subadmin roles securely.
+     c) RPC function `chief_remove_user_role(p_admin_code, p_user_role_id)` to revoke subadmin roles.
+     d) RPC function `submit_consultant_review(p_reviewer_workforce_id, p_target_type, p_target_id, p_status, p_feedback_notes)` that records the review AND updates the underlying milestone/case status in a single transaction.
+     e) Grant proper permissions and enable RLS policies.
+
+2. SUBADMIN ROLE DELEGATION UI (`src/components/RoleDelegationView.tsx` or integrated into `ChiefDashboardView.tsx`):
+   - Chief Resident interface to delegate roles (`hod`, `rtc`, `cme_coord`, `consultant`) to workforce members.
+   - List active subadmins with filter by role and single-click revocation.
+
+3. CONSULTANT HITL REVIEW WORKSPACE (`src/components/ConsultantReviewView.tsx`):
+   - Workspace for consultants and supervisors to review pending submissions.
+   - View assigned residents' dissertation stages and submitted case reports.
+   - Preview uploaded PDFs/documents.
+   - Interactive review modal with text feedback input and action buttons ("Approve", "Request Revisions").
+
+4. APPLICATION INTEGRATION & NAVIGATION:
+   - Add database helper functions to `src/lib/databaseService.ts` for subadmin management and consultant reviews.
+   - Update `App.tsx` and `Navbar.tsx` so logged-in consultants/subadmins can access the "Consultant Review Workspace".
+   - Update `ChiefDashboardView.tsx` with a new "Role Delegation" tab.
+
+Run type checks (`npx tsc --noEmit`) when finished and report status.

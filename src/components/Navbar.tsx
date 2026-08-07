@@ -1,6 +1,6 @@
 import React from 'react';
 import { databaseService } from '../lib/databaseService';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck } from 'lucide-react';
 
 interface NavbarProps {
   currentResident: { id: string; name: string; category: string } | null;
@@ -16,6 +16,7 @@ interface NavbarProps {
   onNavigateToLibrary: () => void;
   onNavigateToExamReadiness: () => void;
   onNavigateToVivaSimulator: () => void;
+  onNavigateToConsultantReview: () => void;
   currentView:
     | 'resident'
     | 'resident-announcements'
@@ -24,6 +25,7 @@ interface NavbarProps {
     | 'resident-library'
     | 'resident-exam-readiness'
     | 'resident-viva-simulator'
+    | 'resident-consultant-review'
     | 'chief'
     | 'resident-login'
     | 'chief-login';
@@ -37,6 +39,7 @@ const RESIDENT_VIEWS = [
   'resident-library',
   'resident-exam-readiness',
   'resident-viva-simulator',
+  'resident-consultant-review',
 ];
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -53,6 +56,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigateToLibrary,
   onNavigateToExamReadiness,
   onNavigateToVivaSimulator,
+  onNavigateToConsultantReview,
   currentView
 }) => {
   return (
@@ -219,6 +223,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Mic size={13} />
               <span>Viva Simulator</span>
+            </button>
+            <button
+              onClick={onNavigateToConsultantReview}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
+                currentView === 'resident-consultant-review'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <ShieldCheck size={13} />
+              <span>Review Workspace</span>
             </button>
           </div>
         )}
