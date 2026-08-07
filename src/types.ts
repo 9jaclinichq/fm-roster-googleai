@@ -111,3 +111,76 @@ export interface AnnouncementRead {
   workforce_id: string;
   read_at: string;
 }
+
+export type DissertationStage =
+  | 'Topic Registration'
+  | 'Proposal Development'
+  | 'Ethical Clearance'
+  | 'Data Collection'
+  | 'Data Analysis'
+  | 'Draft Writing'
+  | 'Supervisor Review'
+  | 'Internal Defense'
+  | 'Final Submission';
+
+export const WACP_DISSERTATION_STAGES: DissertationStage[] = [
+  'Topic Registration',
+  'Proposal Development',
+  'Ethical Clearance',
+  'Data Collection',
+  'Data Analysis',
+  'Draft Writing',
+  'Supervisor Review',
+  'Internal Defense',
+  'Final Submission',
+];
+
+export interface Dissertation {
+  id: string;
+  workforce_id: string;
+  title: string;
+  stage: DissertationStage;
+  supervisor_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type MilestoneStatus = 'draft' | 'in_review' | 'approved';
+
+export interface DissertationMilestone {
+  id: string;
+  dissertation_id: string;
+  stage: DissertationStage;
+  status: MilestoneStatus;
+  document_url: string | null;
+  supervisor_feedback: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type KnowledgePackCategory = 'guidelines' | 'templates' | 'sample_dissertation' | 'past_questions';
+
+export interface KnowledgePack {
+  id: string;
+  title: string;
+  category: KnowledgePackCategory;
+  file_url: string;
+  description: string | null;
+  tags: string[];
+  created_at: string;
+}
+
+export type CaseReportStatus = 'draft' | 'pending_supervisor' | 'approved';
+
+export interface CaseReport {
+  id: string;
+  workforce_id: string;
+  case_number: number; // 1-15
+  patient_initials: string | null;
+  diagnosis: string | null;
+  category: string | null;
+  status: CaseReportStatus;
+  document_url: string | null;
+  created_at: string;
+  updated_at: string;
+}

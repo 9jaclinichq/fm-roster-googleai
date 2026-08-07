@@ -1,0 +1,30 @@
+Execute Day 3: Dissertation Assistant Scaffold, Knowledge Library & Case Portfolio Builder
+
+1. DATABASE SCHEMA MIGRATION:
+   - Create `supabase/migrations/04_academic_modules.sql` containing:
+     a) `dissertations` table (id, workforce_id, title, stage, supervisor_name, updated_at).
+     b) `dissertation_milestones` table (id, dissertation_id, stage, status [draft, in_review, approved], document_url, supervisor_feedback, updated_at).
+     c) `knowledge_packs` table (id, title, category [guidelines, templates, sample_dissertation, past_questions], file_url, description, tags, created_at).
+     d) `case_reports` table (id, workforce_id, case_number [1-15], patient_initials, diagnosis, category, status [draft, pending_supervisor, approved], document_url, updated_at).
+     e) Seed default WACP dissertation stages and 15 casebook placeholders.
+     f) Enable RLS policies and grant standard SELECT/INSERT/UPDATE permissions.
+
+2. DISSERTATION ASSISTANT UI (`src/components/DissertationAssistantView.tsx`):
+   - Interactive stage-gate timeline pipeline representing the WACP dissertation lifecycle.
+   - Stage progress indicators, milestone document upload handlers (connecting to Supabase Storage), and Human-In-The-Loop (HITL) supervisor feedback tracking.
+   - Embedded action buttons ("Check Departmental Guidelines", "Format Vancouver Citations").
+
+3. KNOWLEDGE LIBRARY (`src/components/KnowledgeLibraryView.tsx`):
+   - Resource gallery allowing residents to view and download department guidelines, dissertation templates, and sample cases.
+
+4. CASEBOOK BUILDER (`src/components/CasebookBuilderView.tsx`):
+   - Grid tracking the 15 compulsory case management reports (Case 1 through Case 15) with status badges (Draft, Submitted, Approved), patient details, and document attachments.
+
+5. AI SERVICE LAYER (`src/lib/ai/academicCopilot.ts`):
+   - Abstraction wrapper for background LLM actions (guideline compliance checks, citation formatting, differential diagnosis extraction).
+
+6. APPLICATION INTEGRATION:
+   - Add database helper methods for dissertations, knowledge packs, and case reports to `src/lib/databaseService.ts`.
+   - Update `App.tsx` and `Navbar.tsx` to include navigation links for Academic Tools ("Dissertation", "Casebook", "Library").
+
+Run type checks (`npx tsc --noEmit`) when finished and report status.

@@ -5,6 +5,9 @@ import { DevHelper } from './components/DevHelper';
 import { ResidentLoginView } from './components/ResidentLoginView';
 import { ResidentFormView } from './components/ResidentFormView';
 import { AnnouncementBoardView } from './components/AnnouncementBoardView';
+import { DissertationAssistantView } from './components/DissertationAssistantView';
+import { KnowledgeLibraryView } from './components/KnowledgeLibraryView';
+import { CasebookBuilderView } from './components/CasebookBuilderView';
 import { ChiefLoginView } from './components/ChiefLoginView';
 import { ChiefDashboardView } from './components/ChiefDashboardView';
 import { WorkforceMember } from './types';
@@ -46,6 +49,9 @@ function MainAppContent() {
     if (path.startsWith('/chief/dashboard')) return 'chief';
     if (path.startsWith('/chief')) return 'chief-login';
     if (path.startsWith('/resident/announcements')) return 'resident-announcements';
+    if (path.startsWith('/resident/dissertation')) return 'resident-dissertation';
+    if (path.startsWith('/resident/casebook')) return 'resident-casebook';
+    if (path.startsWith('/resident/library')) return 'resident-library';
     if (path.startsWith('/resident-form')) return 'resident';
     return 'resident-login';
   };
@@ -105,6 +111,9 @@ function MainAppContent() {
         onNavigateToResident={() => navigate('/resident/login')}
         onNavigateToResidentForm={() => navigate('/resident-form')}
         onNavigateToAnnouncements={() => navigate('/resident/announcements')}
+        onNavigateToDissertation={() => navigate('/resident/dissertation')}
+        onNavigateToCasebook={() => navigate('/resident/casebook')}
+        onNavigateToLibrary={() => navigate('/resident/library')}
         currentView={getCurrentViewName()}
       />
 
@@ -167,6 +176,42 @@ function MainAppContent() {
             element={
               currentResident ? (
                 <AnnouncementBoardView resident={currentResident} />
+              ) : (
+                <Navigate to="/resident/login" replace />
+              )
+            }
+          />
+
+          {/* Dissertation Assistant */}
+          <Route
+            path="/resident/dissertation"
+            element={
+              currentResident ? (
+                <DissertationAssistantView resident={currentResident} />
+              ) : (
+                <Navigate to="/resident/login" replace />
+              )
+            }
+          />
+
+          {/* Casebook Builder */}
+          <Route
+            path="/resident/casebook"
+            element={
+              currentResident ? (
+                <CasebookBuilderView resident={currentResident} />
+              ) : (
+                <Navigate to="/resident/login" replace />
+              )
+            }
+          />
+
+          {/* Knowledge Library */}
+          <Route
+            path="/resident/library"
+            element={
+              currentResident ? (
+                <KnowledgeLibraryView />
               ) : (
                 <Navigate to="/resident/login" replace />
               )

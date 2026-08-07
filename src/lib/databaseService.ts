@@ -11,6 +11,13 @@ import {
   FileUpload,
   Announcement,
   AnnouncementRead,
+  Dissertation,
+  DissertationStage,
+  DissertationMilestone,
+  MilestoneStatus,
+  KnowledgePack,
+  KnowledgePackCategory,
+  CaseReport,
 } from '../types';
 
 // Read from import.meta.env
@@ -641,5 +648,199 @@ export const databaseService = {
       throw error;
     }
     return data || [];
+  },
+
+  // --- DISSERTATION ASSISTANT ---
+  async getDissertationForWorkforce(workforceId: string): Promise<Dissertation | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('dissertations')
+      .select('*')
+      .eq('workforce_id', workforceId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Error fetching dissertation:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async createDissertation(workforceId: string, title: string, supervisorName?: string): Promise<Dissertation> {
+    checkSupabase();
+
+    // The seed_dissertation_milestones trigger auto-populates one milestone
+    // row per WACP stage as soon as this insert commits.
+    const { data, error } = await supabase!
+      .from('dissertations')
+      .insert([{ workforce_id: workforceId, title, supervisor_name: supervisorName || null }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error creating dissertation:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateDissertationStage(id: string, stage: DissertationStage): Promise<Dissertation> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('dissertations')
+      .update({ stage })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating dissertation stage:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async getDissertationMilestones(dissertationId: string): Promise<DissertationMilestone[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('dissertation_milestones')
+      .select('*')
+      .eq('dissertation_id', dissertationId);
+
+    if (error) {
+      console.warn('Error fetching dissertation milestones:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async updateMilestone(id: string, updates: { status?: MilestoneStatus; document_url?: string | null; supervisor_feedback?: string | null }): Promise<DissertationMilestone> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('dissertation_milestones')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating milestone:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async uploadDissertationDocument(workforceId: string, milestoneId: string, file: File): Promise<string> {
+    checkSupabase();
+
+    const fileExt = file.name.split('.').pop();
+    const filePath = `dissertations/${workforceId}/${milestoneId}_${Date.now()}.${fileExt}`;
+
+    const { error } = await supabase!.storage.from('academic-documents').upload(filePath, file);
+    if (error) {
+      console.warn('Dissertation document upload failed:', error);
+      throw error;
+    }
+
+    const { data: publicUrlData } = supabase!.storage.from('academic-documents').getPublicUrl(filePath);
+    return publicUrlData.publicUrl;
+  },
+
+  // --- KNOWLEDGE LIBRARY ---
+  async getKnowledgePacks(category?: KnowledgePackCategory): Promise<KnowledgePack[]> {
+    checkSupabase();
+
+    let query = supabase!.from('knowledge_packs').select('*').order('created_at', { ascending: false });
+    if (category) {
+      query = query.eq('category', category);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn('Error fetching knowledge packs:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async createKnowledgePack(entry: {
+    title: string;
+    category: KnowledgePackCategory;
+    file_url: string;
+    description?: string | null;
+    tags?: string[];
+  }): Promise<KnowledgePack> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('knowledge_packs')
+      .insert([{ tags: [], ...entry }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error creating knowledge pack:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- CASEBOOK BUILDER ---
+  async getCaseReports(workforceId: string): Promise<CaseReport[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('case_reports')
+      .select('*')
+      .eq('workforce_id', workforceId)
+      .order('case_number', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching case reports:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async upsertCaseReport(
+    workforceId: string,
+    caseNumber: number,
+    updates: Partial<Pick<CaseReport, 'patient_initials' | 'diagnosis' | 'category' | 'status' | 'document_url'>>
+  ): Promise<CaseReport> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('case_reports')
+      .upsert([{ workforce_id: workforceId, case_number: caseNumber, ...updates }], {
+        onConflict: 'workforce_id,case_number',
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error saving case report:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async uploadCaseDocument(workforceId: string, caseNumber: number, file: File): Promise<string> {
+    checkSupabase();
+
+    const fileExt = file.name.split('.').pop();
+    const filePath = `case-reports/${workforceId}/case-${caseNumber}_${Date.now()}.${fileExt}`;
+
+    const { error } = await supabase!.storage.from('academic-documents').upload(filePath, file);
+    if (error) {
+      console.warn('Case report document upload failed:', error);
+      throw error;
+    }
+
+    const { data: publicUrlData } = supabase!.storage.from('academic-documents').getPublicUrl(filePath);
+    return publicUrlData.publicUrl;
   },
 };
