@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
+import { academicCopilot } from '../lib/ai/academicCopilot';
 import { CaseReport, CaseReportStatus } from '../types';
-import { ClipboardList, RefreshCw, FileText, UploadCloud, X, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { ClipboardList, RefreshCw, FileText, UploadCloud, X, AlertTriangle, CheckCircle2, Clock, Sparkles } from 'lucide-react';
 
 interface CasebookBuilderViewProps {
   resident: { id: string; name: string; category: string };
@@ -28,6 +29,12 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
   const [saveError, setSaveError] = useState<string>('');
   const [isUploading, setIsUploading] = useState<boolean>(false);
 
+  // Differential-extraction helper (not persisted — a scratch tool)
+  const [caseNotes, setCaseNotes] = useState<string>('');
+  const [ddxCandidates, setDdxCandidates] = useState<string[] | null>(null);
+  const [ddxReasoning, setDdxReasoning] = useState<string | null>(null);
+  const [isExtractingDdx, setIsExtractingDdx] = useState<boolean>(false);
+
   const load = () => {
     setIsLoading(true);
     databaseService.getCaseReports(resident.id)
@@ -48,6 +55,21 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
     setDiagnosis(existing?.diagnosis || '');
     setCategory(existing?.category || '');
     setSaveError('');
+    setCaseNotes('');
+    setDdxCandidates(null);
+    setDdxReasoning(null);
+  };
+
+  const handleExtractDdx = async () => {
+    if (!caseNotes.trim()) return;
+    setIsExtractingDdx(true);
+    try {
+      const result = await academicCopilot.extractDifferentialDiagnosis(resident.id, caseNotes);
+      setDdxCandidates(result.candidates);
+      setDdxReasoning(result.reasoning);
+    } finally {
+      setIsExtractingDdx(false);
+    }
   };
 
   const closeModal = () => setActiveCaseNumber(null);
@@ -209,6 +231,47 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-1 focus:ring-slate-950 disabled:opacity-60"
                 />
               </div>
+
+              {!isReadOnly && (
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <label className="text-xs font-bold text-slate-700 uppercase flex items-center space-x-1.5">
+                    <Sparkles size={12} className="text-slate-400" />
+                    <span>Extract Differential Diagnoses</span>
+                  </label>
+                  <p className="text-[10px] text-slate-400">
+                    Paste your raw case notes below — this organizes what you've already written into a structured
+                    list (e.g. a "Differentials:" section becomes separate points). It doesn't invent new diagnoses.
+                  </p>
+                  <textarea
+                    rows={3}
+                    value={caseNotes}
+                    onChange={(e) => setCaseNotes(e.target.value)}
+                    placeholder="e.g. 45F with chest pain. Differentials: unstable angina, GERD, musculoskeletal pain, anxiety."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-1 focus:ring-slate-950"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleExtractDdx}
+                    disabled={isExtractingDdx || !caseNotes.trim()}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer"
+                  >
+                    {isExtractingDdx ? 'Extracting...' : 'Extract'}
+                  </button>
+
+                  {ddxCandidates && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
+                      {ddxReasoning && <p className="text-[10px] text-slate-500 italic">{ddxReasoning}</p>}
+                      {ddxCandidates.length > 0 && (
+                        <ul className="list-disc list-inside space-y-0.5">
+                          {ddxCandidates.map((c, i) => (
+                            <li key={i} className="text-xs text-slate-700">{c}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700 uppercase">Attachment</label>

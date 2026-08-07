@@ -251,3 +251,24 @@ export interface DissertationMilestoneWithContext extends DissertationMilestone 
 export interface CaseReportWithWorkforce extends CaseReport {
   workforce: { full_name: string; category: Category } | null;
 }
+
+export interface KnowledgePackItem {
+  id: string;
+  pack_id: string;
+  title: string;
+  document_url: string | null;
+  extracted_text_content: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export type AiActionType = 'methodology_check' | 'vancouver_format' | 'mesh_suggest' | 'differential_extract';
+
+export interface AiActionLog {
+  id: string;
+  workforce_id: string | null;
+  action_type: AiActionType;
+  input_summary: string | null;
+  output_result: Record<string, unknown>;
+  created_at: string;
+}

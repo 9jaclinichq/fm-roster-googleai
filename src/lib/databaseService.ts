@@ -28,6 +28,9 @@ import {
   DelegatedRole,
   DissertationMilestoneWithContext,
   CaseReportWithWorkforce,
+  KnowledgePackItem,
+  AiActionType,
+  AiActionLog,
 } from '../types';
 
 // Read from import.meta.env
@@ -1043,6 +1046,108 @@ export const databaseService = {
 
     if (error) {
       console.warn('Error submitting consultant review:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- KNOWLEDGE PACK ITEMS (manager UI + search) ---
+  async getKnowledgePackItems(packId: string): Promise<KnowledgePackItem[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('knowledge_pack_items')
+      .select('*')
+      .eq('pack_id', packId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('Error fetching knowledge pack items:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async createKnowledgePackItem(entry: {
+    pack_id: string;
+    title: string;
+    document_url?: string | null;
+    extracted_text_content?: string | null;
+    metadata?: Record<string, unknown>;
+  }): Promise<KnowledgePackItem> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('knowledge_pack_items')
+      .insert([{ metadata: {}, ...entry }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error creating knowledge pack item:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async uploadKnowledgePackDocument(packId: string, file: File): Promise<string> {
+    checkSupabase();
+
+    const fileExt = file.name.split('.').pop();
+    const filePath = `knowledge-packs/${packId}/${Date.now()}_${file.name}.${fileExt}`;
+
+    const { error } = await supabase!.storage.from('academic-documents').upload(filePath, file);
+    if (error) {
+      console.warn('Knowledge pack document upload failed:', error);
+      throw error;
+    }
+
+    const { data: publicUrlData } = supabase!.storage.from('academic-documents').getPublicUrl(filePath);
+    return publicUrlData.publicUrl;
+  },
+
+  // Lexical full-text search (Postgres tsvector/GIN) over indexed knowledge
+  // pack items — see migration 08's header for why this is keyword
+  // retrieval, not embedding-based semantic search.
+  async searchKnowledgePackItems(query: string): Promise<KnowledgePackItem[]> {
+    checkSupabase();
+    if (!query.trim()) return [];
+
+    const { data, error } = await supabase!
+      .from('knowledge_pack_items')
+      .select('*')
+      .textSearch('search_vector', query, { type: 'websearch', config: 'english' })
+      .limit(10);
+
+    if (error) {
+      console.warn('Error searching knowledge pack items:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  // --- AI ACTION LOGGING ---
+  async logAiAction(
+    workforceId: string,
+    actionType: AiActionType,
+    inputSummary: string,
+    outputResult: Record<string, unknown>
+  ): Promise<AiActionLog> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('ai_action_logs')
+      .insert([{
+        workforce_id: workforceId,
+        action_type: actionType,
+        input_summary: inputSummary.slice(0, 500),
+        output_result: outputResult,
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error logging AI action:', error);
       throw error;
     }
     return data;

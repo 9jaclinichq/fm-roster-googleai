@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
+import { KnowledgePackManagerView } from './KnowledgePackManagerView';
 import { Collection, WorkforceMember, SubmissionWithWorkforce, Category, Submission, Announcement, AnnouncementCategory, DelegatedRole, SubadminRoleId } from '../types';
 import {
   Users,
@@ -57,7 +58,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'settings'>('submissions');
+  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'settings'>('submissions');
 
   // Role delegation state
   const [delegatedRoles, setDelegatedRoles] = useState<DelegatedRole[]>([]);
@@ -770,6 +771,16 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           Role Delegation ({delegatedRoles.length})
         </button>
         <button
+          onClick={() => setActiveTab('knowledge')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'knowledge'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Knowledge Packs
+        </button>
+        <button
           onClick={() => setActiveTab('settings')}
           className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === 'settings'
@@ -1368,7 +1379,10 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           </div>
         )}
 
-        {/* TAB 6: SETTINGS & COLLECTIONS */}
+        {/* TAB 6: KNOWLEDGE PACKS */}
+        {activeTab === 'knowledge' && <KnowledgePackManagerView />}
+
+        {/* TAB 7: SETTINGS & COLLECTIONS */}
         {activeTab === 'settings' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Create Collection Column */}
