@@ -37,7 +37,7 @@ workforce roster, open/close monthly collection cycles, and export submissions.
 - **Forms**: `react-hook-form`, `zod` (present, not yet confirmed wired into all forms)
 - **State/data fetching**: `@tanstack/react-query` (present as a dependency —
   confirm actual usage before assuming query caching is active)
-- **Package manager**: Bun (`bun.lock` present)
+- **Package manager**: npm (`package-lock.json`) — the project originally used Bun, but switched to npm when Bun couldn't be reliably installed in the working environment
 - **Deploy target**: Netlify (`netlify.toml` present, SPA redirect configured)
 
 ### Dependencies present but currently unused (do not assume they're wired up)
