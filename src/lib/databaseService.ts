@@ -31,6 +31,9 @@ import {
   KnowledgePackItem,
   AiActionType,
   AiActionLog,
+  ActivityMatrixDay,
+  ComplianceNudge,
+  DerivedNudge,
 } from '../types';
 
 // Read from import.meta.env
@@ -1148,6 +1151,84 @@ export const databaseService = {
 
     if (error) {
       console.warn('Error logging AI action:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- ACTIVITY GRAPH ---
+  async getResidentActivityMatrix(workforceId: string): Promise<ActivityMatrixDay[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('get_resident_activity_matrix', { p_workforce_id: workforceId });
+
+    if (error) {
+      console.warn('Error fetching activity matrix:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  // --- COMPLIANCE NUDGES ---
+  async getComplianceNudges(workforceId: string): Promise<ComplianceNudge[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('compliance_nudges')
+      .select('*')
+      .eq('workforce_id', workforceId);
+
+    if (error) {
+      console.warn('Error fetching compliance nudges:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  // Reconciles the persisted compliance_nudges rows with the currently-
+  // applicable set computed client-side: upserts nudges that still apply
+  // (leaving `resolved` untouched on conflict, since it isn't in the
+  // payload), and deletes rows whose condition no longer holds.
+  async syncComplianceNudges(workforceId: string, derived: DerivedNudge[]): Promise<ComplianceNudge[]> {
+    checkSupabase();
+
+    const existing = await this.getComplianceNudges(workforceId);
+    const derivedTypes = new Set(derived.map(d => d.nudge_type));
+    const staleIds = existing.filter(e => !derivedTypes.has(e.nudge_type)).map(e => e.id);
+
+    if (staleIds.length > 0) {
+      const { error: deleteError } = await supabase!.from('compliance_nudges').delete().in('id', staleIds);
+      if (deleteError) console.warn('Error deleting stale nudges:', deleteError);
+    }
+
+    if (derived.length > 0) {
+      const { error } = await supabase!
+        .from('compliance_nudges')
+        .upsert(
+          derived.map(d => ({ workforce_id: workforceId, ...d })),
+          { onConflict: 'workforce_id,nudge_type' }
+        );
+      if (error) {
+        console.warn('Error syncing compliance nudges:', error);
+        throw error;
+      }
+    }
+
+    return this.getComplianceNudges(workforceId);
+  },
+
+  async resolveComplianceNudge(nudgeId: string): Promise<ComplianceNudge> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('compliance_nudges')
+      .update({ resolved: true })
+      .eq('id', nudgeId)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error resolving compliance nudge:', error);
       throw error;
     }
     return data;
