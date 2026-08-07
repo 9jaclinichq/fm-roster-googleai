@@ -125,7 +125,7 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
     setIsAiRunning(true);
     setAiResultNotes(null);
     try {
-      const result = await academicCopilot.checkGuidelineCompliance(aiInputText);
+      const result = await academicCopilot.checkGuidelineCompliance(resident.id, aiInputText);
       setAiResultNotes(result.notes);
     } finally {
       setIsAiRunning(false);
@@ -136,8 +136,8 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
     setIsAiRunning(true);
     setAiFormatted(null);
     try {
-      const result = await academicCopilot.formatVancouverCitations(aiInputText);
-      setAiFormatted(result.formatted || 'AI assistant is not connected yet.');
+      const result = await academicCopilot.formatVancouverCitations(resident.id, aiInputText);
+      setAiFormatted(result.formatted || 'Nothing to format — paste one reference per line.');
     } finally {
       setIsAiRunning(false);
     }

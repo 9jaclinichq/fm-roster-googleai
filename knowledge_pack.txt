@@ -1,0 +1,25 @@
+Execute Phase 2 (Option B) using the Feature Branch & Pull Request workflow:
+
+1. GIT BRANCH SETUP:
+   - Create and switch to a new branch: `feature/knowledge-packs-and-ai`.
+
+2. DATABASE SCHEMA MIGRATION:
+   - Create `supabase/migrations/08_knowledge_packs_and_ai.sql` containing:
+     a) `knowledge_pack_items` table (id, pack_id, title, document_url, extracted_text_content, metadata [jsonb], created_at).
+     b) `ai_action_logs` table (id, workforce_id, action_type ['methodology_check', 'vancouver_format', 'mesh_suggest', 'differential_extract'], input_summary, output_result [jsonb], created_at).
+     c) Grant standard permissions and enable RLS policies.
+
+3. KNOWLEDGE PACK MANAGER UI (`src/components/KnowledgePackManagerView.tsx`):
+   - Admin/Chief interface to upload, index, and organize departmental knowledge packs (WACP guidelines, NPMCN policies, UCH sample dissertations, past questions).
+   - Text content indexing trigger for RAG search.
+
+4. EMBEDDED AI ACTION INTEGRATION:
+   - Wire background AI triggers directly into `DissertationAssistantView.tsx` and `CasebookBuilderView.tsx`:
+     * "Check Departmental Guidelines" (evaluates proposal structure against active Knowledge Packs).
+     * "Format Vancouver Citations" (normalizes reference strings).
+     * "Extract Differential Diagnoses" (parses case dumps into structured learning points).
+   - Update `src/lib/ai/academicCopilot.ts` with functional client-side parsing routines and fallback mechanisms.
+
+5. PR & VERIFICATION:
+   - Run type checks (`npx tsc --noEmit`).
+   - Commit changes, push `feature/knowledge-packs-and-ai` to GitHub, and open a Pull Request against `main`.
