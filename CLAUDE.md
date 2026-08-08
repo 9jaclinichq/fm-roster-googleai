@@ -95,14 +95,15 @@ from components.
 |---|---|---|
 | Resident | Select name from `workforce` + enter personal 6-digit `resident_code` | Submit/update own `submissions` row for the open `collection` |
 | Chief Resident | Single shared 6-digit `admin_access_code` from `settings` table | Full read/write on `workforce`, `collections`, `submissions`, `settings` |
+| Platform Operator (new, migration 11) | Separate 6-digit `shared_code` in `platform_operators` — NOT a `workforce` row | Cross-tenant admin only, at `/saas-operator`: provision tenants, change plans, inspect AI adaptation rules. Deliberately outside the tenant model — see "SaaS Multi-Tenancy" section below. |
 
-This is **not** database-level RBAC. Both roles authenticate against plaintext
+This is **not** database-level RBAC. All three roles authenticate against plaintext
 codes stored in Postgres tables, compared client-side in React, with session
-state kept in `localStorage` (`fm_session_resident`, `fm_session_chief`). There
-is no Supabase Auth user, no JWT claims, and no server-side session — RLS
-policies currently grant `public` (i.e. anyone holding the anon key) full
-access to every table. See Security Notes below before treating this as a
-real access-control boundary.
+state kept in `localStorage` (`fm_session_resident`, `fm_session_chief`,
+`fm_session_operator`). There is no Supabase Auth user, no JWT claims, and no
+server-side session — RLS policies currently grant `public` (i.e. anyone
+holding the anon key) full access to every table. See Security Notes below
+before treating this as a real access-control boundary.
 
 ## Security Notes (read before touching auth/RLS/DevHelper)
 
@@ -253,6 +254,88 @@ npx supabase@2.112.0 functions deploy roster-parser --project-ref gdumksfffewpdq
 If a future `npx supabase` invocation fails with a "no matching binary"
 error right after an `ENOSPC` or other interrupted install, suspect a
 corrupted npx cache entry before assuming the CLI itself is broken.
+
+**Third Edge Function: `paystack-subaccount`** (`supabase/functions/paystack-subaccount/index.ts`)
+creates a Paystack subaccount for a tenant being provisioned in the SaaS
+Operator Console. Uses a `PAYSTACK_SECRET_KEY` secret (currently a **live**
+key, not test — see "SaaS Multi-Tenancy" below). Deliberately narrow scope:
+subaccount creation only, no charge/subscription/webhook code. **Status:
+deployed and live-verified** — confirmed the key authenticates correctly
+against the real live Paystack API (a bad key returns 401 "Invalid key";
+this returned a validation error about the account details instead, proving
+the key itself is good) without actually creating a subaccount, since no
+real bank account details were available to test a full creation safely. A
+`FLUTTERWAVE_SECRET_KEY` secret is also set on the project for future use,
+but no Flutterwave code path exists yet.
+
+## SaaS Multi-Tenancy & Platform Operator (migration 11)
+
+The app was extended from a single-department tool into a multi-tenant
+platform. `tenants` (seeded with UCH Family Medicine, id
+`00000000-0000-0000-0000-000000000001`) has `tenant_id` added to 10 core
+tables (`workforce`, `collections`, `combined_master_rosters`,
+`announcements`, `knowledge_packs`, `dissertations`, `case_reports`,
+`exam_readiness`, `viva_simulations`, `call_duty_rules` — the last one
+created net-new by this migration). `settings` and `submissions` deliberately
+do **not** have `tenant_id` yet — out of the original spec's table list, and
+`settings` is a global singleton that doesn't cleanly fit the tenant model
+as-is. A real multi-tenant Chief admin code / active-collection story is
+still a future gap, not solved here.
+
+**Tenant isolation is client-enforced only, not RLS-enforced** — same
+permissive-RLS trust model as every other table since migration 01. The
+originally-specced `current_setting('app.current_tenant_id')`-based RLS
+policy needs signed JWT claims from real Supabase Auth, which this app
+doesn't have. Don't assume `tenant_id` is a real security boundary; a
+determined anon-key holder can read/write across tenants directly via the
+REST API. Existing single-tenant queries in `databaseService.ts` are also
+NOT filtered by `tenant_id` yet — there's nothing to filter against with
+only one tenant seeded and no tenant-switching login flow.
+
+**AI usage quota**: `tenant_ai_usage` + `check_and_increment_tenant_ai_quota()`
+gate the free-tier plan to 50 AI-assisted actions per rolling 14-day window,
+enforced **server-side inside** `academic-copilot` and `roster-parser`
+(not just client-side, which would be trivially bypassable via a direct
+curl to the Edge Function URL). Paid tiers (`tier_1`/`tier_2`/`enterprise`)
+are unlimited in this pass.
+
+**Guest review links**: `guest_review_invites` + `create_guest_review_invite`/
+`get_guest_review_invite`/`submit_guest_review` RPCs let a resident share a
+no-login review link for an external reviewer, extending `consultant_reviews`
+(migrations 06/07) rather than duplicating it. Deliberately **no direct
+SELECT policy** on `guest_review_invites` or `platform_operators` — the
+token/code IS the access credential, so a permissive SELECT would let
+anyone enumerate every outstanding link or operator code via the REST API.
+Access only via the RPCs, which require the exact token/code. Mirrors
+migration 07's co-resident restriction: a guest link can only carry final
+**approval** authority (`invited_as = 'consultant'`) if its creator actually
+holds an authorizing role — enforced server-side in
+`create_guest_review_invite`, not just hidden in the UI, so a resident can't
+hand a friend a link that rubber-stamps their own exam eligibility.
+
+**Known bug found and fixed during this migration's verification**: `tenants`
+initially had no INSERT/UPDATE RLS policy (an early draft's comment claimed
+writes would go through operator-gated RPCs that were never actually built)
+— this made every tenant provisioning/plan-change call 401. Fixed to match
+the same permissive model as its sibling tables (`call_duty_rules`,
+`tenant_ai_adaptation_rules`) in the same migration. If a future write to
+`tenants` starts failing with 401 again, check `pg_policies` for that table
+before assuming it's an app bug.
+
+**Manually verified in a browser** (not just `tsc`/`build`/API-level checks):
+operator login + tenant provisioning + plan/status changes, Chief
+Customization tab (module toggles, call duty rules, terminology, AI tuning),
+and the full guest-review round trip (generate link → open as guest →
+submit feedback → confirm it landed in the resident's view). All test data
+created during that walkthrough was cleaned up afterward.
+
+**Not yet built** (flagged, not silently skipped): Flutterwave integration
+code, live charge/subscription billing and webhooks, full terminology
+retrofit across existing components (`TerminologyProvider`/`useTerminology`
+in `src/lib/terminology.tsx` are real and applied only to the components
+built in migration 11 — `SaaSOperatorConsoleView`, `TenantCustomizationView`,
+`GuestReviewView` — not the rest of the app), and `tenant_ai_adaptation_rules`
+actually being read/applied by the Edge Functions when constructing prompts.
 
 ## Deployment
 
