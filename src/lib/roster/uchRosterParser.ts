@@ -1,4 +1,4 @@
-import { supabase } from '../databaseService';
+import { supabase, DEFAULT_TENANT_ID } from '../databaseService';
 import {
   RosterTypeId,
   RosterParseResult,
@@ -192,11 +192,15 @@ function heuristicParseSatellite(text: string): SatelliteGrid {
   return { postings, unparsed_notes };
 }
 
+// Quota-exceeded (migration 11) is treated the same as any other Edge
+// Function failure — falls through to the heuristic parser, consistent
+// with academicCopilot.ts's identical choice not to surface a distinct
+// paywall UI state in this pass.
 async function callRosterParserEdgeFunction<T>(rosterType: RosterTypeId, text: string): Promise<{ data: T; provider: 'openai' | 'gemini' } | null> {
   if (!supabase) return null;
   try {
     const { data, error } = await supabase.functions.invoke('roster-parser', {
-      body: { roster_type: rosterType, text },
+      body: { roster_type: rosterType, text, tenant_id: DEFAULT_TENANT_ID },
     });
     if (error) {
       console.warn(`Edge Function roster-parser (${rosterType}) failed, using heuristic fallback:`, error.message);

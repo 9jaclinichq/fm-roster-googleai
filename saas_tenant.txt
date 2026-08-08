@@ -1,0 +1,32 @@
+Execute SaaS Multi-Tenancy Expansion & Adaptive AI Engine:
+
+1. GIT BRANCH SETUP:
+   - Create and switch to a new branch: `feature/saas-multi-tenancy`.
+
+2. DATABASE SCHEMA MIGRATION:
+   - Create `supabase/migrations/11_saas_multi_tenancy_and_adaptive_ai.sql` containing:
+     a) `tenants` table (id, name, short_code, institution, department, plan_type ['free_seeded', 'tier_1', 'tier_2', 'enterprise'], status ['active', 'suspended'], paystack_subaccount_code, created_at).
+     b) Seed initial free tenant: 'Family Medicine, UCH Ibadan' (short_code: 'uch_fm', plan_type: 'free_seeded').
+     c) Add `tenant_id` foreign key column (referencing `tenants.id`) to ALL core tables: `workforce`, `collections`, `combined_master_rosters`, `announcements`, `knowledge_packs`, `dissertations`, `case_reports`, `exam_readiness`, `viva_simulations`, `call_duty_rules`.
+     d) Backfill existing data with UCH Ibadan's `tenant_id`.
+     e) `saas_operator_logs` table (id, operator_workforce_id, event_type, details [jsonb], created_at) for SaaS super-admin monitoring.
+     f) `tenant_ai_adaptation_rules` table (id, tenant_id, feature_key, adapted_prompt_overrides [jsonb], local_style_weights [jsonb], updated_at) to store fine-tuned AI behaviors per department.
+     g) Update RLS policies across all tables to enforce strict tenant isolation (`tenant_id = current_setting('app.current_tenant_id', true)::uuid` or tenant-matching user roles).
+
+3. SAAS SUPER-ADMIN OPERATOR CONSOLE (`src/components/SaaSOperatorConsoleView.tsx`):
+   - Portal accessible ONLY to platform owner / super-admin.
+   - Tenant Management: View all onboarded departments, provision new Chief Resident tenant codes, switch subscription tiers, and configure Paystack/Flutterwave subaccounts.
+   - Platform Analytics: Global resident count, active rosters, AI edge function invocation volume, and revenue metrics.
+   - Global AI Tuning: Inspect tenant adaptation rules and update base LLM system prompts.
+
+4. GRANULAR CHIEF CUSTOMIZATION PANEL (`src/components/TenantCustomizationView.tsx`):
+   - Integrated into `ChiefDashboardView.tsx` for Chief Residents.
+   - Granular Toggles: Enable/disable specific modules (e.g., turn off Viva Simulator or adjust 15-Case requirements if college guidelines shift).
+   - Curriculum Alignment: Update local milestone labels, required clinic stations, and call duty limits.
+   - AI Behavior Tuning: Set local supervisor preferences (e.g., preferred citation style, local ethics board submission formats).
+
+5. FRONTEND INTEGRATION & VERIFICATION:
+   - Add database helper functions for tenant routing and operator analytics to `src/lib/databaseService.ts`.
+   - Update `App.tsx` and `Navbar.tsx` with tenant-aware routing.
+   - Run `npx tsc --noEmit` and `npm run build`.
+   - Commit changes, push `feature/saas-multi-tenancy` to GitHub, and open a Pull Request against `main`.

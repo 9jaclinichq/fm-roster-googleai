@@ -39,6 +39,15 @@ import {
   RawRosterUpload,
   CombinedMasterRoster,
   MasterRosterStatus,
+  Tenant,
+  TenantPlanType,
+  CallDutyRule,
+  TenantAiAdaptationRule,
+  TenantAiQuota,
+  PlatformOperator,
+  GuestInvitedAs,
+  GuestReviewInvite,
+  GuestReviewInvitePublic,
 } from '../types';
 
 // Read from import.meta.env
@@ -62,7 +71,13 @@ function checkSupabase() {
 // is deliberately excluded — that column is locked down at the database
 // level (see supabase/migrations/01_rbac_and_rotations.sql) and only ever
 // returned by the chief_* RPCs below, which re-verify the admin code first.
-const WORKFORCE_PUBLIC_COLUMNS = 'id, full_name, category, active, on_floor, created_at';
+const WORKFORCE_PUBLIC_COLUMNS = 'id, full_name, category, active, on_floor, tenant_id, created_at';
+
+// Fixed id of the UCH Family Medicine seed tenant (migration 11) — the
+// only tenant that exists today. Used as a fallback default; components
+// should prefer reading a real tenant_id from session/context once
+// tenant-aware login exists.
+export const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 export const databaseService = {
   isMock: false, // Always false as the app must read only from Supabase.
@@ -1035,6 +1050,42 @@ export const databaseService = {
     return (data || []) as unknown as CaseReportWithWorkforce[];
   },
 
+  // Single-row fetches for the guest review page — reuses the same
+  // permissive SELECT policies dissertation_milestones/case_reports
+  // already have (see migrations 04/07), joined the same way as the
+  // pending-review queues above.
+  async getDissertationMilestoneById(id: string): Promise<DissertationMilestoneWithContext | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('dissertation_milestones')
+      .select('*, dissertations(title, workforce_id, workforce(full_name, category))')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Error fetching dissertation milestone:', error);
+      throw error;
+    }
+    return data as unknown as DissertationMilestoneWithContext | null;
+  },
+
+  async getCaseReportById(id: string): Promise<CaseReportWithWorkforce | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('case_reports')
+      .select('*, workforce(full_name, category)')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Error fetching case report:', error);
+      throw error;
+    }
+    return data as unknown as CaseReportWithWorkforce | null;
+  },
+
   async submitConsultantReview(
     reviewerWorkforceId: string,
     targetType: ReviewTargetType,
@@ -1365,5 +1416,388 @@ export const databaseService = {
       throw error;
     }
     return data;
+  },
+
+  // --- SAAS MULTI-TENANCY ---
+  // NOTE ON SCOPE: tenant_id is now a column on the 10 core tables (see
+  // migration 11), but existing get*/query methods above are NOT filtered
+  // by tenant_id — with exactly one tenant seeded and no tenant-switching
+  // login flow yet, there's nothing to filter against. When a second
+  // tenant is provisioned, those methods need tenant_id filters added.
+  // This section covers what IS functional today: operator-level tenant
+  // management, per-tenant customization, AI quota, and guest review
+  // links. Tenant isolation is client-enforced only, not RLS-enforced —
+  // see migration 11's header for why.
+  async getTenants(): Promise<Tenant[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.from('tenants').select('*').order('created_at', { ascending: true });
+    if (error) {
+      console.warn('Error fetching tenants:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async getTenant(tenantId: string): Promise<Tenant | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.from('tenants').select('*').eq('id', tenantId).maybeSingle();
+    if (error) {
+      console.warn('Error fetching tenant:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Creates a Paystack subaccount via the Edge Function, then inserts the
+  // tenant row with the returned subaccount_code. If the Paystack call
+  // fails, no tenant row is created — surfaced to the caller as a thrown
+  // error so the operator console can show it plainly rather than leaving
+  // a tenant with no billing configured.
+  async provisionTenantWithSubaccount(tenant: {
+    name: string;
+    short_code: string;
+    institution?: string | null;
+    department?: string | null;
+    plan_type?: TenantPlanType;
+    business_name: string;
+    settlement_bank: string;
+    account_number: string;
+    percentage_charge: number;
+  }): Promise<Tenant> {
+    checkSupabase();
+
+    const { data: fnData, error: fnError } = await supabase!.functions.invoke('paystack-subaccount', {
+      body: {
+        business_name: tenant.business_name,
+        settlement_bank: tenant.settlement_bank,
+        account_number: tenant.account_number,
+        percentage_charge: tenant.percentage_charge,
+      },
+    });
+
+    if (fnError || !fnData?.subaccount_code) {
+      console.warn('Error creating Paystack subaccount:', fnError || fnData);
+      throw new Error(fnData?.error || fnError?.message || 'Failed to create Paystack subaccount');
+    }
+
+    const { data, error } = await supabase!
+      .from('tenants')
+      .insert([{
+        name: tenant.name,
+        short_code: tenant.short_code,
+        institution: tenant.institution || null,
+        department: tenant.department || null,
+        plan_type: tenant.plan_type || 'free_seeded',
+        paystack_subaccount_code: fnData.subaccount_code,
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error inserting tenant after subaccount creation:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Provisions a tenant WITHOUT a Paystack subaccount (free tier or
+  // billing configured later).
+  async createTenant(tenant: {
+    name: string;
+    short_code: string;
+    institution?: string | null;
+    department?: string | null;
+    plan_type?: TenantPlanType;
+  }): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('tenants')
+      .insert([{ plan_type: 'free_seeded', ...tenant }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error creating tenant:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateTenantPlan(tenantId: string, planType: TenantPlanType): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('tenants')
+      .update({ plan_type: planType })
+      .eq('id', tenantId)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating tenant plan:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateTenantStatus(tenantId: string, status: 'active' | 'suspended'): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('tenants')
+      .update({ status })
+      .eq('id', tenantId)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating tenant status:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateTenantTerminology(tenantId: string, overrides: Record<string, string>): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('tenants')
+      .update({ terminology_overrides: overrides })
+      .eq('id', tenantId)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating tenant terminology:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateTenantModuleFlags(tenantId: string, flags: Record<string, unknown>): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('tenants')
+      .update({ module_flags: flags })
+      .eq('id', tenantId)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating tenant module flags:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- CALL DUTY RULES (per-tenant curriculum alignment) ---
+  async getCallDutyRules(tenantId: string): Promise<CallDutyRule[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.from('call_duty_rules').select('*').eq('tenant_id', tenantId);
+    if (error) {
+      console.warn('Error fetching call duty rules:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async upsertCallDutyRule(tenantId: string, ruleKey: string, ruleValue: number, description?: string | null): Promise<CallDutyRule> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('call_duty_rules')
+      .upsert([{ tenant_id: tenantId, rule_key: ruleKey, rule_value: ruleValue, description: description || null }], {
+        onConflict: 'tenant_id,rule_key',
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error upserting call duty rule:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- TENANT AI ADAPTATION RULES ---
+  // Schema/UI only in this pass — NOT yet read by the Edge Functions when
+  // constructing prompts. See migration 11's header for why that's deferred.
+  async getTenantAiAdaptationRules(tenantId: string): Promise<TenantAiAdaptationRule[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.from('tenant_ai_adaptation_rules').select('*').eq('tenant_id', tenantId);
+    if (error) {
+      console.warn('Error fetching tenant AI adaptation rules:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async upsertTenantAiAdaptationRule(
+    tenantId: string,
+    featureKey: string,
+    updates: { adapted_prompt_overrides?: Record<string, unknown>; local_style_weights?: Record<string, unknown> }
+  ): Promise<TenantAiAdaptationRule> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('tenant_ai_adaptation_rules')
+      .upsert([{ tenant_id: tenantId, feature_key: featureKey, ...updates }], { onConflict: 'tenant_id,feature_key' })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error upserting tenant AI adaptation rule:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- TENANT AI QUOTA ---
+  // Real enforcement happens server-side inside the Edge Functions (see
+  // supabase/functions/academic-copilot and roster-parser) — this is a
+  // client-side convenience for displaying remaining quota, and also
+  // increments the counter itself when called (same RPC either way).
+  async checkTenantAiQuota(tenantId: string): Promise<TenantAiQuota> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('check_and_increment_tenant_ai_quota', { p_tenant_id: tenantId });
+    if (error) {
+      console.warn('Error checking tenant AI quota:', error);
+      throw error;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    return row as TenantAiQuota;
+  },
+
+  // --- SAAS OPERATOR (platform owner — separate identity from workforce) ---
+  async verifyPlatformOperatorLogin(code: string): Promise<PlatformOperator | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('verify_platform_operator_code', { p_code: code });
+    if (error) {
+      console.warn('Error verifying platform operator login:', error);
+      throw error;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    return row || null;
+  },
+
+  async logOperatorEvent(operatorId: string, eventType: string, details: Record<string, unknown> = {}): Promise<void> {
+    checkSupabase();
+
+    const { error } = await supabase!.from('saas_operator_logs').insert([{ operator_id: operatorId, event_type: eventType, details }]);
+    if (error) {
+      console.warn('Error logging operator event:', error);
+      // Non-fatal: an audit-log write failure shouldn't block the action itself.
+    }
+  },
+
+  // --- GUEST REVIEW LINKS (no-login consultant/peer sign-off) ---
+  async createGuestReviewInvite(
+    createdByWorkforceId: string,
+    targetType: 'dissertation_milestone' | 'case_report',
+    targetId: string,
+    invitedAs: GuestInvitedAs = 'peer_reviewer',
+    guestName?: string
+  ): Promise<GuestReviewInvite> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('create_guest_review_invite', {
+      p_created_by_workforce_id: createdByWorkforceId,
+      p_target_type: targetType,
+      p_target_id: targetId,
+      p_invited_as: invitedAs,
+      p_guest_name: guestName || null,
+    });
+
+    if (error) {
+      console.warn('Error creating guest review invite:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async getGuestReviewInvite(token: string): Promise<GuestReviewInvitePublic | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('get_guest_review_invite', { p_token: token });
+    if (error) {
+      console.warn('Error fetching guest review invite:', error);
+      throw error;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    return row || null;
+  },
+
+  async submitGuestReview(
+    token: string,
+    status: ReviewStatus,
+    feedbackNotes: string,
+    guestSignatureUrl: string | null,
+    guestName?: string
+  ): Promise<ConsultantReview> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('submit_guest_review', {
+      p_token: token,
+      p_status: status,
+      p_feedback_notes: feedbackNotes || null,
+      p_guest_signature_url: guestSignatureUrl,
+      p_guest_name: guestName || null,
+    });
+
+    if (error) {
+      console.warn('Error submitting guest review:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async uploadGuestSignature(file: File): Promise<string> {
+    checkSupabase();
+
+    const fileExt = file.name.split('.').pop();
+    const filePath = `guest-signatures/${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+
+    const { error } = await supabase!.storage.from('guest-signatures').upload(filePath, file);
+    if (error) {
+      console.warn('Guest signature upload failed:', error);
+      throw error;
+    }
+
+    const { data: publicUrlData } = supabase!.storage.from('guest-signatures').getPublicUrl(filePath);
+    return publicUrlData.publicUrl;
+  },
+
+  // Coarse, unfiltered counts for the SaaS operator console's platform
+  // analytics panel — global (across all tenants), not tenant-scoped.
+  // count: 'exact', head: true avoids fetching row bodies just to count.
+  async getPlatformAnalyticsSummary(): Promise<{
+    totalTenants: number;
+    totalMembers: number;
+    activeMasterRosters: number;
+    aiActionCount: number;
+  }> {
+    checkSupabase();
+
+    const [tenants, members, rosters, aiActions] = await Promise.all([
+      supabase!.from('tenants').select('id', { count: 'exact', head: true }),
+      supabase!.from('workforce').select('id', { count: 'exact', head: true }),
+      supabase!.from('combined_master_rosters').select('id', { count: 'exact', head: true }).eq('status', 'published'),
+      supabase!.from('ai_action_logs').select('id', { count: 'exact', head: true }),
+    ]);
+
+    return {
+      totalTenants: tenants.count || 0,
+      totalMembers: members.count || 0,
+      activeMasterRosters: rosters.count || 0,
+      aiActionCount: aiActions.count || 0,
+    };
   },
 };

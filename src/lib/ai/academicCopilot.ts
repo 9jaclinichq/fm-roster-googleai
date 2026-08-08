@@ -1,4 +1,4 @@
-import { databaseService, supabase } from '../databaseService';
+import { databaseService, supabase, DEFAULT_TENANT_ID } from '../databaseService';
 import { AiActionType } from '../../types';
 
 // Client-side academic support actions for the Dissertation Assistant and
@@ -108,13 +108,17 @@ interface EdgeFunctionSuccess<T> {
 // Calls the academic-copilot Edge Function (which itself tries OpenAI then
 // Gemini — see supabase/functions/academic-copilot/index.ts). Returns null
 // on ANY failure (function not deployed, neither secret configured,
-// network error, malformed response) so callers can fall back to the
-// heuristic path uniformly.
+// network error, malformed response, free-tier quota exhausted — see
+// migration 11) so callers can fall back to the heuristic path uniformly.
+// Quota-exceeded is deliberately treated the same as any other Edge
+// Function failure, not surfaced as a distinct UI state — consistent with
+// this app's existing "the AI tier is optional, the UI never breaks"
+// design rather than a new user-facing paywall message in this pass.
 async function callEdgeFunction<T>(action: 'vancouver_format' | 'methodology_check' | 'extract_ddx', text: string): Promise<EdgeFunctionSuccess<T> | null> {
   if (!supabase) return null;
   try {
     const { data, error } = await supabase.functions.invoke('academic-copilot', {
-      body: { action, text },
+      body: { action, text, tenant_id: DEFAULT_TENANT_ID },
     });
     if (error) {
       console.warn(`Edge Function academic-copilot (${action}) failed, using heuristic fallback:`, error.message);
