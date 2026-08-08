@@ -22,6 +22,19 @@
 // verify against — see migration 01's header for that documented limitation.
 // This function is reachable by anyone holding the anon key, same trust
 // model as the rest of this app's API surface.)
+//
+// TENANT AI QUOTA (added in migration 11 / SaaS multi-tenancy): if the
+// request includes a tenant_id, this function checks and increments that
+// tenant's rolling free-tier quota via check_and_increment_tenant_ai_quota()
+// BEFORE calling any provider, using the service-role key (bypasses RLS,
+// safe since this runs server-side only, never in client code). This is
+// deliberately enforced HERE, not just in the client — a client-only quota
+// check would be trivially bypassed by anyone calling this Edge Function's
+// URL directly with curl. tenant_id is optional and backward-compatible:
+// if omitted, quota checking is skipped entirely (older callers keep
+// working unmetered until they're updated to pass it).
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -34,6 +47,7 @@ type ActionType = 'vancouver_format' | 'methodology_check' | 'extract_ddx';
 interface RequestBody {
   action: ActionType;
   text: string;
+  tenant_id?: string;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -41,6 +55,31 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   });
+}
+
+interface QuotaResult {
+  allowed: boolean;
+  remaining: number | null;
+  resets_at: string | null;
+}
+
+async function checkTenantAiQuota(tenantId: string): Promise<QuotaResult | null> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !serviceRoleKey) {
+    // Auto-injected by the Supabase platform in every Edge Function — if
+    // absent, something is very wrong with the runtime, not with the
+    // tenant's quota. Fail open rather than blocking every AI action.
+    console.error('SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not available to Edge Function runtime.');
+    return null;
+  }
+  const admin = createClient(supabaseUrl, serviceRoleKey);
+  const { data, error } = await admin.rpc('check_and_increment_tenant_ai_quota', { p_tenant_id: tenantId });
+  if (error) {
+    console.error('Quota RPC failed:', error.message);
+    return null;
+  }
+  return data?.[0] ?? null;
 }
 
 // Every prompt explicitly frames output as an educational aid requiring
@@ -176,6 +215,20 @@ Deno.serve(async (req: Request) => {
   }
   if (!text || typeof text !== 'string' || !text.trim()) {
     return jsonResponse({ error: 'No text provided.' }, 400);
+  }
+
+  if (body.tenant_id) {
+    const quota = await checkTenantAiQuota(body.tenant_id);
+    if (quota && !quota.allowed) {
+      return jsonResponse(
+        {
+          error: 'quota_exceeded',
+          message: 'Free-tier AI action limit reached for this cycle. Upgrade your plan to continue, or wait for the quota to reset.',
+          resets_at: quota.resets_at,
+        },
+        429
+      );
+    }
   }
 
   // Try OpenAI first, then Gemini. Either may be unconfigured (env var

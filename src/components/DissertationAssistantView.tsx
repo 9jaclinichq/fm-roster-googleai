@@ -14,6 +14,9 @@ import {
   BookCheck,
   Quote,
   X,
+  Link2,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 interface DissertationAssistantViewProps {
@@ -41,6 +44,11 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
   // Upload state
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string>('');
+
+  // Guest review link (external, no-login reviewer sharing)
+  const [guestLink, setGuestLink] = useState<string | null>(null);
+  const [isCreatingGuestLink, setIsCreatingGuestLink] = useState<boolean>(false);
+  const [guestLinkCopied, setGuestLinkCopied] = useState<boolean>(false);
 
   // AI panel
   const [aiPanelOpen, setAiPanelOpen] = useState<'guidelines' | 'citations' | null>(null);
@@ -72,6 +80,10 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resident.id]);
 
+  useEffect(() => {
+    setGuestLink(null);
+  }, [selectedStage]);
+
   const handleStart = async (e: React.FormEvent) => {
     e.preventDefault();
     setStartError('');
@@ -95,6 +107,42 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
   };
 
   const currentMilestone = milestones.find(m => m.stage === selectedStage) || null;
+
+  const handleCreateGuestLink = async () => {
+    if (!currentMilestone) return;
+    setIsCreatingGuestLink(true);
+    setGuestLinkCopied(false);
+    try {
+      // Always created as 'peer_reviewer' from here — grants feedback/
+      // revisions-requested only, never final approval. A supervisor with
+      // an authorized role (hod/rtc/cme_coord/consultant/super_admin) can
+      // grant a full-approval-authority link some other way; this resident-
+      // facing view deliberately doesn't expose that escalation.
+      const invite = await databaseService.createGuestReviewInvite(
+        resident.id,
+        'dissertation_milestone',
+        currentMilestone.id,
+        'peer_reviewer'
+      );
+      setGuestLink(`${window.location.origin}${window.location.pathname}#/guest-review/${invite.token}`);
+    } catch (err) {
+      console.warn('Failed to create guest review link:', err);
+    } finally {
+      setIsCreatingGuestLink(false);
+    }
+  };
+
+  const copyGuestLink = async () => {
+    if (!guestLink) return;
+    try {
+      await navigator.clipboard.writeText(guestLink);
+      setGuestLinkCopied(true);
+      setTimeout(() => setGuestLinkCopied(false), 2000);
+    } catch {
+      // Clipboard API can be blocked in some contexts — the link is still
+      // visible and selectable, so this isn't fatal.
+    }
+  };
 
   const handleSetCurrentStage = async (stage: DissertationStage) => {
     if (!dissertation) return;
@@ -310,6 +358,33 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
               </p>
             ) : (
               <p className="text-xs text-slate-400 italic">No feedback recorded yet for this stage.</p>
+            )}
+          </div>
+
+          {/* Guest review link — no-login sharing for a reviewer not on the platform */}
+          <div className="space-y-2 pt-2 border-t border-slate-100">
+            <label className="text-xs font-bold text-slate-700 uppercase">Share for External Review</label>
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              If your reviewer isn't a platform user, generate a link they can open as a guest — no account needed.
+              They can leave feedback and a photo signature, but this link can only request revisions, not grant
+              final approval.
+            </p>
+            {guestLink ? (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+                <input readOnly value={guestLink} className="flex-1 bg-transparent text-xs font-mono text-slate-600 outline-none" onFocus={e => e.target.select()} />
+                <button onClick={copyGuestLink} className="shrink-0 p-1.5 rounded-lg hover:bg-slate-200 cursor-pointer" title="Copy link">
+                  {guestLinkCopied ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} className="text-slate-500" />}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleCreateGuestLink}
+                disabled={isCreatingGuestLink}
+                className="inline-flex items-center space-x-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 cursor-pointer transition disabled:opacity-50"
+              >
+                <Link2 size={14} />
+                <span>{isCreatingGuestLink ? 'Generating...' : 'Generate Guest Review Link'}</span>
+              </button>
             )}
           </div>
         </div>

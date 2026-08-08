@@ -15,6 +15,11 @@ export interface WorkforceMember {
   // (General Out-Patient) from those on an outside rotation — a
   // current-state flag, not tracked month-by-month.
   on_floor: boolean;
+  // Present when explicitly selected (migration 11) — see
+  // WORKFORCE_PUBLIC_COLUMNS in databaseService.ts. Optional because most
+  // existing call sites don't request it and there's only one tenant
+  // seeded today; not yet used to filter any existing query client-side.
+  tenant_id?: string;
   created_at: string;
 }
 
@@ -234,7 +239,103 @@ export interface ConsultantReview {
   // The reviewer's role at the time of review ('resident' for a
   // co-resident peer-assist review, or the subadmin role_id otherwise).
   reviewer_role: string | null;
+  // Set only for reviews submitted through a guest link (migration 11) —
+  // reviewer_workforce_id is null in that case.
+  guest_invite_id?: string | null;
+  guest_name?: string | null;
+  guest_signature_url?: string | null;
   created_at: string;
+}
+
+// --- SAAS MULTI-TENANCY & ADAPTIVE AI (migration 11) ---
+
+export type TenantPlanType = 'free_seeded' | 'tier_1' | 'tier_2' | 'enterprise';
+export type TenantStatus = 'active' | 'suspended';
+
+export interface Tenant {
+  id: string;
+  name: string;
+  short_code: string;
+  institution: string | null;
+  department: string | null;
+  plan_type: TenantPlanType;
+  status: TenantStatus;
+  paystack_subaccount_code: string | null;
+  // Tenant-configurable label overrides (e.g. {"resident": "Trainee"}) so
+  // the same app can serve orgs beyond medical residency without a
+  // code-level rename. Read via src/lib/terminology.tsx. NOT yet applied
+  // to most existing components — see that file's header for scope.
+  terminology_overrides: Record<string, string>;
+  // Granular module toggles/overrides, e.g.
+  // {"viva_simulator_enabled": true, "case_reports_required_count": 15}.
+  module_flags: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface CallDutyRule {
+  id: string;
+  tenant_id: string;
+  rule_key: string;
+  rule_value: number;
+  description: string | null;
+  created_at: string;
+}
+
+export interface TenantAiAdaptationRule {
+  id: string;
+  tenant_id: string;
+  feature_key: string;
+  adapted_prompt_overrides: Record<string, unknown>;
+  local_style_weights: Record<string, unknown>;
+  updated_at: string;
+}
+
+export interface TenantAiQuota {
+  allowed: boolean;
+  remaining: number | null;
+  resets_at: string | null;
+}
+
+export interface PlatformOperator {
+  id: string;
+  name: string;
+}
+
+export interface SaasOperatorLog {
+  id: string;
+  operator_id: string | null;
+  event_type: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export type GuestInvitedAs = 'peer_reviewer' | 'consultant';
+export type GuestInviteStatus = 'pending' | 'completed' | 'revoked';
+
+export interface GuestReviewInvite {
+  id: string;
+  tenant_id: string;
+  token: string;
+  target_type: ReviewTargetType;
+  target_id: string;
+  invited_as: GuestInvitedAs;
+  created_by_workforce_id: string | null;
+  guest_name: string | null;
+  status: GuestInviteStatus;
+  expires_at: string;
+  completed_at: string | null;
+  created_at: string;
+}
+
+// Subset returned by get_guest_review_invite() — deliberately minimal,
+// doesn't leak tenant_id/creator identity to an anonymous guest visitor.
+export interface GuestReviewInvitePublic {
+  target_type: ReviewTargetType;
+  target_id: string;
+  invited_as: GuestInvitedAs;
+  guest_name: string | null;
+  status: GuestInviteStatus;
+  expires_at: string;
 }
 
 export interface DelegatedRole extends UserRole {

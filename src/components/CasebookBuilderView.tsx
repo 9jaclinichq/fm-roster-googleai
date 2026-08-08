@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { academicCopilot, AcademicCopilotSource } from '../lib/ai/academicCopilot';
 import { CaseReport, CaseReportStatus } from '../types';
-import { ClipboardList, RefreshCw, FileText, UploadCloud, X, AlertTriangle, CheckCircle2, Clock, Sparkles } from 'lucide-react';
+import { ClipboardList, RefreshCw, FileText, UploadCloud, X, AlertTriangle, CheckCircle2, Clock, Sparkles, Link2, Copy, Check } from 'lucide-react';
 
 interface CasebookBuilderViewProps {
   resident: { id: string; name: string; category: string };
@@ -36,6 +36,11 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
   const [ddxSource, setDdxSource] = useState<AcademicCopilotSource | null>(null);
   const [isExtractingDdx, setIsExtractingDdx] = useState<boolean>(false);
 
+  // Guest review link (external, no-login reviewer sharing)
+  const [guestLink, setGuestLink] = useState<string | null>(null);
+  const [isCreatingGuestLink, setIsCreatingGuestLink] = useState<boolean>(false);
+  const [guestLinkCopied, setGuestLinkCopied] = useState<boolean>(false);
+
   const load = () => {
     setIsLoading(true);
     databaseService.getCaseReports(resident.id)
@@ -60,6 +65,36 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
     setDdxCandidates(null);
     setDdxReasoning(null);
     setDdxSource(null);
+    setGuestLink(null);
+    setGuestLinkCopied(false);
+  };
+
+  const handleCreateGuestLink = async () => {
+    if (!activeReport) return;
+    setIsCreatingGuestLink(true);
+    setGuestLinkCopied(false);
+    try {
+      // 'peer_reviewer' only — see DissertationAssistantView's identical
+      // note: this resident-facing view never grants final-approval
+      // authority to a guest link.
+      const invite = await databaseService.createGuestReviewInvite(resident.id, 'case_report', activeReport.id, 'peer_reviewer');
+      setGuestLink(`${window.location.origin}${window.location.pathname}#/guest-review/${invite.token}`);
+    } catch (err) {
+      console.warn('Failed to create guest review link:', err);
+    } finally {
+      setIsCreatingGuestLink(false);
+    }
+  };
+
+  const copyGuestLink = async () => {
+    if (!guestLink) return;
+    try {
+      await navigator.clipboard.writeText(guestLink);
+      setGuestLinkCopied(true);
+      setTimeout(() => setGuestLinkCopied(false), 2000);
+    } catch {
+      // Non-fatal — link remains visible/selectable.
+    }
   };
 
   const handleExtractDdx = async () => {
@@ -312,6 +347,34 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
                   </label>
                 )}
               </div>
+
+              {activeReport && (
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <label className="text-xs font-bold text-slate-700 uppercase">Share for External Review</label>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    If your reviewer isn't a platform user, generate a link they can open as a guest — no account
+                    needed. They can leave feedback and a photo signature, but this link can only request revisions,
+                    not grant final approval.
+                  </p>
+                  {guestLink ? (
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+                      <input readOnly value={guestLink} className="flex-1 bg-transparent text-xs font-mono text-slate-600 outline-none" onFocus={e => e.target.select()} />
+                      <button onClick={copyGuestLink} className="shrink-0 p-1.5 rounded-lg hover:bg-slate-200 cursor-pointer" title="Copy link">
+                        {guestLinkCopied ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} className="text-slate-500" />}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={handleCreateGuestLink}
+                      disabled={isCreatingGuestLink}
+                      className="inline-flex items-center space-x-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 cursor-pointer transition disabled:opacity-50"
+                    >
+                      <Link2 size={14} />
+                      <span>{isCreatingGuestLink ? 'Generating...' : 'Generate Guest Review Link'}</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {!isReadOnly && (

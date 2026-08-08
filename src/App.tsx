@@ -7,6 +7,7 @@ import { ResidentLoginView } from './components/ResidentLoginView';
 import { ResidentFormView } from './components/ResidentFormView';
 import { AnnouncementBoardView } from './components/AnnouncementBoardView';
 import { databaseService } from './lib/databaseService';
+import { TerminologyProvider } from './lib/terminology';
 import { WorkforceMember } from './types';
 
 // Code-split the heavier resident views — each pulls its own weight in
@@ -41,6 +42,16 @@ const OralExamSimulatorView = lazy(() =>
 );
 const ConsultantReviewView = lazy(() =>
   import('./components/ConsultantReviewView').then(m => ({ default: m.ConsultantReviewView }))
+);
+// Public routes added by the SaaS multi-tenancy pass — neither is gated by
+// resident/chief session state. GuestReviewView is reachable by anyone
+// holding a review token (a capability URL); SaaSOperatorConsoleView
+// handles its own separate login gate internally (see that file).
+const GuestReviewView = lazy(() =>
+  import('./components/GuestReviewView').then(m => ({ default: m.GuestReviewView }))
+);
+const SaaSOperatorConsoleView = lazy(() =>
+  import('./components/SaaSOperatorConsoleView').then(m => ({ default: m.SaaSOperatorConsoleView }))
 );
 
 const SUBADMIN_ROLE_IDS = ['hod', 'rtc', 'cme_coord', 'consultant', 'super_admin'];
@@ -347,6 +358,14 @@ function MainAppContent() {
             }
           />
 
+          {/* Guest Review — public, no login required (see GuestReviewView) */}
+          <Route path="/guest-review/:token" element={<GuestReviewView />} />
+
+          {/* SaaS Platform Operator Console — public route, but the
+              component itself gates access behind a separate operator
+              shared code (see SaaSOperatorConsoleView) */}
+          <Route path="/saas-operator" element={<SaaSOperatorConsoleView />} />
+
           {/* Catch-all route */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -358,6 +377,11 @@ function MainAppContent() {
         <div className="max-w-7xl mx-auto px-4">
           <p>&copy; {new Date().getFullYear()} Department of Family Medicine. All rights reserved.</p>
           <p className="mt-1 text-[10px] text-slate-300">FM Residents Dashboard &bull; Production Version 0.1</p>
+          <p className="mt-2">
+            <a href="#/saas-operator" className="text-[10px] text-slate-300 hover:text-slate-500 hover:underline">
+              Platform Operator Console
+            </a>
+          </p>
         </div>
       </footer>
     </div>
@@ -367,7 +391,9 @@ function MainAppContent() {
 export default function App() {
   return (
     <Router>
-      <MainAppContent />
+      <TerminologyProvider>
+        <MainAppContent />
+      </TerminologyProvider>
     </Router>
   );
 }
