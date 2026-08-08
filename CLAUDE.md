@@ -33,18 +33,26 @@ workforce roster, open/close monthly collection cycles, and export submissions.
 - **Frontend**: React 19, TypeScript (strict-ish, `noEmit` lint via `tsc`), Vite 6
 - **Styling**: Tailwind CSS v4 (via `@tailwindcss/vite`)
 - **Routing**: `react-router-dom` v7 (`HashRouter`)
-- **Data/Backend**: Supabase (Postgres + RLS + Storage) via `@supabase/supabase-js`
-- **Forms**: `react-hook-form`, `zod` (present, not yet confirmed wired into all forms)
-- **State/data fetching**: `@tanstack/react-query` (present as a dependency —
-  confirm actual usage before assuming query caching is active)
+- **Data/Backend**: Supabase (Postgres + RLS + Storage + Edge Functions) via `@supabase/supabase-js`
 - **Package manager**: npm (`package-lock.json`) — the project originally used Bun, but switched to npm when Bun couldn't be reliably installed in the working environment
 - **Deploy target**: Netlify (`netlify.toml` present, SPA redirect configured)
 
-### Dependencies present but currently unused (do not assume they're wired up)
-- `@google/genai` — no references found in `src/`. Likely leftover from the
-  Google AI Studio scaffold this project was bootstrapped from.
-- `express`, `dotenv` — no server file exists; this is a pure static SPA.
-- Do not build features assuming a Node/Express backend exists — it doesn't.
+### Note on dependencies
+`@google/genai`, `express`, `dotenv`, `react-hook-form`, `zod`, and
+`@tanstack/react-query` were all removed after being confirmed unused
+anywhere in `src/` (leftovers from the Google AI Studio scaffold this
+project was bootstrapped from, or from early exploration). Don't
+re-introduce a dependency without checking it's actually imported
+somewhere — `package.json` has drifted from reality before.
+
+> **CLAUDE.md staleness warning**: the Security Notes / RBAC-gaps sections
+> below were written during the Phase 0 audit and have not been fully
+> refreshed since. Several described gaps (no `roles`/`user_roles` table, no
+> `rotations` table, no `file_uploads` table) have since been closed by
+> migrations 01–09 — check `supabase/migrations/` and `src/types.ts` for
+> current schema reality rather than trusting this file's older sections at
+> face value. This file needs a full pass; treat outdated claims as a known
+> issue, not as ground truth.
 
 ## Project Structure
 
@@ -143,6 +151,59 @@ Current `schema.sql` has **no dedicated tables** for:
 
 These three gaps are the main schema-design backlog items — see the execution
 plan below.
+
+## AI / Supabase Edge Functions
+
+`src/lib/ai/academicCopilot.ts` backs the Dissertation Assistant's and
+Casebook Builder's AI-assisted actions (guideline check, Vancouver citation
+formatting, differential-diagnosis extraction). It tries the
+`academic-copilot` Supabase Edge Function first
+(`supabase/functions/academic-copilot/index.ts`), and falls back to a
+deterministic local heuristic implementation if the function isn't
+deployed, has no API key configured, or fails for any reason — the UI
+never breaks either way. Every result carries a `source` field
+(`'edge_function'` or `'heuristic_fallback'`) shown in the UI and logged to
+`ai_action_logs`, so it's always clear which path actually produced a
+given result.
+
+**Why an Edge Function at all**: this app is a pure static SPA with no
+backend of its own. An LLM API key can never be embedded in client code —
+even a non-`VITE_`-prefixed one — because Vite ships whatever the bundled
+JS actually references. A Supabase Edge Function is the only place in this
+project's architecture that can hold such a secret safely (`Deno.env`,
+never in the repo or the client bundle).
+
+**Deploying the function** (from the project root, with the Supabase CLI
+installed and the project linked — `npx supabase link --project-ref <ref>`):
+
+```bash
+npx supabase functions deploy academic-copilot --no-verify-jwt
+```
+
+`--no-verify-jwt` is required because this app has no Supabase Auth
+sessions to verify against (see the Role Model section above) — the
+function is reachable by anyone holding the anon key, the same trust model
+as the rest of this app's API surface.
+
+**Setting the secret** (do this once per Supabase project; it is NOT the
+same as anything in `.env` — see `.env.example`'s `AI_API_KEY` entry, which
+exists only as documentation and is never read by the Vite app):
+
+```bash
+npx supabase secrets set AI_API_KEY=sk-...
+```
+
+Without that secret set, the function returns a graceful `503` and the app
+transparently uses its heuristic fallback — this is a safe, expected state,
+not a broken one.
+
+> **Not deployed or live-tested from the session that wrote this
+> function.** There was no working Supabase CLI / Docker deploy path
+> available in that environment (the CLI has previously segfaulted here —
+> see the Phase 0 audit notes). The function code was written to the
+> standard Supabase Edge Function contract as precisely as possible, but
+> treat it as reviewed-not-verified until someone actually deploys it and
+> exercises it for real.
 
 ## Deployment
 

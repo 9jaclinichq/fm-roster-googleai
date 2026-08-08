@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
-import { academicCopilot } from '../lib/ai/academicCopilot';
+import { academicCopilot, AcademicCopilotSource } from '../lib/ai/academicCopilot';
 import { Dissertation, DissertationMilestone, DissertationStage, WACP_DISSERTATION_STAGES } from '../types';
 import {
   GraduationCap,
@@ -47,6 +47,7 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
   const [aiInputText, setAiInputText] = useState<string>('');
   const [aiResultNotes, setAiResultNotes] = useState<string[] | null>(null);
   const [aiFormatted, setAiFormatted] = useState<string | null>(null);
+  const [aiSource, setAiSource] = useState<AcademicCopilotSource | null>(null);
   const [isAiRunning, setIsAiRunning] = useState<boolean>(false);
 
   const load = async () => {
@@ -127,6 +128,7 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
     try {
       const result = await academicCopilot.checkGuidelineCompliance(resident.id, aiInputText);
       setAiResultNotes(result.notes);
+      setAiSource(result.source);
     } finally {
       setIsAiRunning(false);
     }
@@ -138,6 +140,7 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
     try {
       const result = await academicCopilot.formatVancouverCitations(resident.id, aiInputText);
       setAiFormatted(result.formatted || 'Nothing to format — paste one reference per line.');
+      setAiSource(result.source);
     } finally {
       setIsAiRunning(false);
     }
@@ -320,14 +323,14 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => { setAiPanelOpen('guidelines'); setAiResultNotes(null); }}
+            onClick={() => { setAiPanelOpen('guidelines'); setAiResultNotes(null); setAiSource(null); }}
             className="inline-flex items-center space-x-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 cursor-pointer transition"
           >
             <BookCheck size={14} />
             <span>Check Departmental Guidelines</span>
           </button>
           <button
-            onClick={() => { setAiPanelOpen('citations'); setAiFormatted(null); }}
+            onClick={() => { setAiPanelOpen('citations'); setAiFormatted(null); setAiSource(null); }}
             className="inline-flex items-center space-x-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 cursor-pointer transition"
           >
             <Quote size={14} />
@@ -360,6 +363,15 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
               {isAiRunning ? 'Running...' : 'Run'}
             </button>
 
+            {aiSource && (
+              <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${
+                aiSource === 'edge_function'
+                  ? 'bg-violet-50 text-violet-700 border-violet-200'
+                  : 'bg-slate-100 text-slate-600 border-slate-200'
+              }`}>
+                {aiSource === 'edge_function' ? 'AI-generated' : 'Heuristic (no AI configured)'}
+              </span>
+            )}
             {aiResultNotes && (
               <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-3 text-xs space-y-1">
                 {aiResultNotes.map((n, i) => <p key={i}>{n}</p>)}
