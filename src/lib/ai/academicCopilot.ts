@@ -1,41 +1,53 @@
-import { databaseService } from '../databaseService';
+import { databaseService, supabase } from '../databaseService';
 import { AiActionType } from '../../types';
 
 // Client-side academic support actions for the Dissertation Assistant and
-// Casebook Builder. IMPORTANT — these are deterministic text-processing
-// heuristics, NOT calls to an LLM: there is no LLM API key configured in
-// this project, and (as noted when this file was first stubbed out) this
-// app is a pure static SPA with no backend, so an API key could never be
-// held safely on the client anyway. Every function here does real,
-// functional work — structural checks, regex-based normalization, keyword
-// search — but none of it is AI-generated content, and none of it invents
-// medical facts or diagnoses that weren't already present in the
-// resident's own input. Where the input doesn't give enough to work with,
-// each function says so explicitly rather than guessing.
+// Casebook Builder. Each action tries the `academic-copilot` Supabase Edge
+// Function first (supabase/functions/academic-copilot/index.ts), which
+// holds a real LLM API key server-side — never in client code, since this
+// app is a pure static SPA with no backend of its own to hold a secret
+// safely. If the Edge Function isn't deployed, has no AI_API_KEY secret
+// configured, or fails for any reason, every method falls back to the
+// original deterministic heuristic implementation (structural checks,
+// regex-based normalization, keyword search) so the UI never breaks.
+//
+// Every result carries a `source` field ('edge_function' | 'heuristic_fallback')
+// so the UI — and the ai_action_logs audit trail — can distinguish
+// real AI-generated output from the local heuristic. Neither path invents
+// medical facts beyond what the resident already wrote; the Edge Function's
+// prompts explicitly frame every response as an educational aid requiring
+// supervisor review, never a diagnosis or grade.
 //
 // "Check Departmental Guidelines" additionally does real keyword-based
 // retrieval against the Knowledge Pack library (see migration 08) — this
 // is lexical full-text search (Postgres tsvector), not embedding-based
 // semantic search. Calling it "RAG" would overclaim what it actually does.
+// This retrieval step runs regardless of which path (Edge Function or
+// heuristic) produced the structural/compliance notes.
 //
 // Every action is logged to ai_action_logs via databaseService.logAiAction
 // for audit purposes.
+
+export type AcademicCopilotSource = 'edge_function' | 'heuristic_fallback';
 
 export interface GuidelineComplianceResult {
   configured: boolean;
   compliant: boolean | null;
   notes: string[];
+  source: AcademicCopilotSource;
 }
 
 export interface CitationFormatResult {
   configured: boolean;
   formatted: string | null;
+  source: AcademicCopilotSource;
 }
 
 export interface DifferentialDiagnosisResult {
   configured: boolean;
   candidates: string[];
   reasoning: string | null;
+  source: AcademicCopilotSource;
 }
 
 export interface AcademicCopilotProvider {
@@ -84,43 +96,79 @@ async function logAction(workforceId: string, actionType: AiActionType, input: s
   }
 }
 
-class HeuristicAcademicCopilotProvider implements AcademicCopilotProvider {
+// Calls the academic-copilot Edge Function. Returns null on ANY failure
+// (function not deployed, no secret configured, network error, malformed
+// response) so callers can fall back to the heuristic path uniformly.
+async function callEdgeFunction<T>(action: 'vancouver_format' | 'methodology_check' | 'extract_ddx', text: string): Promise<T | null> {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase.functions.invoke('academic-copilot', {
+      body: { action, text },
+    });
+    if (error) {
+      console.warn(`Edge Function academic-copilot (${action}) failed, using heuristic fallback:`, error.message);
+      return null;
+    }
+    if (!data || data.error || !data.result) {
+      if (data?.error) console.warn(`Edge Function academic-copilot (${action}) returned an error, using heuristic fallback:`, data.error);
+      return null;
+    }
+    return data.result as T;
+  } catch (err) {
+    console.warn(`Edge Function academic-copilot (${action}) threw, using heuristic fallback:`, err);
+    return null;
+  }
+}
+
+class AcademicCopilotProviderImpl implements AcademicCopilotProvider {
   async checkGuidelineCompliance(workforceId: string, text: string): Promise<GuidelineComplianceResult> {
     const trimmed = text.trim();
     if (!trimmed) {
-      const result = { configured: true, compliant: null, notes: ['Paste some text first — nothing to check yet.'] };
+      const result: GuidelineComplianceResult = { configured: true, compliant: null, notes: ['Paste some text first — nothing to check yet.'], source: 'heuristic_fallback' };
       await logAction(workforceId, 'methodology_check', text, result);
       return result;
     }
 
-    const missing = EXPECTED_SECTIONS.filter(s => !s.pattern.test(trimmed)).map(s => s.label);
-    const notes: string[] = [];
-
-    if (missing.length === 0) {
-      notes.push('All standard proposal sections were detected (Background, Objectives, Methodology, Ethical Considerations, References).');
-    } else {
-      notes.push(`Missing or unclear section(s): ${missing.join(', ')}.`);
-    }
-
-    // Real keyword-based retrieval against indexed Knowledge Pack content.
+    // Real keyword-based retrieval against indexed Knowledge Pack content —
+    // runs regardless of which path produces the structural notes below.
+    const kbNotes: string[] = [];
     try {
       const keywords = extractKeywords(trimmed);
       if (keywords.length > 0) {
         const hits = await databaseService.searchKnowledgePackItems(keywords.join(' '));
         if (hits.length > 0) {
-          notes.push(`Related content found in the Knowledge Pack library: ${hits.slice(0, 3).map(h => `"${h.title}"`).join(', ')}.`);
+          kbNotes.push(`Related content found in the Knowledge Pack library: ${hits.slice(0, 3).map(h => `"${h.title}"`).join(', ')}.`);
         } else {
-          notes.push('No related content found in the indexed Knowledge Packs yet — ask the Chief Resident to add relevant guideline documents.');
+          kbNotes.push('No related content found in the indexed Knowledge Packs yet — ask the Chief Resident to add relevant guideline documents.');
         }
       }
     } catch (err) {
       console.warn('Knowledge pack search failed during guideline check:', err);
-      notes.push('Could not search the Knowledge Pack library right now.');
     }
 
-    notes.push('This is a structural completeness check and a keyword search of indexed guidelines — not a full departmental review. A human supervisor sign-off is still required.');
+    const edgeResult = await callEdgeFunction<{ compliant: boolean; notes: string[] }>('methodology_check', trimmed);
 
-    const result = { configured: true, compliant: missing.length === 0, notes };
+    let result: GuidelineComplianceResult;
+    if (edgeResult && Array.isArray(edgeResult.notes)) {
+      result = {
+        configured: true,
+        compliant: !!edgeResult.compliant,
+        notes: [...edgeResult.notes, ...kbNotes],
+        source: 'edge_function',
+      };
+    } else {
+      const missing = EXPECTED_SECTIONS.filter(s => !s.pattern.test(trimmed)).map(s => s.label);
+      const notes: string[] = [];
+      if (missing.length === 0) {
+        notes.push('All standard proposal sections were detected (Background, Objectives, Methodology, Ethical Considerations, References).');
+      } else {
+        notes.push(`Missing or unclear section(s): ${missing.join(', ')}.`);
+      }
+      notes.push(...kbNotes);
+      notes.push('This is a structural completeness check and a keyword search of indexed guidelines — not a full departmental review. A human supervisor sign-off is still required.');
+      result = { configured: true, compliant: missing.length === 0, notes, source: 'heuristic_fallback' };
+    }
+
     await logAction(workforceId, 'methodology_check', trimmed, result);
     return result;
   }
@@ -132,21 +180,28 @@ class HeuristicAcademicCopilotProvider implements AcademicCopilotProvider {
       .filter(Boolean);
 
     if (lines.length === 0) {
-      const result = { configured: true, formatted: null };
+      const result: CitationFormatResult = { configured: true, formatted: null, source: 'heuristic_fallback' };
       await logAction(workforceId, 'vancouver_format', references, result);
       return result;
     }
 
-    const normalized = lines.map((line, i) => {
-      let cleaned = line
-        .replace(/^\s*(\[\d+\]|\(\d+\)|\d+[.)]|[-•])\s*/, '') // strip existing numbering/bullets
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!/[.!?]$/.test(cleaned)) cleaned += '.';
-      return `${i + 1}. ${cleaned}`;
-    });
+    const edgeResult = await callEdgeFunction<{ formatted: string }>('vancouver_format', references);
 
-    const result = { configured: true, formatted: normalized.join('\n') };
+    let result: CitationFormatResult;
+    if (edgeResult && typeof edgeResult.formatted === 'string') {
+      result = { configured: true, formatted: edgeResult.formatted, source: 'edge_function' };
+    } else {
+      const normalized = lines.map((line, i) => {
+        let cleaned = line
+          .replace(/^\s*(\[\d+\]|\(\d+\)|\d+[.)]|[-•])\s*/, '') // strip existing numbering/bullets
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (!/[.!?]$/.test(cleaned)) cleaned += '.';
+        return `${i + 1}. ${cleaned}`;
+      });
+      result = { configured: true, formatted: normalized.join('\n'), source: 'heuristic_fallback' };
+    }
+
     await logAction(workforceId, 'vancouver_format', references, result);
     return result;
   }
@@ -154,41 +209,48 @@ class HeuristicAcademicCopilotProvider implements AcademicCopilotProvider {
   async extractDifferentialDiagnosis(workforceId: string, caseText: string): Promise<DifferentialDiagnosisResult> {
     const trimmed = caseText.trim();
     if (!trimmed) {
-      const result = { configured: true, candidates: [], reasoning: 'Paste your case notes first — nothing to extract yet.' };
+      const result: DifferentialDiagnosisResult = { configured: true, candidates: [], reasoning: 'Paste your case notes first — nothing to extract yet.', source: 'heuristic_fallback' };
       await logAction(workforceId, 'differential_extract', caseText, result);
       return result;
     }
 
-    const triggerMatch = trimmed.match(/(differential[s]?(\s+diagnos[ie]s)?|ddx|consider(ing)?)\s*[:\-]\s*([\s\S]+)/i);
+    const edgeResult = await callEdgeFunction<{ candidates: string[]; reasoning: string }>('extract_ddx', trimmed);
 
-    let candidates: string[] = [];
-    let reasoning: string;
-
-    if (triggerMatch) {
-      const listText = triggerMatch[4];
-      candidates = listText
-        .split(/\n|;|(?:,\s*(?:and|or)\s*)|(?:\d+[.)])/i)
-        .map(s => s.replace(/^[\s\-•]+/, '').trim())
-        .filter(s => s.length > 1)
-        .filter((s, i, arr) => arr.findIndex(x => x.toLowerCase() === s.toLowerCase()) === i)
-        .slice(0, 12);
-      reasoning = `Extracted ${candidates.length} item(s) from your differential diagnosis list.`;
+    let result: DifferentialDiagnosisResult;
+    if (edgeResult && Array.isArray(edgeResult.candidates)) {
+      result = { configured: true, candidates: edgeResult.candidates, reasoning: edgeResult.reasoning || null, source: 'edge_function' };
     } else {
-      candidates = trimmed
-        .split(/(?<=[.!?])\s+/)
-        .map(s => s.trim())
-        .filter(s => s.length > 10)
-        .slice(0, 6);
-      reasoning = "No explicit differential list detected (looked for phrases like \"differential diagnosis:\" or \"DDx:\") — showing a sentence-level breakdown of your case notes instead. Add a clear \"Differentials:\" section for more precise extraction.";
+      const triggerMatch = trimmed.match(/(differential[s]?(\s+diagnos[ie]s)?|ddx|consider(ing)?)\s*[:\-]\s*([\s\S]+)/i);
+
+      let candidates: string[];
+      let reasoning: string;
+
+      if (triggerMatch) {
+        const listText = triggerMatch[4];
+        candidates = listText
+          .split(/\n|;|(?:,\s*(?:and|or)\s*)|(?:\d+[.)])/i)
+          .map(s => s.replace(/^[\s\-•]+/, '').trim())
+          .filter(s => s.length > 1)
+          .filter((s, i, arr) => arr.findIndex(x => x.toLowerCase() === s.toLowerCase()) === i)
+          .slice(0, 12);
+        reasoning = `Extracted ${candidates.length} item(s) from your differential diagnosis list.`;
+      } else {
+        candidates = trimmed
+          .split(/(?<=[.!?])\s+/)
+          .map(s => s.trim())
+          .filter(s => s.length > 10)
+          .slice(0, 6);
+        reasoning = "No explicit differential list detected (looked for phrases like \"differential diagnosis:\" or \"DDx:\") — showing a sentence-level breakdown of your case notes instead. Add a clear \"Differentials:\" section for more precise extraction.";
+      }
+
+      result = { configured: true, candidates, reasoning, source: 'heuristic_fallback' };
     }
 
-    const result = { configured: true, candidates, reasoning };
     await logAction(workforceId, 'differential_extract', trimmed, result);
     return result;
   }
 }
 
-// Swap this out for a real LLM-backed provider (calling a server-side proxy
-// — e.g. a Supabase Edge Function — never a client-embedded API key) if
-// one is ever built. Every call site goes through this single export.
-export const academicCopilot: AcademicCopilotProvider = new HeuristicAcademicCopilotProvider();
+// Swap this out (or extend it) for other Edge-Function-backed providers as
+// needed — every call site goes through this single export.
+export const academicCopilot: AcademicCopilotProvider = new AcademicCopilotProviderImpl();

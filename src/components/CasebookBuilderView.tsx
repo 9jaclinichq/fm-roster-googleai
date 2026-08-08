@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
-import { academicCopilot } from '../lib/ai/academicCopilot';
+import { academicCopilot, AcademicCopilotSource } from '../lib/ai/academicCopilot';
 import { CaseReport, CaseReportStatus } from '../types';
 import { ClipboardList, RefreshCw, FileText, UploadCloud, X, AlertTriangle, CheckCircle2, Clock, Sparkles } from 'lucide-react';
 
@@ -33,6 +33,7 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
   const [caseNotes, setCaseNotes] = useState<string>('');
   const [ddxCandidates, setDdxCandidates] = useState<string[] | null>(null);
   const [ddxReasoning, setDdxReasoning] = useState<string | null>(null);
+  const [ddxSource, setDdxSource] = useState<AcademicCopilotSource | null>(null);
   const [isExtractingDdx, setIsExtractingDdx] = useState<boolean>(false);
 
   const load = () => {
@@ -58,6 +59,7 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
     setCaseNotes('');
     setDdxCandidates(null);
     setDdxReasoning(null);
+    setDdxSource(null);
   };
 
   const handleExtractDdx = async () => {
@@ -67,6 +69,7 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
       const result = await academicCopilot.extractDifferentialDiagnosis(resident.id, caseNotes);
       setDdxCandidates(result.candidates);
       setDdxReasoning(result.reasoning);
+      setDdxSource(result.source);
     } finally {
       setIsExtractingDdx(false);
     }
@@ -260,6 +263,15 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
 
                   {ddxCandidates && (
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
+                      {ddxSource && (
+                        <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${
+                          ddxSource === 'edge_function'
+                            ? 'bg-violet-50 text-violet-700 border-violet-200'
+                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                        }`}>
+                          {ddxSource === 'edge_function' ? 'AI-generated' : 'Heuristic (no AI configured)'}
+                        </span>
+                      )}
                       {ddxReasoning && <p className="text-[10px] text-slate-500 italic">{ddxReasoning}</p>}
                       {ddxCandidates.length > 0 && (
                         <ul className="list-disc list-inside space-y-0.5">

@@ -1,0 +1,27 @@
+Execute Secure Edge Function Integration for Academic Copilot:
+
+1. GIT BRANCH SETUP:
+   - Create and switch to a new branch: `feature/supabase-edge-function-ai`.
+
+2. EDGE FUNCTION SCAFFOLD:
+   - Create directory `supabase/functions/academic-copilot`.
+   - Write `supabase/functions/academic-copilot/index.ts`:
+     * Serves HTTP requests with CORS headers (`Access-Control-Allow-Origin: *`).
+     * Handles preflight OPTIONS requests.
+     * Reads server-side secret `Deno.env.get('AI_API_KEY')`.
+     * Accepts actions: `vancouver_format`, `methodology_check`, `extract_ddx`.
+     * Communicates with LLM endpoint (`https://api.openai.com/v1/chat/completions` or structured JSON completion).
+     * Returns structured JSON responses or graceful error payloads.
+
+3. FRONTEND SERVICE INTEGRATION (`src/lib/ai/academicCopilot.ts`):
+   - Update `academicCopilot.ts` to invoke the Edge Function using `supabase.functions.invoke('academic-copilot', { body: ... })`.
+   - Maintain client-side fallback parsing (regex normalizer & local heuristic checkers) if the Edge Function returns an error or if no secret is active, ensuring uninterrupted UX.
+   - Log AI executions to `ai_action_logs` table upon successful function completion.
+
+4. DOCUMENTATION & ENVIRONMENT TEMPLATE:
+   - Update `.env.example` to document `AI_API_KEY` for Supabase Edge Functions secrets management.
+   - Add deployment instructions in `CLAUDE.md` explaining how to deploy via CLI (`npx supabase functions deploy academic-copilot --no-verify-jwt`) and set secrets (`npx supabase secrets set AI_API_KEY=sk-...`).
+
+5. PR & VERIFICATION:
+   - Run `npx tsc --noEmit` and `npm run build` to verify clean compilation.
+   - Commit changes, push `feature/supabase-edge-function-ai` to GitHub, and open a Pull Request against `main`.
