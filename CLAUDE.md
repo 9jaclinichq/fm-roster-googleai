@@ -224,6 +224,36 @@ building this (`gemini-2.0-flash`, `gemini-2.5-flash`, and
 failing with 404, check `GET https://generativelanguage.googleapis.com/v1beta/models?key=...`
 for the current alias names.
 
+**Second Edge Function: `roster-parser`** (`supabase/functions/roster-parser/index.ts`)
+backs `src/lib/roster/uchRosterParser.ts`, which structures the 5 UCH roster
+document formats (Combined GOP, Consultant GOP, A&E Emergency Call,
+Afternoon/Priority/Saturday Supervision, Satellite Outposts) ingested by
+`MultiRosterManagerView.tsx`. Same architecture and secrets as
+`academic-copilot` (OpenAI → Gemini → client-side heuristic fallback, same
+`source`/`provider` result fields). **Status: deployed and live-verified**
+— tested against the real deployed function with a sample Consultant GOP
+roster and confirmed a correctly structured response via the OpenAI tier.
+No new secrets were needed; it reuses the same `AI_API_KEY`/`GEMINI_API_KEY`
+already set on `gdumksfffewpdqqwvcdo`.
+
+**CLI gotcha hit deploying this one**: `npx supabase functions deploy`
+failed with `ENOSPC: no space left on device` (this machine's C: drive was
+down to ~273MB free), which left a *corrupted partial install* of
+`supabase@2.113.0` in the npx cache
+(`%LOCALAPPDATA%\npm-cache\_npx\<hash>`). Retrying after freeing space
+still failed with `No matching Supabase CLI binary package found for
+win32-x64` — not a disk issue anymore, but the corrupted cache entry
+persisted. Fix was two steps: `npm cache clean --force` to reclaim space,
+then delete the specific stale `_npx` cache subfolder to force a clean
+redownload, then pin the working version explicitly rather than trusting
+`npx supabase` to resolve to something installable:
+```bash
+npx supabase@2.112.0 functions deploy roster-parser --project-ref gdumksfffewpdqqwvcdo --no-verify-jwt --use-api
+```
+If a future `npx supabase` invocation fails with a "no matching binary"
+error right after an `ENOSPC` or other interrupted install, suspect a
+corrupted npx cache entry before assuming the CLI itself is broken.
+
 ## Deployment
 
 - **Netlify**: `netlify.toml` configures `npm run build` → `dist/`, with SPA
