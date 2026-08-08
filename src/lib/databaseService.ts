@@ -34,6 +34,11 @@ import {
   ActivityMatrixDay,
   ComplianceNudge,
   DerivedNudge,
+  RosterType,
+  RosterTypeId,
+  RawRosterUpload,
+  CombinedMasterRoster,
+  MasterRosterStatus,
 } from '../types';
 
 // Read from import.meta.env
@@ -57,7 +62,7 @@ function checkSupabase() {
 // is deliberately excluded — that column is locked down at the database
 // level (see supabase/migrations/01_rbac_and_rotations.sql) and only ever
 // returned by the chief_* RPCs below, which re-verify the admin code first.
-const WORKFORCE_PUBLIC_COLUMNS = 'id, full_name, category, active, created_at';
+const WORKFORCE_PUBLIC_COLUMNS = 'id, full_name, category, active, on_floor, created_at';
 
 export const databaseService = {
   isMock: false, // Always false as the app must read only from Supabase.
@@ -96,9 +101,9 @@ export const databaseService = {
     return (Array.isArray(data) ? data[0] : data) as WorkforceMember;
   },
 
-  // Updates non-code fields only (full_name, category, active). Resident
-  // code changes must go through resetResidentAccessCode().
-  async updateWorkforceMember(id: string, updates: Partial<Pick<WorkforceMember, 'full_name' | 'category' | 'active'>>): Promise<WorkforceMember> {
+  // Updates non-code fields only (full_name, category, active, on_floor).
+  // Resident code changes must go through resetResidentAccessCode().
+  async updateWorkforceMember(id: string, updates: Partial<Pick<WorkforceMember, 'full_name' | 'category' | 'active' | 'on_floor'>>): Promise<WorkforceMember> {
     checkSupabase();
 
     const { data, error } = await supabase!
@@ -1229,6 +1234,134 @@ export const databaseService = {
 
     if (error) {
       console.warn('Error resolving compliance nudge:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- MULTI-ROSTER ENGINE ---
+  async getRosterTypes(): Promise<RosterType[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.from('roster_types').select('*');
+    if (error) {
+      console.warn('Error fetching roster types:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async createRawRosterUpload(entry: {
+    month: number;
+    year: number;
+    roster_type_id: RosterTypeId;
+    file_name?: string | null;
+    file_url?: string | null;
+    raw_text_content?: string | null;
+    parsed_data?: Record<string, unknown>;
+    uploaded_by_workforce_id?: string | null;
+  }): Promise<RawRosterUpload> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('raw_roster_uploads')
+      .insert([{ parsed_data: {}, ...entry }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error recording roster upload:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async getLatestRosterUpload(rosterTypeId: RosterTypeId, month: number, year: number): Promise<RawRosterUpload | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('raw_roster_uploads')
+      .select('*')
+      .eq('roster_type_id', rosterTypeId)
+      .eq('month', month)
+      .eq('year', year)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Error fetching latest roster upload:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async uploadRosterDocument(file: File): Promise<string> {
+    checkSupabase();
+
+    const fileExt = file.name.split('.').pop();
+    const filePath = `roster-uploads/${Date.now()}_${file.name}.${fileExt}`;
+
+    const { error } = await supabase!.storage.from('roster-documents').upload(filePath, file);
+    if (error) {
+      console.warn('Roster document upload failed:', error);
+      throw error;
+    }
+
+    const { data: publicUrlData } = supabase!.storage.from('roster-documents').getPublicUrl(filePath);
+    return publicUrlData.publicUrl;
+  },
+
+  async getMasterRosterForCollection(collectionId: string): Promise<CombinedMasterRoster | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('combined_master_rosters')
+      .select('*')
+      .eq('collection_id', collectionId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Error fetching master roster:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async getOrCreateMasterRoster(collectionId: string, month: number, year: number): Promise<CombinedMasterRoster> {
+    checkSupabase();
+
+    const existing = await this.getMasterRosterForCollection(collectionId);
+    if (existing) return existing;
+
+    const { data, error } = await supabase!
+      .from('combined_master_rosters')
+      .insert([{ collection_id: collectionId, month, year }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error creating master roster:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateMasterRoster(
+    id: string,
+    updates: Partial<Pick<CombinedMasterRoster, 'status' | 'gop_clinic_grid' | 'emergency_call_grid' | 'supervision_grid' | 'satellite_grid' | 'published_at'>>
+  ): Promise<CombinedMasterRoster> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('combined_master_rosters')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating master roster:', error);
       throw error;
     }
     return data;
