@@ -4,28 +4,24 @@
 // pure static SPA with no backend of its own (see CLAUDE.md), so any key
 // embedded in client code (even a non-VITE_-prefixed one, since Vite still
 // ships whatever the bundled JS references) would be visible to every
-// visitor. The key lives ONLY here, as a Supabase Edge Function secret
+// visitor. The keys live ONLY here, as Supabase Edge Function secrets
 // (Deno.env), never in the repo or the client bundle.
 //
-// If AI_API_KEY isn't set, or the LLM call fails for any reason, this
-// returns a clear structured error rather than a 200 with fabricated
-// content — src/lib/ai/academicCopilot.ts on the client treats any
-// non-success response as a signal to fall back to its own deterministic
-// heuristic implementations, so the UI never breaks or silently invents
-// output just because this function had a bad day.
+// Provider chain: OpenAI (AI_API_KEY) is tried first; if it's not
+// configured or the call fails, Gemini (GEMINI_API_KEY) is tried as a
+// second-tier fallback; if that also fails, this returns a structured
+// error and the client (src/lib/ai/academicCopilot.ts) falls back to its
+// own deterministic heuristic implementations — the UI never breaks or
+// silently invents output just because both providers had a bad day.
 //
-// Deploy:  npx supabase functions deploy academic-copilot --no-verify-jwt
-// Secret:  npx supabase secrets set AI_API_KEY=sk-...
+// Deploy:  npx supabase functions deploy academic-copilot --project-ref <ref> --no-verify-jwt --use-api
+//          (--use-api bundles server-side, no Docker required)
+// Secrets: npx supabase secrets set AI_API_KEY=sk-... --project-ref <ref>
+//          npx supabase secrets set GEMINI_API_KEY=... --project-ref <ref>
 // (--no-verify-jwt because this app has no Supabase Auth sessions to
 // verify against — see migration 01's header for that documented limitation.
 // This function is reachable by anyone holding the anon key, same trust
 // model as the rest of this app's API surface.)
-//
-// NOT DEPLOYED OR LIVE-TESTED from the session that wrote this file — there
-// was no working Supabase CLI / Docker deploy path available. The code
-// below is written to the standard Supabase Edge Function (Deno.serve)
-// contract as precisely as possible, but treat it as reviewed-not-verified
-// until it's actually deployed and exercised once for real.
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -50,7 +46,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 // Every prompt explicitly frames output as an educational aid requiring
 // human (supervisor/consultant) review — never as a diagnosis, a grade, or
 // a substitute for the department's actual sign-off process. This mirrors
-// the framing already baked into the client-side heuristic fallbacks.
+// the framing already baked into the client-side heuristic fallback.
 const SYSTEM_PROMPTS: Record<ActionType, string> = {
   vancouver_format:
     'You are a citation formatting assistant for a Family Medicine residency program. ' +
@@ -77,6 +73,86 @@ const SYSTEM_PROMPTS: Record<ActionType, string> = {
     '"one sentence on your approach, ending with a reminder this requires supervisor review"}',
 };
 
+interface ProviderResult {
+  provider: 'openai' | 'gemini';
+  parsed: unknown;
+}
+
+async function callOpenAI(systemPrompt: string, text: string): Promise<ProviderResult | null> {
+  const apiKey = Deno.env.get('AI_API_KEY');
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: text.slice(0, 8000) },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.2,
+      }),
+    });
+
+    if (!res.ok) {
+      console.error('OpenAI request failed:', res.status, await res.text());
+      return null;
+    }
+
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) return null;
+
+    return { provider: 'openai', parsed: JSON.parse(content) };
+  } catch (err) {
+    console.error('OpenAI call threw:', err);
+    return null;
+  }
+}
+
+async function callGemini(systemPrompt: string, text: string): Promise<ProviderResult | null> {
+  const apiKey = Deno.env.get('GEMINI_API_KEY');
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+      {
+        method: 'POST',
+        headers: {
+          'x-goog-api-key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: text.slice(0, 8000) }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+        }),
+      }
+    );
+
+    if (!res.ok) {
+      console.error('Gemini request failed:', res.status, await res.text());
+      return null;
+    }
+
+    const data = await res.json();
+    const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!content) return null;
+
+    return { provider: 'gemini', parsed: JSON.parse(content) };
+  } catch (err) {
+    console.error('Gemini call threw:', err);
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS_HEADERS });
@@ -84,11 +160,6 @@ Deno.serve(async (req: Request) => {
 
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed' }, 405);
-  }
-
-  const apiKey = Deno.env.get('AI_API_KEY');
-  if (!apiKey) {
-    return jsonResponse({ error: 'AI_API_KEY is not configured for this Edge Function.' }, 503);
   }
 
   let body: RequestBody;
@@ -107,46 +178,15 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'No text provided.' }, 400);
   }
 
-  try {
-    const llmResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: text.slice(0, 8000) },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.2,
-      }),
-    });
+  // Try OpenAI first, then Gemini. Either may be unconfigured (env var
+  // unset) or transiently failing — both are treated the same way: fall
+  // through to the next provider, and if none succeed, a clean error that
+  // tells the client to use its local heuristic.
+  const result = (await callOpenAI(systemPrompt, text)) ?? (await callGemini(systemPrompt, text));
 
-    if (!llmResponse.ok) {
-      const errText = await llmResponse.text();
-      console.error('LLM request failed:', llmResponse.status, errText);
-      return jsonResponse({ error: 'LLM request failed.', status: llmResponse.status }, 502);
-    }
-
-    const llmData = await llmResponse.json();
-    const content = llmData?.choices?.[0]?.message?.content;
-    if (!content) {
-      return jsonResponse({ error: 'LLM returned no content.' }, 502);
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      return jsonResponse({ error: 'LLM returned unparseable JSON.', raw: content }, 502);
-    }
-
-    return jsonResponse({ result: parsed });
-  } catch (err) {
-    console.error('academic-copilot function error:', err);
-    return jsonResponse({ error: 'Unexpected error calling the LLM.' }, 500);
+  if (!result) {
+    return jsonResponse({ error: 'No AI provider is configured or all providers failed.' }, 503);
   }
+
+  return jsonResponse({ result: result.parsed, provider: result.provider });
 });
