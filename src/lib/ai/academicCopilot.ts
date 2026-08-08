@@ -29,18 +29,21 @@ import { AiActionType } from '../../types';
 // for audit purposes.
 
 export type AcademicCopilotSource = 'edge_function' | 'heuristic_fallback';
+export type AcademicCopilotProviderName = 'openai' | 'gemini';
 
 export interface GuidelineComplianceResult {
   configured: boolean;
   compliant: boolean | null;
   notes: string[];
   source: AcademicCopilotSource;
+  provider?: AcademicCopilotProviderName;
 }
 
 export interface CitationFormatResult {
   configured: boolean;
   formatted: string | null;
   source: AcademicCopilotSource;
+  provider?: AcademicCopilotProviderName;
 }
 
 export interface DifferentialDiagnosisResult {
@@ -48,6 +51,7 @@ export interface DifferentialDiagnosisResult {
   candidates: string[];
   reasoning: string | null;
   source: AcademicCopilotSource;
+  provider?: AcademicCopilotProviderName;
 }
 
 export interface AcademicCopilotProvider {
@@ -96,10 +100,17 @@ async function logAction(workforceId: string, actionType: AiActionType, input: s
   }
 }
 
-// Calls the academic-copilot Edge Function. Returns null on ANY failure
-// (function not deployed, no secret configured, network error, malformed
-// response) so callers can fall back to the heuristic path uniformly.
-async function callEdgeFunction<T>(action: 'vancouver_format' | 'methodology_check' | 'extract_ddx', text: string): Promise<T | null> {
+interface EdgeFunctionSuccess<T> {
+  result: T;
+  provider: AcademicCopilotProviderName;
+}
+
+// Calls the academic-copilot Edge Function (which itself tries OpenAI then
+// Gemini — see supabase/functions/academic-copilot/index.ts). Returns null
+// on ANY failure (function not deployed, neither secret configured,
+// network error, malformed response) so callers can fall back to the
+// heuristic path uniformly.
+async function callEdgeFunction<T>(action: 'vancouver_format' | 'methodology_check' | 'extract_ddx', text: string): Promise<EdgeFunctionSuccess<T> | null> {
   if (!supabase) return null;
   try {
     const { data, error } = await supabase.functions.invoke('academic-copilot', {
@@ -113,7 +124,7 @@ async function callEdgeFunction<T>(action: 'vancouver_format' | 'methodology_che
       if (data?.error) console.warn(`Edge Function academic-copilot (${action}) returned an error, using heuristic fallback:`, data.error);
       return null;
     }
-    return data.result as T;
+    return { result: data.result as T, provider: data.provider as AcademicCopilotProviderName };
   } catch (err) {
     console.warn(`Edge Function academic-copilot (${action}) threw, using heuristic fallback:`, err);
     return null;
@@ -149,12 +160,13 @@ class AcademicCopilotProviderImpl implements AcademicCopilotProvider {
     const edgeResult = await callEdgeFunction<{ compliant: boolean; notes: string[] }>('methodology_check', trimmed);
 
     let result: GuidelineComplianceResult;
-    if (edgeResult && Array.isArray(edgeResult.notes)) {
+    if (edgeResult && Array.isArray(edgeResult.result.notes)) {
       result = {
         configured: true,
-        compliant: !!edgeResult.compliant,
-        notes: [...edgeResult.notes, ...kbNotes],
+        compliant: !!edgeResult.result.compliant,
+        notes: [...edgeResult.result.notes, ...kbNotes],
         source: 'edge_function',
+        provider: edgeResult.provider,
       };
     } else {
       const missing = EXPECTED_SECTIONS.filter(s => !s.pattern.test(trimmed)).map(s => s.label);
@@ -188,8 +200,8 @@ class AcademicCopilotProviderImpl implements AcademicCopilotProvider {
     const edgeResult = await callEdgeFunction<{ formatted: string }>('vancouver_format', references);
 
     let result: CitationFormatResult;
-    if (edgeResult && typeof edgeResult.formatted === 'string') {
-      result = { configured: true, formatted: edgeResult.formatted, source: 'edge_function' };
+    if (edgeResult && typeof edgeResult.result.formatted === 'string') {
+      result = { configured: true, formatted: edgeResult.result.formatted, source: 'edge_function', provider: edgeResult.provider };
     } else {
       const normalized = lines.map((line, i) => {
         let cleaned = line
@@ -217,8 +229,8 @@ class AcademicCopilotProviderImpl implements AcademicCopilotProvider {
     const edgeResult = await callEdgeFunction<{ candidates: string[]; reasoning: string }>('extract_ddx', trimmed);
 
     let result: DifferentialDiagnosisResult;
-    if (edgeResult && Array.isArray(edgeResult.candidates)) {
-      result = { configured: true, candidates: edgeResult.candidates, reasoning: edgeResult.reasoning || null, source: 'edge_function' };
+    if (edgeResult && Array.isArray(edgeResult.result.candidates)) {
+      result = { configured: true, candidates: edgeResult.result.candidates, reasoning: edgeResult.result.reasoning || null, source: 'edge_function', provider: edgeResult.provider };
     } else {
       const triggerMatch = trimmed.match(/(differential[s]?(\s+diagnos[ie]s)?|ddx|consider(ing)?)\s*[:\-]\s*([\s\S]+)/i);
 

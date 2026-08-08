@@ -158,13 +158,23 @@ plan below.
 Casebook Builder's AI-assisted actions (guideline check, Vancouver citation
 formatting, differential-diagnosis extraction). It tries the
 `academic-copilot` Supabase Edge Function first
-(`supabase/functions/academic-copilot/index.ts`), and falls back to a
-deterministic local heuristic implementation if the function isn't
-deployed, has no API key configured, or fails for any reason — the UI
-never breaks either way. Every result carries a `source` field
-(`'edge_function'` or `'heuristic_fallback'`) shown in the UI and logged to
-`ai_action_logs`, so it's always clear which path actually produced a
-given result.
+(`supabase/functions/academic-copilot/index.ts`), which itself tries
+**OpenAI first, then Gemini** as a second-tier fallback, and only if both
+providers are unconfigured or fail does the client fall back to its own
+deterministic local heuristic implementation — the UI never breaks
+regardless of how many tiers fail. Every result carries a `source` field
+(`'edge_function'` or `'heuristic_fallback'`) and, when it came from the
+Edge Function, a `provider` field (`'openai'` or `'gemini'`) — both shown
+in the UI badge and logged to `ai_action_logs`, so it's always clear
+exactly which path produced a given result.
+
+**Status: deployed and live-verified** (not just reviewed) as of this
+writing. Both `AI_API_KEY` (OpenAI) and `GEMINI_API_KEY` (Gemini) secrets
+are set on the `gdumksfffewpdqqwvcdo` project. All three actions were
+tested against the real deployed function with real provider responses,
+and the OpenAI→Gemini fallback was confirmed by temporarily unsetting
+`AI_API_KEY` and observing `provider: "gemini"` in the response before
+restoring it.
 
 **Why an Edge Function at all**: this app is a pure static SPA with no
 backend of its own. An LLM API key can never be embedded in client code —
@@ -173,11 +183,17 @@ JS actually references. A Supabase Edge Function is the only place in this
 project's architecture that can hold such a secret safely (`Deno.env`,
 never in the repo or the client bundle).
 
-**Deploying the function** (from the project root, with the Supabase CLI
-installed and the project linked — `npx supabase link --project-ref <ref>`):
+**Deploying the function.** The standalone `supabase` CLI binary has been
+unreliable in some environments (segfaults on even `--version`); `npx
+supabase` (the npm-distributed CLI) works and is the recommended way to
+run these commands. `supabase link` has also been flaky (a schema
+validation bug against this account's project list) — pass `--project-ref`
+directly to every command instead of relying on a persisted link.
+`--use-api` bundles the function server-side and avoids needing Docker
+locally:
 
 ```bash
-npx supabase functions deploy academic-copilot --no-verify-jwt
+npx supabase functions deploy academic-copilot --project-ref gdumksfffewpdqqwvcdo --no-verify-jwt --use-api
 ```
 
 `--no-verify-jwt` is required because this app has no Supabase Auth
@@ -185,25 +201,28 @@ sessions to verify against (see the Role Model section above) — the
 function is reachable by anyone holding the anon key, the same trust model
 as the rest of this app's API surface.
 
-**Setting the secret** (do this once per Supabase project; it is NOT the
-same as anything in `.env` — see `.env.example`'s `AI_API_KEY` entry, which
-exists only as documentation and is never read by the Vite app):
+**Setting secrets** (NOT the same as anything in `.env` — see
+`.env.example`'s `AI_API_KEY`/`GEMINI_API_KEY` entries, which exist only as
+documentation and are never read by the Vite app):
 
 ```bash
-npx supabase secrets set AI_API_KEY=sk-...
+npx supabase secrets set AI_API_KEY=sk-... --project-ref gdumksfffewpdqqwvcdo
+npx supabase secrets set GEMINI_API_KEY=... --project-ref gdumksfffewpdqqwvcdo
 ```
 
-Without that secret set, the function returns a graceful `503` and the app
-transparently uses its heuristic fallback — this is a safe, expected state,
-not a broken one.
+Either secret can be omitted or unset — the function tries whichever are
+configured, in OpenAI-then-Gemini order, and returns a graceful `503` only
+if neither works, at which point the app transparently uses its heuristic
+fallback. That's a safe, expected state, not a broken one.
 
-> **Not deployed or live-tested from the session that wrote this
-> function.** There was no working Supabase CLI / Docker deploy path
-> available in that environment (the CLI has previously segfaulted here —
-> see the Phase 0 audit notes). The function code was written to the
-> standard Supabase Edge Function contract as precisely as possible, but
-> treat it as reviewed-not-verified until someone actually deploys it and
-> exercises it for real.
+**Gemini model note**: the function uses the `gemini-flash-latest` alias
+rather than a pinned version (e.g. `gemini-2.0-flash`), because pinned
+model IDs get deprecated and start returning 404s — confirmed live while
+building this (`gemini-2.0-flash`, `gemini-2.5-flash`, and
+`gemini-1.5-flash` were all already 404 at the time of writing, despite
+`gemini-2.0-flash` still appearing in `ListModels`). If Gemini calls start
+failing with 404, check `GET https://generativelanguage.googleapis.com/v1beta/models?key=...`
+for the current alias names.
 
 ## Deployment
 
