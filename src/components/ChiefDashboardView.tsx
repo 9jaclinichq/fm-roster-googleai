@@ -7,6 +7,11 @@ import { LoadingShell } from './LoadingShell';
 const KnowledgePackManagerView = lazy(() =>
   import('./KnowledgePackManagerView').then(m => ({ default: m.KnowledgePackManagerView }))
 );
+// Lazy-loaded: the Multi-Roster Manager pulls in the roster parser + a
+// large drag-and-drop grid UI, only needed when this tab is opened.
+const MultiRosterManagerView = lazy(() =>
+  import('./MultiRosterManagerView').then(m => ({ default: m.MultiRosterManagerView }))
+);
 import { Collection, WorkforceMember, SubmissionWithWorkforce, Category, Submission, Announcement, AnnouncementCategory, DelegatedRole, SubadminRoleId } from '../types';
 import {
   Users,
@@ -64,7 +69,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'settings'>('submissions');
+  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'settings'>('submissions');
 
   // Role delegation state
   const [delegatedRoles, setDelegatedRoles] = useState<DelegatedRole[]>([]);
@@ -787,6 +792,16 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           Knowledge Packs
         </button>
         <button
+          onClick={() => setActiveTab('roster')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'roster'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Multi-Roster Manager
+        </button>
+        <button
           onClick={() => setActiveTab('settings')}
           className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === 'settings'
@@ -1392,7 +1407,14 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           </Suspense>
         )}
 
-        {/* TAB 7: SETTINGS & COLLECTIONS */}
+        {/* TAB 7: MULTI-ROSTER MANAGER */}
+        {activeTab === 'roster' && (
+          <Suspense fallback={<LoadingShell />}>
+            <MultiRosterManagerView />
+          </Suspense>
+        )}
+
+        {/* TAB 8: SETTINGS & COLLECTIONS */}
         {activeTab === 'settings' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Create Collection Column */}

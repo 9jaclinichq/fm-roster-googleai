@@ -1,0 +1,38 @@
+Execute Master Multi-Roster Engine, Ingestion & Chief HITL Merge System:
+
+1. GIT BRANCH SETUP:
+   - Create and switch to a new branch: `feature/multi-roster-engine`.
+
+2. DATABASE SCHEMA MIGRATION:
+   - Create `supabase/migrations/10_multi_roster_engine.sql` containing:
+     a) `roster_types` table (id, name ['combined_gop', 'consultant_gop', 'accident_emergency', 'afternoon_supervision', 'satellite_outreach']).
+     b) `raw_roster_uploads` table (id, month, year, roster_type_id, file_name, file_url, raw_text_content, parsed_data [jsonb], uploaded_by_workforce_id, created_at).
+     c) `combined_master_rosters` table (id, collection_id, month, year, status ['draft', 'chief_review', 'published'], gop_clinic_grid [jsonb], emergency_call_grid [jsonb], supervision_grid [jsonb], satellite_grid [jsonb], published_at, created_at).
+     d) Add column `on_floor` (boolean, default true) to `workforce` table (differentiates GOP floor residents from outside rotations).
+     e) Enable RLS policies and grant standard SELECT/INSERT/UPDATE permissions.
+
+3. UCH MULTI-ROSTER PARSER & MERGE SERVICE (`src/lib/roster/uchRosterParser.ts`):
+   - Ingestion parser handling UCH Family Medicine document formats:
+     * Consultant GOP Roster (Triage, Male/Female/Children Sorting, Managed Care, Annexes).
+     * Combined GOP Duty Roster (matches Consultants + On-Floor Residents across stations).
+     * A&E Emergency Call Roster (4pm-10pm and 10pm-8am shift pairs).
+     * Afternoon / Priority / Saturday Supervision Roster (1st On Duty / 2nd On Duty).
+     * Satellite Outposts (Ikolaba, Agbeke Mercy, Airport PHC, NYSC, Otunba Tunwase).
+   - Generates merged JSON grid aligning Consultants, Senior Registrars, and Registrars.
+
+4. CHIEF REGISTRAR HITL MASTER WORKSPACE (`src/components/MultiRosterManagerView.tsx`):
+   - Integrated into `ChiefDashboardView.tsx`.
+   - Step 1 (Resident Floor Check): Filters active workforce by `on_floor === true` (excludes external postings).
+   - Step 2 (Multi-Doc Ingestion): Textarea/Upload boxes to paste raw consultant rosters or doc extracts (GOP, A&E, Supervision, Satellites).
+   - Step 3 (HITL Visual Editor): Tabbed interactive grid displaying:
+     * Combined GOP Clinic Roster Grid
+     * A&E Emergency Call Roster
+     * Afternoon/Saturday Supervision
+     * Satellite Facilities Coverage
+   - Allows Chief Registrar to edit, drag-and-drop, and resolve scheduling conflicts before publishing.
+   - Step 4 (One-Click Publish): Saves `combined_master_rosters` and broadcasts a pinned `#Roster` update to the Announcement Board.
+
+5. FRONTEND INTEGRATION & VERIFICATION:
+   - Wire `MultiRosterManagerView` into `ChiefDashboardView.tsx` and `App.tsx`.
+   - Run `npx tsc --noEmit` and `npm run build`.
+   - Commit changes, push `feature/multi-roster-engine` to GitHub, and open a Pull Request against `main`.

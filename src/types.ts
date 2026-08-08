@@ -11,6 +11,10 @@ export interface WorkforceMember {
   // returned by the chief_* RPCs (see databaseService.ts).
   resident_code?: string;
   active: boolean;
+  // True by default. Distinguishes residents currently posted in GOP
+  // (General Out-Patient) from those on an outside rotation — a
+  // current-state flag, not tracked month-by-month.
+  on_floor: boolean;
   created_at: string;
 }
 
@@ -299,4 +303,98 @@ export interface DerivedNudge {
   severity: NudgeSeverity;
   title: string;
   action_link: string | null;
+}
+
+// --- Multi-Roster Engine (UCH Family Medicine) ---
+
+export type RosterTypeId =
+  | 'combined_gop'
+  | 'consultant_gop'
+  | 'accident_emergency'
+  | 'afternoon_supervision'
+  | 'satellite_outreach';
+
+export interface RosterType {
+  id: RosterTypeId;
+  name: string;
+}
+
+export interface RawRosterUpload {
+  id: string;
+  month: number;
+  year: number;
+  roster_type_id: RosterTypeId;
+  file_name: string | null;
+  file_url: string | null;
+  raw_text_content: string | null;
+  parsed_data: Record<string, unknown>;
+  uploaded_by_workforce_id: string | null;
+  created_at: string;
+}
+
+export type ClinicType = 'Triage' | 'Male Sorting' | 'Female Sorting' | 'Children Sorting' | 'Managed Care' | 'Annexe' | 'Other';
+
+export interface GopClinicSlot {
+  date_or_day: string;
+  clinic_type: ClinicType;
+  consultants: string[];
+  // Only meaningful for the combined_gop grid — consultant_gop slots have no residents.
+  residents?: string[];
+}
+export interface GopClinicGrid {
+  slots: GopClinicSlot[];
+  unparsed_notes: string[];
+}
+
+export type EmergencyShiftLabel = '4pm-10pm' | '10pm-8am';
+export interface EmergencyShift {
+  date_or_day: string;
+  shift: EmergencyShiftLabel;
+  on_call: string[];
+}
+export interface EmergencyCallGrid {
+  shifts: EmergencyShift[];
+  unparsed_notes: string[];
+}
+
+export interface SupervisionDuty {
+  date_or_day: string;
+  first_on_duty: string | null;
+  second_on_duty: string | null;
+}
+export interface SupervisionGrid {
+  duties: SupervisionDuty[];
+  unparsed_notes: string[];
+}
+
+export interface SatellitePosting {
+  facility: string;
+  date_or_day: string | null;
+  assigned: string[];
+}
+export interface SatelliteGrid {
+  postings: SatellitePosting[];
+  unparsed_notes: string[];
+}
+
+export type MasterRosterStatus = 'draft' | 'chief_review' | 'published';
+
+export interface CombinedMasterRoster {
+  id: string;
+  collection_id: string | null;
+  month: number;
+  year: number;
+  status: MasterRosterStatus;
+  gop_clinic_grid: GopClinicGrid;
+  emergency_call_grid: EmergencyCallGrid;
+  supervision_grid: SupervisionGrid;
+  satellite_grid: SatelliteGrid;
+  published_at: string | null;
+  created_at: string;
+}
+
+export interface RosterParseResult<T> {
+  data: T;
+  source: 'edge_function' | 'heuristic_fallback';
+  provider?: 'openai' | 'gemini';
 }
