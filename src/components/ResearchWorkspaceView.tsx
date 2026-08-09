@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
 import { loadAvailableTemplates, forkTemplate, editTemplate, TemplateEditPayload } from '../lib/research/templateEngine';
 import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../lib/research/rubricEngine';
+import { researchCopilot, DraftAuditResult, LiteratureMatrixResult, TableShellsResult, ResearchCopilotSource } from '../lib/ai/researchCopilot';
 import {
   ResearchWorkspace,
   ResearchTemplate,
@@ -40,31 +41,6 @@ const CORRECTION_SOURCES: { value: ResearchCorrectionSource; label: string }[] =
   { value: 'peer_reviewer', label: 'Peer Reviewer' },
 ];
 
-// Deterministic dummy-table-shell suggestions keyed by study design — a
-// rule-based starting skeleton, not AI-generated. Residents fill in the
-// real column values once data collection is underway.
-function generateDummyTableShells(studyDesign: ResearchStudyDesign | null): string[] {
-  const common = ['Table 1: Socio-Demographic Characteristics of Respondents'];
-  switch (studyDesign) {
-    case 'cross_sectional':
-      return [...common, 'Table 2: Prevalence of [Outcome] by Demographic Category', 'Table 3: Association Between [Exposure] and [Outcome] (Chi-square/OR)', 'Table 4: Multivariate Logistic Regression of Predictors of [Outcome]'];
-    case 'cohort':
-      return [...common, 'Table 2: Baseline Characteristics by Exposure Group', 'Table 3: Incidence of [Outcome] Over Follow-Up Period', 'Table 4: Relative Risk of [Outcome] by Exposure Status'];
-    case 'case_control':
-      return [...common, 'Table 2: Characteristics of Cases vs. Controls', 'Table 3: Odds Ratios for Candidate Risk Factors', 'Table 4: Multivariate Logistic Regression Model'];
-    case 'clinical_trial':
-      return ['Table 1: CONSORT Participant Flow (Enrolled, Randomized, Analyzed)', 'Table 2: Baseline Characteristics by Study Arm', 'Table 3: Primary and Secondary Outcomes by Arm', 'Table 4: Adverse Events by Arm'];
-    case 'qualitative':
-      return ['Table 1: Participant Characteristics', 'Table 2: Themes, Sub-Themes, and Illustrative Quotes'];
-    case 'systematic_review':
-      return ['Table 1: Characteristics of Included Studies', 'Table 2: Risk of Bias Assessment (per study)', 'Table 3: Summary of Findings / Pooled Estimates'];
-    case 'case_series':
-      return ['Table 1: Summary of Case Characteristics', 'Table 2: Presenting Features and Outcomes by Case'];
-    default:
-      return common;
-  }
-}
-
 // Fisher's formula (n = Z^2 * p(1-p) / d^2) — the standard sample-size-for-
 // proportion estimate taught in WACP/NPMCN research methodology courses.
 // Deterministic math, not AI — appropriate to compute client-side.
@@ -76,27 +52,15 @@ function computeFisherSampleSize(prevalencePct: number, precisionPct: number, zS
   return Math.ceil(n);
 }
 
-interface LiteratureMatrixRow {
-  raw: string;
-  author: string;
-  year: string;
-}
+const SOURCE_BADGE: Record<ResearchCopilotSource, { label: string; className: string }> = {
+  edge_function: { label: 'AI-generated', className: 'bg-violet-50 text-violet-700 border-violet-200' },
+  heuristic_fallback: { label: 'Heuristic (no AI configured)', className: 'bg-slate-100 text-slate-600 border-slate-200' },
+};
 
-// Best-effort "Author, Year" extraction from a pasted reference — organizes
-// what was already pasted into a matrix skeleton; never invents content.
-function parseLiteratureMatrix(referenceList: string): LiteratureMatrixRow[] {
-  return referenceList
-    .split('\n')
-    .map(l => l.trim())
-    .filter(Boolean)
-    .map(raw => {
-      const yearMatch = raw.match(/\b(19|20)\d{2}\b/);
-      const year = yearMatch ? yearMatch[0] : 'n/a';
-      const authorSegment = yearMatch ? raw.slice(0, yearMatch.index).trim() : raw;
-      const author = authorSegment.replace(/^\d+\.\s*/, '').replace(/[,.]\s*$/, '').slice(0, 60) || 'Unknown';
-      return { raw, author, year };
-    });
-}
+const SourceBadge: React.FC<{ source: ResearchCopilotSource }> = ({ source }) => {
+  const badge = SOURCE_BADGE[source];
+  return <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${badge.className}`}>{badge.label}</span>;
+};
 
 export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ resident }) => {
   const [workspaces, setWorkspaces] = useState<ResearchWorkspace[]>([]);
@@ -146,6 +110,12 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
   const [sampleP, setSampleP] = useState('50');
   const [sampleD, setSampleD] = useState('5');
   const [sampleZ, setSampleZ] = useState('1.96');
+  const [auditResult, setAuditResult] = useState<DraftAuditResult | null>(null);
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [tableShellsResult, setTableShellsResult] = useState<TableShellsResult | null>(null);
+  const [isGeneratingShells, setIsGeneratingShells] = useState(false);
+  const [matrixResult, setMatrixResult] = useState<LiteratureMatrixResult | null>(null);
+  const [isSynthesizingMatrix, setIsSynthesizingMatrix] = useState(false);
 
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId) || null;
   const activeTemplate = templates.find(t => t.id === activeWorkspace?.template_id) || null;
@@ -173,11 +143,15 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
     }
     databaseService.getResearchChapters(activeWorkspaceId).then(setChapters).catch(err => console.warn('Failed to load research chapters:', err));
     databaseService.getResearchCorrectionLogs(activeWorkspaceId).then(setCorrectionLogs).catch(err => console.warn('Failed to load correction logs:', err));
+    setAuditResult(null);
+    setTableShellsResult(null);
+    setMatrixResult(null);
   }, [activeWorkspaceId]);
 
   useEffect(() => {
     setDraftTitle(activeChapter?.title || '');
     setDraftContent(activeChapter?.content_text || '');
+    setAuditResult(null);
   }, [activeChapter?.id, activeChapterType]);
 
   const picoTitle = (activeWorkspace?.pico_framework?.title as string) || '';
@@ -358,8 +332,39 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
     () => computeFisherSampleSize(Number(sampleP), Number(sampleD), Number(sampleZ)),
     [sampleP, sampleD, sampleZ]
   );
-  const tableShells = useMemo(() => generateDummyTableShells(activeWorkspace?.study_design || null), [activeWorkspace?.study_design]);
-  const literatureMatrix = useMemo(() => parseLiteratureMatrix(referencesDraft), [referencesDraft]);
+
+  const handleRunAudit = async () => {
+    if (!activeWorkspace) return;
+    setIsAuditing(true);
+    try {
+      const result = await researchCopilot.auditDraft(resident.id, picoTitle, draftContent, referencesDraft, activeTemplate);
+      setAuditResult(result);
+    } finally {
+      setIsAuditing(false);
+    }
+  };
+
+  const handleGenerateTableShells = async () => {
+    if (!activeWorkspace) return;
+    setIsGeneratingShells(true);
+    try {
+      const result = await researchCopilot.generateTableShells(resident.id, activeWorkspace.title, activeWorkspace.study_design, activeTemplate);
+      setTableShellsResult(result);
+    } finally {
+      setIsGeneratingShells(false);
+    }
+  };
+
+  const handleSynthesizeMatrix = async () => {
+    if (!referencesDraft.trim()) return;
+    setIsSynthesizingMatrix(true);
+    try {
+      const result = await researchCopilot.synthesizeLiteratureMatrix(resident.id, referencesDraft, activeTemplate);
+      setMatrixResult(result);
+    } finally {
+      setIsSynthesizingMatrix(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -678,24 +683,44 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
               <h3 className="font-bold text-slate-900 text-sm">AI Copilot Panel</h3>
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed">
-              These tools run deterministic, rule-based logic against your active template and drafts —
-              they organize what you've written rather than generating new claims, and are not a substitute
-              for supervisor review.
+              These tools try a live AI provider first (OpenAI, then Gemini) and fall back to a
+              deterministic local check if neither is configured or available — a badge on each result
+              shows which path produced it. Never a substitute for supervisor review.
             </p>
 
             {/* Audit Draft against Active Rubric */}
             <div className="space-y-1.5 pt-2 border-t border-slate-100">
-              <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><ClipboardCheck size={12} /><span>Audit Draft Against Active Rubric</span></p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><ClipboardCheck size={12} /><span>Audit Draft Against Active Rubric</span></p>
+                <button
+                  onClick={handleRunAudit}
+                  disabled={isAuditing || !draftContent.trim()}
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer shrink-0"
+                >
+                  {isAuditing ? 'Auditing...' : 'Run AI Audit'}
+                </button>
+              </div>
               <div className="space-y-1 text-[10px]">
                 <p className={titleValidation.valid ? 'text-emerald-600' : 'text-rose-600'}>Title: {titleValidation.message}</p>
                 <p className={wordCapValidation.valid ? 'text-emerald-600' : 'text-rose-600'}>Section: {wordCapValidation.message}</p>
                 <p className={citationValidation.valid ? 'text-emerald-600' : 'text-rose-600'}>Citations: {citationValidation.message}</p>
               </div>
+              {auditResult && (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-2 space-y-1">
+                  <SourceBadge source={auditResult.source} />
+                  <ul className="list-disc list-inside space-y-0.5">
+                    {auditResult.notes.map((n, i) => (
+                      <li key={i} className="text-[10px] text-slate-600">{n}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
             {/* Fisher's Z sample size */}
             <div className="space-y-1.5 pt-2 border-t border-slate-100">
               <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><Calculator size={12} /><span>Precision Sample Size (Fisher's Formula)</span></p>
+              <p className="text-[9px] text-slate-400">Pure formula — computed locally, not sent to any AI provider.</p>
               <div className="grid grid-cols-3 gap-1.5">
                 <input type="number" value={sampleP} onChange={e => setSampleP(e.target.value)} placeholder="p %" className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] focus:outline-none focus:ring-1 focus:ring-slate-950" />
                 <input type="number" value={sampleD} onChange={e => setSampleD(e.target.value)} placeholder="d %" className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] focus:outline-none focus:ring-1 focus:ring-slate-950" />
@@ -706,26 +731,59 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
 
             {/* Dummy table shells */}
             <div className="space-y-1.5 pt-2 border-t border-slate-100">
-              <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><Table2 size={12} /><span>Dummy Table Shells</span></p>
-              <ul className="list-disc list-inside space-y-0.5">
-                {tableShells.map((t, i) => (
-                  <li key={i} className="text-[10px] text-slate-600">{t}</li>
-                ))}
-              </ul>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><Table2 size={12} /><span>Dummy Table Shells</span></p>
+                <button
+                  onClick={handleGenerateTableShells}
+                  disabled={isGeneratingShells}
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer shrink-0"
+                >
+                  {isGeneratingShells ? 'Generating...' : 'Generate'}
+                </button>
+              </div>
+              {!tableShellsResult ? (
+                <p className="text-[10px] text-slate-400">Generate table shells tailored to this workspace's title and study design.</p>
+              ) : (
+                <div className="space-y-1">
+                  <SourceBadge source={tableShellsResult.source} />
+                  {tableShellsResult.tables.map((t, i) => (
+                    <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg p-2">
+                      <p className="text-[10px] font-bold text-slate-700">{t.title}</p>
+                      {t.columns_hint && <p className="text-[9px] text-slate-500">{t.columns_hint}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Literature matrix */}
             <div className="space-y-1.5 pt-2 border-t border-slate-100">
-              <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><BookOpen size={12} /><span>Literature Matrix (from checker references above)</span></p>
-              {literatureMatrix.length === 0 ? (
-                <p className="text-[10px] text-slate-400">Paste references in the checker above to synthesize a matrix.</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><BookOpen size={12} /><span>Literature Matrix</span></p>
+                <button
+                  onClick={handleSynthesizeMatrix}
+                  disabled={isSynthesizingMatrix || !referencesDraft.trim()}
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer shrink-0"
+                >
+                  {isSynthesizingMatrix ? 'Synthesizing...' : 'Synthesize'}
+                </button>
+              </div>
+              {!matrixResult ? (
+                <p className="text-[10px] text-slate-400">Paste references in the checker above, then synthesize a matrix.</p>
+              ) : matrixResult.rows.length === 0 ? (
+                <p className="text-[10px] text-slate-400">No references to synthesize yet.</p>
               ) : (
-                <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {literatureMatrix.map((row, i) => (
-                    <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px]">
-                      <span className="font-bold text-slate-700">{row.author}</span> <span className="text-slate-400">({row.year})</span>
-                    </div>
-                  ))}
+                <div className="space-y-1">
+                  <SourceBadge source={matrixResult.source} />
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {matrixResult.rows.map((row, i) => (
+                      <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] space-y-0.5">
+                        <p><span className="font-bold text-slate-700">{row.author_year}</span> <span className="text-slate-400">({row.study_design})</span></p>
+                        {row.key_focus && <p className="text-slate-600">{row.key_focus}</p>}
+                        {row.gap_or_note && <p className="text-slate-500 italic">{row.gap_or_note}</p>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

@@ -367,7 +367,7 @@ export interface KnowledgePackItem {
   created_at: string;
 }
 
-export type AiActionType = 'methodology_check' | 'vancouver_format' | 'mesh_suggest' | 'differential_extract';
+export type AiActionType = 'methodology_check' | 'vancouver_format' | 'mesh_suggest' | 'differential_extract' | 'research_audit' | 'literature_matrix' | 'table_shells';
 
 export interface AiActionLog {
   id: string;
