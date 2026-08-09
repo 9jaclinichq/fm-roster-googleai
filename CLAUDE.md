@@ -374,8 +374,7 @@ against real OpenAI responses (scorecard updated live to 2/7 PMR steps met) → 
 confirmed all data, including AI-generated rubric scores and defense questions, persisted
 correctly. The admin logbook-parsing panel's UI was not browser-tested (no resident in this
 database currently holds a subadmin role) — its underlying Edge Function action was curl-verified
-against a real provider instead. Built on `feature/casebook-logbook-engine`, PR #9 (open at the
-time of writing — update this line once merged).
+against a real provider instead. Merged to `main` via PR #9.
 
 ## Universal Research Engine (migrations 13-14)
 
