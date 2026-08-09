@@ -1,0 +1,64 @@
+Execute Casebook & Clinical Logbook Engine with Family Medicine Tools, Customization Powers & Admin Parsing Panel:
+
+1. GIT BRANCH SETUP:
+   - Create and switch to a new branch: `feature/casebook-logbook-engine`.
+
+2. DATABASE SCHEMA MIGRATION:
+   - Create `supabase/migrations/14_casebook_logbook_engine.sql` containing:
+     a) `casebook_templates` table:
+        (id, tenant_id [nullable], created_by_user_id [nullable], name, framework_type ['WACP_PMR_10', 'WACP_CASEBOOK_15', 'NPMCN_CASEBOOK_15', 'GENERIC_10', 'CUSTOM_CLINICAL'], thematic_distribution [jsonb], scoring_rubric [jsonb], formatting_rules [jsonb], created_at).
+
+     b) EXHAUSTIVE SEED TEMPLATES:
+        - 'WACP Family Medicine PMR 10-Case Track (2022 Curriculum: 1 Maternal, 1 Gynae, 2 Int Med, 2 Child Care, 2 Surgery, 1 Mental Health, 1 A&E)'
+        - 'WACP Family Medicine 15-Casebook Track (2017 Curriculum: 15 cases covering 10-12 specialties + 1 Family Case Study)'
+        - 'NPMCN Family Medicine 15-Casebook Track'
+        - 'Generic 10-Case Clinical Portfolio'
+
+     c) `casebook_workspaces` table:
+        (id, tenant_id [nullable], user_id / workforce_id, title, framework_type, template_id, candidate_name, exam_date, preliminary_pages [jsonb], page_count_target [jsonb - PMR: 80-120p; Casebook: 80-140p], status ['draft', 'under_review', 'completed'], created_at).
+
+     d) `clinical_case_reports` table:
+        (id, workspace_id, case_number [1-15], thematic_area ['maternal_health', 'gynaecology', 'internal_medicine', 'child_health', 'surgery', 'mental_health', 'trauma_orthopaedics', 'ent', 'ophthalmology', 'family_case_study', 'custom'], title, patient_initials, hospital_number, age, gender, point_of_care, presenting_complaints, hpi_text, history_notes [jsonb - ROS, Past Med/Surg, Gynae/Obs, Drug/Allergy, Personal, Family/Social], examination_notes [jsonb - General, Systems, Local/Specialized], pccm_framework [jsonb - FIFE, Common Ground, Whole Person, Health Promotion], genogram_data [jsonb - 3 Generations, Disease Keys, Arrows], family_tools_data [jsonb - Family APGAR, Ecomap, Family Circle, Duvall/Stevenson Stage], management_plan [jsonb - Resuscitation, Definitive, Post-Op/Follow-up, Cost Considerations], discussion_text, references_text, rubric_scores [jsonb - 100-point breakdown], defense_questions [jsonb], status ['draft', 'supervisor_review', 'approved'], updated_at).
+
+     e) `clinical_logbooks` table:
+        (id, tenant_id [nullable], user_id / workforce_id, station_name, procedure_or_competency, required_count, completed_count, supervisor_signoffs [jsonb], created_at, updated_at).
+
+     f) `admin_logbook_parsing_queue` table:
+        (id, tenant_id [nullable], uploaded_by_user_id, file_url, parsed_status ['pending', 'processing', 'completed', 'failed'], extracted_curriculum [jsonb], created_at).
+
+     g) Permissive RLS policies matching current app trust model for anon/authenticated access.
+
+3. FAMILY MEDICINE TOOLS ENGINE (`src/lib/clinical/familyTools.ts`):
+   - Utility helpers to calculate & render:
+     * 3-Generation Family Genogram Canvas Data (Nodes, Relationships, Inherited Diseases like HTN, DM, Sickle Cell, Obesity).
+     * Family APGAR Score Calculator (Adaptability, Partnership, Growth, Affection, Resolve - Scores 0-3 severely dysfunctional, 4-6 moderately dysfunctional, 7-10 highly functional).
+     * Family Circle & Ecomap Mapper (Social support systems, stressors, church/community ties).
+     * Duvall's / Stevenson's Family Life Cycle Stage Evaluator (Stages 1-8).
+
+4. DUAL-ENGINE AI PROMPT HEURISTICS (`supabase/functions/_shared/casebookRubric.ts`):
+   - Ingest WACP Casebook (v4.1, Nov 2021) & PMR (7-Step) Rules:
+     * 100-Point Scoring Audit: Evaluates case write-up across all 10 WACP domains (Relevance to >=2nd level care, Diagnostic Accuracy, Cost Considerations, Procedural Skills, Psychosocial Determinants, PCCM 3-6 components, Discussion, References >=10 Vancouver <10yrs, Formatting, Logical Sequencing).
+     * Evaluates PMR 7-Step Guidelines: (1. Interest in patient, 2. Clinical area, 3. Evidence used, 4. Family/Social context, 5. Future illness impact, 6. FM tools used, 7. FM interventions).
+     * Detects formatting errors (e.g. sentences starting with figures, bold headings, non-Vancouver citations).
+     * Generates Defense Mock Questions & Recommended Answers based on the case write-up.
+   - Ingest Logbook Curriculum Parser: Accepts raw text from PDF/DOCX logbooks uploaded by Chief Residents/Admins and outputs structured station and procedure target JSON.
+   - Inject into `supabase/functions/academic-copilot/index.ts`.
+
+5. CASEBOOK & LOGBOOK WORKSPACE UI (`src/components/CasebookWorkspaceView.tsx`):
+   - Mode Switcher: Toggle between 10-PMR Track (Membership) and 15-Casebook Track (Fellowship).
+   - Interactive Case Matrix: Grid showing Cases 1-15 grouped by thematic area with progress indicators.
+   - Comprehensive Case Editor:
+     * Tab 1: Demographics, HPI & Systemic History.
+     * Tab 2: Physical & Systemic Examinations.
+     * Tab 3: PCCM & Biopsychosocial Formulation.
+     * Tab 4: Interactive Family Tools Canvas (Genogram, Family APGAR, Ecomap, Family Circle).
+     * Tab 5: Management, Cost Considerations & Procedural Details.
+     * Tab 6: Discussion, Lessons Learnt & Vancouver References.
+   - Real-Time WACP 100-Point Scorecard: Live gauges for 10 evaluation domains, reference age/style, and PCCM component counts.
+   - Admin / Chief Resident Logbook Panel: Upload interface allowing Admins to upload raw logbook files for AI curriculum extraction into digital tracking sheets.
+
+6. FRONTEND INTEGRATION & VERIFICATION:
+   - Wire `CasebookWorkspaceView` into `App.tsx` and `Navbar.tsx`.
+   - Update `src/lib/databaseService.ts` with helpers for casebook workspaces, clinical case reports, family tools, and logbook parsing.
+   - Run `npx tsc --noEmit` and `npm run build`.
+   - Commit changes, push `feature/casebook-logbook-engine` to GitHub, and open a Pull Request against `main`.

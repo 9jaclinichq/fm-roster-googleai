@@ -1,6 +1,6 @@
 import React from 'react';
 import { databaseService } from '../lib/databaseService';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope } from 'lucide-react';
 
 interface NavbarProps {
   currentResident: { id: string; name: string; category: string } | null;
@@ -18,6 +18,7 @@ interface NavbarProps {
   onNavigateToVivaSimulator: () => void;
   onNavigateToConsultantReview: () => void;
   onNavigateToResearch: () => void;
+  onNavigateToCasebookLogbook: () => void;
   currentView:
     | 'resident'
     | 'resident-announcements'
@@ -28,6 +29,7 @@ interface NavbarProps {
     | 'resident-viva-simulator'
     | 'resident-consultant-review'
     | 'resident-research'
+    | 'resident-casebook-logbook'
     | 'chief'
     | 'resident-login'
     | 'chief-login';
@@ -43,6 +45,7 @@ const RESIDENT_VIEWS = [
   'resident-viva-simulator',
   'resident-consultant-review',
   'resident-research',
+  'resident-casebook-logbook',
 ];
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -61,6 +64,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigateToVivaSimulator,
   onNavigateToConsultantReview,
   onNavigateToResearch,
+  onNavigateToCasebookLogbook,
   currentView
 }) => {
   return (
@@ -249,6 +253,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <FlaskConical size={13} />
               <span>Research Engine</span>
+            </button>
+            <button
+              onClick={onNavigateToCasebookLogbook}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
+                currentView === 'resident-casebook-logbook'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Stethoscope size={13} />
+              <span>Casebook & Logbook</span>
             </button>
           </div>
         )}
