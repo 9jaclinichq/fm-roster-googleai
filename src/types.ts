@@ -499,3 +499,79 @@ export interface RosterParseResult<T> {
   source: 'edge_function' | 'heuristic_fallback';
   provider?: 'openai' | 'gemini';
 }
+
+// --- Universal Research Engine (migration 13) ---
+
+export type ResearchOrgBody = 'WACP' | 'NPMCN' | 'ICMJE' | 'CONSORT' | 'STROBE' | 'PRISMA' | 'CARE' | 'University_Thesis' | 'Custom_Doctor';
+export type ResearchStudyDesign = 'cross_sectional' | 'cohort' | 'case_control' | 'clinical_trial' | 'qualitative' | 'systematic_review' | 'case_series';
+export type ResearchReferencingStyle = 'vancouver' | 'apa7' | 'harvard';
+
+export interface ResearchTemplate {
+  id: string;
+  tenant_id: string | null;
+  created_by_workforce_id: string | null;
+  name: string;
+  is_public: boolean;
+  organization_or_body: ResearchOrgBody;
+  specialty: string | null;
+  study_design: ResearchStudyDesign | null;
+  proposal_rubric: Record<string, unknown>;
+  dissertation_rubric: Record<string, unknown>;
+  referencing_style: ResearchReferencingStyle;
+  word_count_limits: Record<string, number>;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ResearchWorkspaceStatus = 'proposal_draft' | 'proposal_approved' | 'data_collection' | 'thesis_writeup' | 'completed';
+
+export interface ResearchWorkspace {
+  id: string;
+  tenant_id: string | null;
+  workforce_id: string | null;
+  title: string;
+  study_design: ResearchStudyDesign | null;
+  template_id: string | null;
+  pico_framework: Record<string, unknown>;
+  target_exam_date: string | null;
+  folder_tree: FolderNode[];
+  status: ResearchWorkspaceStatus;
+  created_at: string;
+}
+
+export type ResearchChapterType = 'proposal' | 'ch1_intro' | 'ch2_lit_review' | 'ch3_methods' | 'ch4_results' | 'ch5_discussion';
+
+export interface ResearchChapter {
+  id: string;
+  workspace_id: string;
+  chapter_type: ResearchChapterType;
+  chapter_number: number; // 0-5
+  title: string | null;
+  word_count: number;
+  content_text: string | null;
+  section_scores: Record<string, unknown>;
+  ai_audit_logs: Record<string, unknown>[];
+  updated_at: string;
+}
+
+export type ResearchCorrectionSource = 'college_assessor' | 'supervisor_round_1' | 'supervisor_round_2' | 'peer_reviewer';
+export type ResearchCorrectionStatus = 'pending' | 'resolved';
+
+export interface ResearchCorrectionLog {
+  id: string;
+  workspace_id: string;
+  comment_source: ResearchCorrectionSource;
+  section_topic: string | null;
+  original_comment: string;
+  action_taken: string | null;
+  status: ResearchCorrectionStatus;
+  created_at: string;
+}
+
+// A folder or subfolder in the default 7-folder drive taxonomy
+// (src/lib/research/folderStructure.ts). Recursive, but the current
+// taxonomy is only 2 levels deep (folder -> subfolder).
+export interface FolderNode {
+  name: string;
+  children?: FolderNode[];
+}

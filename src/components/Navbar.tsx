@@ -1,6 +1,6 @@
 import React from 'react';
 import { databaseService } from '../lib/databaseService';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical } from 'lucide-react';
 
 interface NavbarProps {
   currentResident: { id: string; name: string; category: string } | null;
@@ -17,6 +17,7 @@ interface NavbarProps {
   onNavigateToExamReadiness: () => void;
   onNavigateToVivaSimulator: () => void;
   onNavigateToConsultantReview: () => void;
+  onNavigateToResearch: () => void;
   currentView:
     | 'resident'
     | 'resident-announcements'
@@ -26,6 +27,7 @@ interface NavbarProps {
     | 'resident-exam-readiness'
     | 'resident-viva-simulator'
     | 'resident-consultant-review'
+    | 'resident-research'
     | 'chief'
     | 'resident-login'
     | 'chief-login';
@@ -40,6 +42,7 @@ const RESIDENT_VIEWS = [
   'resident-exam-readiness',
   'resident-viva-simulator',
   'resident-consultant-review',
+  'resident-research',
 ];
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -57,6 +60,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigateToExamReadiness,
   onNavigateToVivaSimulator,
   onNavigateToConsultantReview,
+  onNavigateToResearch,
   currentView
 }) => {
   return (
@@ -234,6 +238,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <ShieldCheck size={13} />
               <span>Review Workspace</span>
+            </button>
+            <button
+              onClick={onNavigateToResearch}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
+                currentView === 'resident-research'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <FlaskConical size={13} />
+              <span>Research Engine</span>
             </button>
           </div>
         )}

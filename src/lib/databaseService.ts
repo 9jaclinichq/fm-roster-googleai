@@ -48,7 +48,16 @@ import {
   GuestInvitedAs,
   GuestReviewInvite,
   GuestReviewInvitePublic,
+  ResearchTemplate,
+  ResearchWorkspace,
+  ResearchWorkspaceStatus,
+  ResearchChapter,
+  ResearchChapterType,
+  ResearchCorrectionLog,
+  ResearchCorrectionSource,
+  ResearchCorrectionStatus,
 } from '../types';
+import { buildDefaultFolderTree } from './research/folderStructure';
 
 // Read from import.meta.env
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -1799,5 +1808,286 @@ export const databaseService = {
       activeMasterRosters: rosters.count || 0,
       aiActionCount: aiActions.count || 0,
     };
+  },
+
+  // --- UNIVERSAL RESEARCH ENGINE (migration 13) ---
+  // Plain CRUD only — fork/edit business logic lives in
+  // src/lib/research/templateEngine.ts, which calls these.
+  async getResearchTemplates(): Promise<ResearchTemplate[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_templates')
+      .select('*')
+      .order('organization_or_body', { ascending: true })
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching research templates:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async getResearchTemplate(id: string): Promise<ResearchTemplate | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.from('research_templates').select('*').eq('id', id).maybeSingle();
+    if (error) {
+      console.warn('Error fetching research template:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async createResearchTemplate(entry: {
+    tenant_id: string | null;
+    created_by_workforce_id: string | null;
+    name: string;
+    is_public: boolean;
+    organization_or_body: ResearchTemplate['organization_or_body'];
+    specialty?: string | null;
+    study_design?: ResearchTemplate['study_design'];
+    proposal_rubric?: Record<string, unknown>;
+    dissertation_rubric?: Record<string, unknown>;
+    referencing_style?: ResearchTemplate['referencing_style'];
+    word_count_limits?: Record<string, number>;
+  }): Promise<ResearchTemplate> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_templates')
+      .insert([entry])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error creating research template:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateResearchTemplate(
+    id: string,
+    updates: Partial<Pick<ResearchTemplate, 'name' | 'specialty' | 'study_design' | 'proposal_rubric' | 'dissertation_rubric' | 'referencing_style' | 'word_count_limits'>>
+  ): Promise<ResearchTemplate> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_templates')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating research template:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- RESEARCH WORKSPACES ---
+  async getResearchWorkspacesForWorkforce(workforceId: string): Promise<ResearchWorkspace[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_workspaces')
+      .select('*')
+      .eq('workforce_id', workforceId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('Error fetching research workspaces:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async getResearchWorkspace(id: string): Promise<ResearchWorkspace | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.from('research_workspaces').select('*').eq('id', id).maybeSingle();
+    if (error) {
+      console.warn('Error fetching research workspace:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Stamps the default 7-folder Drive taxonomy onto every new workspace —
+  // see src/lib/research/folderStructure.ts.
+  async createResearchWorkspace(entry: {
+    tenant_id: string | null;
+    workforce_id: string;
+    title: string;
+    study_design?: ResearchWorkspace['study_design'];
+    template_id?: string | null;
+    pico_framework?: Record<string, unknown>;
+    target_exam_date?: string | null;
+  }): Promise<ResearchWorkspace> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_workspaces')
+      .insert([{ pico_framework: {}, folder_tree: buildDefaultFolderTree(), ...entry }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error creating research workspace:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateResearchWorkspaceTemplate(id: string, templateId: string): Promise<ResearchWorkspace> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_workspaces')
+      .update({ template_id: templateId })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating research workspace template:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateResearchWorkspaceStatus(id: string, status: ResearchWorkspaceStatus): Promise<ResearchWorkspace> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_workspaces')
+      .update({ status })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating research workspace status:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateResearchWorkspacePico(id: string, picoFramework: Record<string, unknown>): Promise<ResearchWorkspace> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_workspaces')
+      .update({ pico_framework: picoFramework })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating research workspace PICO framework:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- RESEARCH CHAPTERS ---
+  async getResearchChapters(workspaceId: string): Promise<ResearchChapter[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_chapters')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .order('chapter_number', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching research chapters:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async upsertResearchChapter(
+    workspaceId: string,
+    chapterType: ResearchChapterType,
+    chapterNumber: number,
+    updates: Partial<Pick<ResearchChapter, 'title' | 'word_count' | 'content_text' | 'section_scores' | 'ai_audit_logs'>>
+  ): Promise<ResearchChapter> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_chapters')
+      .upsert([{ workspace_id: workspaceId, chapter_type: chapterType, chapter_number: chapterNumber, ...updates }], {
+        onConflict: 'workspace_id,chapter_type',
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error saving research chapter:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- RESEARCH CORRECTION LOGS ---
+  async getResearchCorrectionLogs(workspaceId: string): Promise<ResearchCorrectionLog[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_correction_logs')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('Error fetching research correction logs:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async createResearchCorrectionLog(entry: {
+    workspace_id: string;
+    comment_source: ResearchCorrectionSource;
+    section_topic?: string | null;
+    original_comment: string;
+  }): Promise<ResearchCorrectionLog> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_correction_logs')
+      .insert([entry])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error creating research correction log:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateResearchCorrectionLog(
+    id: string,
+    updates: { action_taken?: string; status?: ResearchCorrectionStatus }
+  ): Promise<ResearchCorrectionLog> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_correction_logs')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating research correction log:', error);
+      throw error;
+    }
+    return data;
   },
 };
