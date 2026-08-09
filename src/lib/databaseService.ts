@@ -56,6 +56,14 @@ import {
   ResearchCorrectionLog,
   ResearchCorrectionSource,
   ResearchCorrectionStatus,
+  CasebookTemplate,
+  CasebookFrameworkType,
+  CasebookWorkspace,
+  CasebookWorkspaceStatus,
+  ClinicalCaseReport,
+  ClinicalLogbook,
+  AdminLogbookParsingQueueEntry,
+  LogbookParsedStatus,
 } from '../types';
 import { buildDefaultFolderTree } from './research/folderStructure';
 
@@ -2089,5 +2097,310 @@ export const databaseService = {
       throw error;
     }
     return data;
+  },
+
+  // --- CASEBOOK & CLINICAL LOGBOOK ENGINE (migrations 15-16) ---
+  // Sits alongside the original Casebook Builder (getCaseReports/
+  // upsertCaseReport above, backed by `case_reports`) rather than
+  // replacing it — see migration 15's header, point 5.
+  async getCasebookTemplates(): Promise<CasebookTemplate[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('casebook_templates')
+      .select('*')
+      .order('framework_type', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching casebook templates:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async getCasebookTemplate(id: string): Promise<CasebookTemplate | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.from('casebook_templates').select('*').eq('id', id).maybeSingle();
+    if (error) {
+      console.warn('Error fetching casebook template:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- CASEBOOK WORKSPACES ---
+  async getCasebookWorkspacesForWorkforce(workforceId: string): Promise<CasebookWorkspace[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('casebook_workspaces')
+      .select('*')
+      .eq('workforce_id', workforceId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('Error fetching casebook workspaces:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async getCasebookWorkspace(id: string): Promise<CasebookWorkspace | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.from('casebook_workspaces').select('*').eq('id', id).maybeSingle();
+    if (error) {
+      console.warn('Error fetching casebook workspace:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Stamps a page-count target from the framework type (PMR: 80-120p;
+  // 15-Casebook tracks: 80-140p; generic/custom: no fixed target).
+  async createCasebookWorkspace(entry: {
+    tenant_id: string | null;
+    workforce_id: string;
+    title: string;
+    framework_type: CasebookFrameworkType;
+    template_id?: string | null;
+    candidate_name?: string | null;
+    exam_date?: string | null;
+  }): Promise<CasebookWorkspace> {
+    checkSupabase();
+
+    const pageCountTarget =
+      entry.framework_type === 'WACP_PMR_10'
+        ? { min_pages: 80, max_pages: 120 }
+        : entry.framework_type === 'WACP_CASEBOOK_15' || entry.framework_type === 'NPMCN_CASEBOOK_15'
+        ? { min_pages: 80, max_pages: 140 }
+        : {};
+
+    const { data, error } = await supabase!
+      .from('casebook_workspaces')
+      .insert([{ preliminary_pages: {}, page_count_target: pageCountTarget, ...entry }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error creating casebook workspace:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateCasebookWorkspaceStatus(id: string, status: CasebookWorkspaceStatus): Promise<CasebookWorkspace> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('casebook_workspaces')
+      .update({ status })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating casebook workspace status:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- CLINICAL CASE REPORTS ---
+  async getClinicalCaseReports(workspaceId: string): Promise<ClinicalCaseReport[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('clinical_case_reports')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .order('case_number', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching clinical case reports:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async upsertClinicalCaseReport(
+    workspaceId: string,
+    caseNumber: number,
+    updates: Partial<Pick<ClinicalCaseReport,
+      'thematic_area' | 'title' | 'patient_initials' | 'hospital_number' | 'age' | 'gender' | 'point_of_care' |
+      'presenting_complaints' | 'hpi_text' | 'history_notes' | 'examination_notes' | 'pccm_framework' |
+      'genogram_data' | 'family_tools_data' | 'management_plan' | 'discussion_text' | 'references_text' |
+      'rubric_scores' | 'defense_questions' | 'status'
+    >>
+  ): Promise<ClinicalCaseReport> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('clinical_case_reports')
+      .upsert([{ workspace_id: workspaceId, case_number: caseNumber, ...updates }], {
+        onConflict: 'workspace_id,case_number',
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error saving clinical case report:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- CLINICAL LOGBOOKS ---
+  async getClinicalLogbooks(workforceId: string): Promise<ClinicalLogbook[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('clinical_logbooks')
+      .select('*')
+      .eq('workforce_id', workforceId)
+      .order('station_name', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching clinical logbooks:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async upsertClinicalLogbookEntry(entry: {
+    tenant_id: string | null;
+    workforce_id: string;
+    station_name: string;
+    procedure_or_competency: string;
+    required_count?: number;
+    completed_count?: number;
+  }): Promise<ClinicalLogbook> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('clinical_logbooks')
+      .upsert([entry], { onConflict: 'workforce_id,station_name,procedure_or_competency' })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error saving clinical logbook entry:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Appends a supervisor sign-off and bumps completed_count — read-modify-
+  // write rather than a DB-side array append, consistent with this app's
+  // client-computed-jsonb pattern elsewhere (e.g. syncComplianceNudges).
+  async addLogbookSignoff(
+    logbookId: string,
+    signoff: { signed_by_workforce_id: string | null; signed_by_name: string; date: string; note?: string }
+  ): Promise<ClinicalLogbook> {
+    checkSupabase();
+
+    const { data: existing, error: fetchErr } = await supabase!
+      .from('clinical_logbooks')
+      .select('*')
+      .eq('id', logbookId)
+      .single();
+    if (fetchErr) {
+      console.warn('Error fetching logbook entry before signoff:', fetchErr);
+      throw fetchErr;
+    }
+
+    const { data, error } = await supabase!
+      .from('clinical_logbooks')
+      .update({
+        supervisor_signoffs: [...(existing.supervisor_signoffs || []), signoff],
+        completed_count: Math.min(existing.required_count, (existing.completed_count || 0) + 1),
+      })
+      .eq('id', logbookId)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error recording logbook signoff:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // --- ADMIN LOGBOOK PARSING QUEUE ---
+  async getAdminLogbookParsingQueue(tenantId: string): Promise<AdminLogbookParsingQueueEntry[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('admin_logbook_parsing_queue')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('Error fetching admin logbook parsing queue:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async createAdminLogbookParsingQueueEntry(entry: {
+    tenant_id: string | null;
+    uploaded_by_workforce_id: string | null;
+    file_url?: string | null;
+    raw_text_content?: string | null;
+  }): Promise<AdminLogbookParsingQueueEntry> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('admin_logbook_parsing_queue')
+      .insert([{ parsed_status: 'pending', extracted_curriculum: {}, ...entry }])
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error queuing logbook document:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async updateAdminLogbookParsingQueueEntry(
+    id: string,
+    updates: { parsed_status?: LogbookParsedStatus; extracted_curriculum?: Record<string, unknown> }
+  ): Promise<AdminLogbookParsingQueueEntry> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('admin_logbook_parsing_queue')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('Error updating logbook parsing queue entry:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Reuses the existing academic-documents bucket (dissertation/case/
+  // knowledge-pack uploads already live there) — no new Storage bucket
+  // needed for this feature.
+  async uploadLogbookDocument(file: File): Promise<string> {
+    checkSupabase();
+
+    const fileExt = file.name.split('.').pop();
+    const filePath = `casebook-logbook/${Date.now()}_${file.name}.${fileExt}`;
+
+    const { error } = await supabase!.storage.from('academic-documents').upload(filePath, file);
+    if (error) {
+      console.warn('Logbook document upload failed:', error);
+      throw error;
+    }
+
+    const { data: publicUrlData } = supabase!.storage.from('academic-documents').getPublicUrl(filePath);
+    return publicUrlData.publicUrl;
   },
 };

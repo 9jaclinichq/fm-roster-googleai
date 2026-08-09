@@ -46,6 +46,9 @@ const ConsultantReviewView = lazy(() =>
 const ResearchWorkspaceView = lazy(() =>
   import('./components/ResearchWorkspaceView').then(m => ({ default: m.ResearchWorkspaceView }))
 );
+const CasebookWorkspaceView = lazy(() =>
+  import('./components/CasebookWorkspaceView').then(m => ({ default: m.CasebookWorkspaceView }))
+);
 // Public routes added by the SaaS multi-tenancy pass — neither is gated by
 // resident/chief session state. GuestReviewView is reachable by anyone
 // holding a review token (a capability URL); SaaSOperatorConsoleView
@@ -124,6 +127,7 @@ function MainAppContent() {
     if (path.startsWith('/resident/viva-simulator')) return 'resident-viva-simulator';
     if (path.startsWith('/resident/consultant-review')) return 'resident-consultant-review';
     if (path.startsWith('/resident/research')) return 'resident-research';
+    if (path.startsWith('/resident/casebook-logbook')) return 'resident-casebook-logbook';
     if (path.startsWith('/resident-form')) return 'resident';
     return 'resident-login';
   };
@@ -192,6 +196,7 @@ function MainAppContent() {
         onNavigateToVivaSimulator={() => navigate('/resident/viva-simulator')}
         onNavigateToConsultantReview={() => navigate('/resident/consultant-review')}
         onNavigateToResearch={() => navigate('/resident/research')}
+        onNavigateToCasebookLogbook={() => navigate('/resident/casebook-logbook')}
         currentView={getCurrentViewName()}
       />
 
@@ -344,6 +349,23 @@ function MainAppContent() {
             element={
               currentResident ? (
                 <ResearchWorkspaceView resident={currentResident} />
+              ) : (
+                <Navigate to="/resident/login" replace />
+              )
+            }
+          />
+
+          {/* Casebook & Clinical Logbook Engine — sits alongside the
+              original Casebook Builder (/resident/casebook, case_reports)
+              rather than replacing it; see migration 15's header. The
+              Admin Logbook Panel inside this view is conditionally shown
+              to residents holding a subadmin role, same gating pattern as
+              ConsultantReviewView's canApprove prop. */}
+          <Route
+            path="/resident/casebook-logbook"
+            element={
+              currentResident ? (
+                <CasebookWorkspaceView resident={currentResident} canManageLogbooks={currentResident.subadminRoles.length > 0} />
               ) : (
                 <Navigate to="/resident/login" replace />
               )

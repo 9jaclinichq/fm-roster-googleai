@@ -367,7 +367,10 @@ export interface KnowledgePackItem {
   created_at: string;
 }
 
-export type AiActionType = 'methodology_check' | 'vancouver_format' | 'mesh_suggest' | 'differential_extract' | 'research_audit' | 'literature_matrix' | 'table_shells';
+export type AiActionType =
+  | 'methodology_check' | 'vancouver_format' | 'mesh_suggest' | 'differential_extract'
+  | 'research_audit' | 'literature_matrix' | 'table_shells'
+  | 'casebook_audit' | 'defense_questions' | 'logbook_parse';
 
 export interface AiActionLog {
   id: string;
@@ -574,4 +577,200 @@ export interface ResearchCorrectionLog {
 export interface FolderNode {
   name: string;
   children?: FolderNode[];
+}
+
+// --- Casebook & Clinical Logbook Engine (migrations 15-16) ---
+
+export type CasebookFrameworkType = 'WACP_PMR_10' | 'WACP_CASEBOOK_15' | 'NPMCN_CASEBOOK_15' | 'GENERIC_10' | 'CUSTOM_CLINICAL';
+
+export interface CasebookTemplate {
+  id: string;
+  tenant_id: string | null;
+  created_by_workforce_id: string | null;
+  name: string;
+  framework_type: CasebookFrameworkType;
+  thematic_distribution: Record<string, unknown>;
+  scoring_rubric: Record<string, unknown>;
+  formatting_rules: Record<string, unknown>;
+  created_at: string;
+}
+
+export type CasebookWorkspaceStatus = 'draft' | 'under_review' | 'completed';
+
+export interface CasebookWorkspace {
+  id: string;
+  tenant_id: string | null;
+  workforce_id: string | null;
+  title: string;
+  framework_type: CasebookFrameworkType;
+  template_id: string | null;
+  candidate_name: string | null;
+  exam_date: string | null;
+  preliminary_pages: Record<string, unknown>;
+  page_count_target: { min_pages?: number; max_pages?: number };
+  status: CasebookWorkspaceStatus;
+  created_at: string;
+}
+
+export type ThematicArea =
+  | 'maternal_health' | 'gynaecology' | 'internal_medicine' | 'child_health' | 'surgery'
+  | 'mental_health' | 'trauma_orthopaedics' | 'accident_emergency' | 'ent' | 'ophthalmology'
+  | 'family_case_study' | 'custom';
+
+export interface ClinicalHistoryNotes {
+  ros?: string;
+  past_med_surg?: string;
+  gynae_obs?: string;
+  drug_allergy?: string;
+  personal?: string;
+  family_social?: string;
+}
+
+export interface ClinicalExaminationNotes {
+  general?: string;
+  systems?: string;
+  local_specialized?: string;
+}
+
+export interface PccmFramework {
+  fife?: string;
+  common_ground?: string;
+  whole_person?: string;
+  health_promotion?: string;
+}
+
+export interface ManagementPlan {
+  resuscitation?: string;
+  definitive?: string;
+  post_op_follow_up?: string;
+  cost_considerations?: string;
+}
+
+export type ClinicalCaseStatus = 'draft' | 'supervisor_review' | 'approved';
+
+export interface ClinicalCaseReport {
+  id: string;
+  workspace_id: string;
+  case_number: number; // 1-15
+  thematic_area: ThematicArea;
+  title: string | null;
+  patient_initials: string | null;
+  hospital_number: string | null;
+  age: number | null;
+  gender: string | null;
+  point_of_care: string | null;
+  presenting_complaints: string | null;
+  hpi_text: string | null;
+  history_notes: ClinicalHistoryNotes;
+  examination_notes: ClinicalExaminationNotes;
+  pccm_framework: PccmFramework;
+  genogram_data: GenogramData;
+  family_tools_data: FamilyToolsData;
+  management_plan: ManagementPlan;
+  discussion_text: string | null;
+  references_text: string | null;
+  rubric_scores: Record<string, number>;
+  defense_questions: { question: string; recommended_answer: string }[];
+  status: ClinicalCaseStatus;
+  updated_at: string;
+}
+
+export interface ClinicalLogbook {
+  id: string;
+  tenant_id: string | null;
+  workforce_id: string | null;
+  station_name: string;
+  procedure_or_competency: string;
+  required_count: number;
+  completed_count: number;
+  supervisor_signoffs: { signed_by_workforce_id: string | null; signed_by_name: string; date: string; note?: string }[];
+  created_at: string;
+  updated_at: string;
+}
+
+export type LogbookParsedStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface AdminLogbookParsingQueueEntry {
+  id: string;
+  tenant_id: string | null;
+  uploaded_by_workforce_id: string | null;
+  file_url: string | null;
+  raw_text_content: string | null;
+  parsed_status: LogbookParsedStatus;
+  extracted_curriculum: Record<string, unknown>;
+  created_at: string;
+}
+
+// --- Family Medicine Tools (src/lib/clinical/familyTools.ts) ---
+
+export interface GenogramNode {
+  id: string;
+  label: string;
+  generation: number; // 1 = grandparents, 2 = parents, 3 = index patient's generation
+  sex: 'M' | 'F' | 'unknown';
+  diseases: string[]; // e.g. ['Hypertension', 'Diabetes Mellitus', 'Sickle Cell Disease']
+  deceased?: boolean;
+  isIndexPatient?: boolean;
+}
+
+export interface GenogramRelationship {
+  from: string; // GenogramNode id
+  to: string; // GenogramNode id
+  type: 'marriage' | 'divorce' | 'parent_child' | 'twin';
+}
+
+export interface GenogramData {
+  nodes: GenogramNode[];
+  relationships: GenogramRelationship[];
+  disease_keys: string[]; // legend of diseases present anywhere in the tree
+}
+
+export interface FamilyApgarInput {
+  adaptability: number; // 0-2
+  partnership: number; // 0-2
+  growth: number; // 0-2
+  affection: number; // 0-2
+  resolve: number; // 0-2
+}
+
+export type FamilyApgarInterpretation = 'severely_dysfunctional' | 'moderately_dysfunctional' | 'highly_functional';
+
+export interface FamilyApgarResult extends FamilyApgarInput {
+  total: number; // 0-10
+  interpretation: FamilyApgarInterpretation;
+}
+
+export interface EcomapConnection {
+  label: string;
+  strength: 'strong' | 'stressful' | 'tenuous';
+  category: string; // e.g. 'Church', 'Extended Family', 'Workplace', 'Healthcare System'
+}
+
+export interface EcomapData {
+  center: string; // usually the family/household label
+  connections: EcomapConnection[];
+}
+
+export interface FamilyCircleMember {
+  label: string;
+  closeness: 'close' | 'moderate' | 'distant';
+}
+
+export interface FamilyCircleData {
+  members: FamilyCircleMember[];
+}
+
+export type DuvallStageNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+export interface DuvallStage {
+  stage: DuvallStageNumber;
+  label: string;
+  description: string;
+}
+
+export interface FamilyToolsData {
+  family_apgar?: FamilyApgarResult;
+  ecomap?: EcomapData;
+  family_circle?: FamilyCircleData;
+  duvall_stage?: DuvallStageNumber;
 }
