@@ -283,6 +283,100 @@ secrets needed. The AI Copilot Panel's 4th action (Fisher's-formula sample size)
 (AI-generated badges, on-topic content, `ai_action_logs` rows confirmed landing with the new
 action types).
 
+**Fifth Edge Function: `casebook-copilot`** (`supabase/functions/casebook-copilot/index.ts`)
+backs the Casebook & Clinical Logbook Engine's AI-assisted actions (see that section below):
+`audit_case` (WACP 100-point / PMR 7-step scoring), `generate_defense_questions` (viva prep
+questions grounded in the resident's own write-up), and `parse_logbook_curriculum` (structures
+raw pasted logbook text into stations/procedures/required-counts). Same
+OpenAI→Gemini→client-heuristic-fallback architecture as every other Edge Function here, built on
+`supabase/functions/_shared/casebookRubric.ts`'s `buildCasebookSystemPrompt`. Kept as its own
+function rather than folded into `academic-copilot`, matching the separation precedent
+`research-copilot` set — despite the original task spec asking to inject these into
+`academic-copilot` directly, that call was made explicitly with the user rather than followed
+literally. Reuses the same quota RPC and `AI_API_KEY`/`GEMINI_API_KEY` secrets — no new secrets
+needed. **Status: deployed and live-verified** — curl-tested all 3 actions directly against the
+deployed function (real OpenAI responses confirmed) and re-verified end-to-end in the browser.
+
+## Casebook & Clinical Logbook Engine (migrations 15-16)
+
+A template-driven WACP/NPMCN PMR (Membership) and 15-Casebook (Fellowship) portfolio workspace,
+reachable at `/resident/casebook-logbook`, backed by 5 new tables from migration 15:
+
+- **`casebook_templates`**: framework/rubric templates — `framework_type` (WACP_PMR_10,
+  WACP_CASEBOOK_15, NPMCN_CASEBOOK_15, GENERIC_10, CUSTOM_CLINICAL), each with a thematic
+  case-distribution, a scoring rubric (10 WACP domains summing to 100 points, or the PMR's 7-step
+  pass/fail checklist), and formatting rules (Vancouver references, min count, max age, no
+  figures starting sentences). Seeded with 4 global templates.
+- **`casebook_workspaces`**: one candidate's portfolio per resident, with a `page_count_target`
+  stamped from the framework (PMR: 80-120p; 15-Casebook tracks: 80-140p).
+- **`clinical_case_reports`**: one row per case (1-15) — full clinical write-up (demographics,
+  history, examination, PCCM/biopsychosocial formulation, family tools data, management plan,
+  discussion, references) plus AI-generated `rubric_scores` and `defense_questions`.
+- **`clinical_logbooks`**: per-resident procedure/competency/station tracking with supervisor
+  sign-offs (`addLogbookSignoff` appends a sign-off and bumps `completed_count`, capped at
+  `required_count`).
+- **`admin_logbook_parsing_queue`**: Chief/Admin-uploaded raw logbook text queued for AI
+  curriculum extraction. Has a `raw_text_content` column beyond the original spec's literal list
+  — mirrors `raw_roster_uploads` (migration 10): this app has no server-side PDF/DOCX parsing, so
+  a resident/admin pastes the document's text directly (same convention as
+  `MultiRosterManagerView.tsx`'s ingest flow) rather than the file itself being parsed.
+
+**SCOPE DECISION — sits alongside the original Casebook Builder, not replacing it.** `case_reports`
+(migration 04) + `CasebookBuilderView.tsx` + `/resident/casebook` remain a simpler, already-live
+15-slot MVP. `clinical_case_reports` here is a materially richer clinical write-up model at a
+**different** route/nav tab — an explicit choice made with the user rather than silently colliding
+two "casebook" concepts or migrating existing resident data. Both stay live and independent.
+
+**`thematic_area` adds `accident_emergency`**, which the original task spec's own enum list
+omitted despite the WACP PMR-10 seed template explicitly requiring "1 A&E" case — folding it into
+`trauma_orthopaedics` would have made the seeded distribution misrepresent its own curriculum, so
+the enum was corrected rather than worked around. Flagged in migration 15's header, same as every
+other deliberate spec deviation in this file.
+
+**Family Medicine Tools** (`src/lib/clinical/familyTools.ts`, pure client-side, no persistence
+logic of its own): 3-generation genogram builder (nodes/relationships/disease-legend), Family
+APGAR calculator (Smilkstein 0-2-per-item, 0-10 total, banded 0-3/4-6/7-10 interpretation),
+Ecomap and Family Circle mappers, and Duvall's/Stevenson's 8-stage family life cycle evaluator.
+Results are stored in `clinical_case_reports.genogram_data` / `family_tools_data`.
+
+**Real-Time WACP Scorecard**: live, client-side-only validators
+(`src/lib/clinical/caseRubricEngine.ts`) check reference formatting (Vancouver + min count + max
+age), sentences starting with a raw figure, PCCM component completeness (FIFE/Common Ground/Whole
+Person/Health Promotion), and an overall score summary against the active template — same
+independent-implementation-per-side pattern as the Research Engine's `rubricEngine.ts` vs.
+`researchRubric.ts`.
+
+**AI Copilot** (in `CasebookWorkspaceView.tsx`, provider in `src/lib/ai/casebookCopilot.ts`):
+"Audit Against WACP Rubric" and "Generate Defense Questions" call the live `casebook-copilot`
+Edge Function and fall back to a deterministic heuristic if it's unavailable — same
+`source`/`provider` badging pattern as every other AI Copilot panel in this app. The Admin Logbook
+Curriculum Parser panel (visible only to residents holding a subadmin role — same
+`canApprove`-style gating as `ConsultantReviewView`) also calls `casebook-copilot`
+(`parse_logbook_curriculum`) to structure pasted logbook text into stations/procedures, which can
+then be applied directly to the current user's `clinical_logbooks` tracker.
+
+Migration 16 widens `ai_action_logs.action_type`'s CHECK constraint to add `casebook_audit`,
+`defense_questions`, `logbook_parse`.
+
+**Bug found and fixed during browser verification**: the genogram's disease-list input was fully
+controlled — its displayed value was re-derived via `.join(', ')` from parsed state on every
+keystroke, which silently stripped a just-typed trailing comma before the next disease name was
+entered, corrupting fast/real typing alike. Fixed with a local-buffer + onBlur-commit input
+(`GenogramDiseasesInput`), matching this app's existing pattern for other free-text-to-
+structured-data fields (e.g. the PICO Title input in `ResearchWorkspaceView`).
+
+**Manually verified**: migrations applied live (all 4 seed templates confirmed present); a full
+resident-session browser walkthrough — created a PMR-10 workspace → opened Case 1 → filled
+demographics/PCCM/discussion/references → generated the genogram template (caught and fixed the
+bug above mid-verification) → set Family APGAR (7/10, Highly Functional) → added an Ecomap
+connection and Family Circle member → set Duvall stage 2 → saved → ran both AI Copilot actions
+against real OpenAI responses (scorecard updated live to 2/7 PMR steps met) → full page reload
+confirmed all data, including AI-generated rubric scores and defense questions, persisted
+correctly. The admin logbook-parsing panel's UI was not browser-tested (no resident in this
+database currently holds a subadmin role) — its underlying Edge Function action was curl-verified
+against a real provider instead. Built on `feature/casebook-logbook-engine`, PR #9 (open at the
+time of writing — update this line once merged).
+
 ## Universal Research Engine (migrations 13-14)
 
 A template-driven research proposal/dissertation workspace, reachable at `/resident/research`
