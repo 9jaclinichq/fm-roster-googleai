@@ -268,6 +268,83 @@ real bank account details were available to test a full creation safely. A
 `FLUTTERWAVE_SECRET_KEY` secret is also set on the project for future use,
 but no Flutterwave code path exists yet.
 
+**Fourth Edge Function: `research-copilot`** (`supabase/functions/research-copilot/index.ts`)
+backs the Universal Research Engine's AI Copilot Panel (see that section below) for 3 of its 4
+actions — `audit_draft`, `synthesize_literature_matrix`, `generate_table_shells`. Same
+OpenAI→Gemini→client-heuristic-fallback architecture and `source`/`provider` result fields as
+`academic-copilot`, but prompts are built dynamically per-request from the workspace's active
+`research_templates` row (via `supabase/functions/_shared/researchRubric.ts`'s
+`buildDynamicSystemPrompt`) rather than a fixed prompt set. Reuses the same
+`check_and_increment_tenant_ai_quota` RPC and `AI_API_KEY`/`GEMINI_API_KEY` secrets — no new
+secrets needed. The AI Copilot Panel's 4th action (Fisher's-formula sample size) is deliberately
+**not** routed through this function — it's a fixed formula, not a candidate for an LLM call.
+**Status: deployed and live-verified** — curl-tested directly against the deployed function
+(confirmed real OpenAI JSON responses for all 3 actions) and re-verified end-to-end in the browser
+(AI-generated badges, on-topic content, `ai_action_logs` rows confirmed landing with the new
+action types).
+
+## Universal Research Engine (migrations 13-14)
+
+A template-driven research proposal/dissertation workspace, reachable at `/resident/research`
+(gated exactly like every other resident view — see scope note below), backed by 4 new tables
+from migration 13:
+
+- **`research_templates`**: rubric/format templates — `organization_or_body` (WACP, NPMCN, ICMJE,
+  STROBE, CONSORT, PRISMA, CARE, University_Thesis, Custom_Doctor), `referencing_style`
+  (vancouver/apa7/harvard), `proposal_rubric`/`dissertation_rubric`/`word_count_limits` jsonb.
+  Seeded with 9 global templates (`tenant_id`/`created_by_workforce_id` both NULL). Residents can
+  fork any template into a personal (`is_public=false`) or department-wide (`is_public=true`,
+  `tenant_id` set) custom copy and edit its word caps, rubric items, referencing style, and custom
+  AI prompt rules — see `src/lib/research/templateEngine.ts`.
+- **`research_workspaces`**: one research project per resident, linked to an active template, with
+  a `pico_framework` jsonb (currently just the proposal title), a `status` lifecycle
+  (`proposal_draft` -> `proposal_approved` -> `data_collection` -> `thesis_writeup` -> `completed`),
+  and a `folder_tree` jsonb stamped at creation time from the fixed 7-folder Drive taxonomy in
+  `src/lib/research/folderStructure.ts` (`00-Proposal` through `07-Admin`).
+- **`research_chapters`**: one row per section (`proposal`, `ch1_intro` ... `ch5_discussion`) per
+  workspace, with `content_text`, `word_count`, and `ai_audit_logs`.
+- **`research_correction_logs`**: tabular tracker mapping assessor/supervisor feedback
+  (`comment_source`: college_assessor/supervisor_round_1/supervisor_round_2/peer_reviewer) to
+  `action_taken` and a pending/resolved `status`.
+
+RLS on all 4 tables is permissive, matching every table since migration 01 — see this file's
+Security Notes; not a real security boundary.
+
+**SCOPE DECISION -- no "independent doctor" identity.** The task spec implied a workspace owner
+could be either an institutional resident or an unaffiliated individual doctor, with
+`tenant_id`/`workforce_id` both nullable on `research_workspaces` to support that. That identity
+system was **not built** in this pass -- this app has no standalone user identity outside
+`workforce` (see Role Model above). `/resident/research` is gated exactly like every other
+resident view today; the nullable columns exist so a future "independent doctor" login doesn't
+require a schema change, but no such login flow exists yet.
+
+**Real-Time Rubric Scorecard**: live, client-side-only validators
+(`src/lib/research/rubricEngine.ts`) check PICO title length, active-section word cap, and
+citation syntax (Vancouver numbering plus a minimum African-literature-source ratio for
+WACP/NPMCN templates) against the workspace's active template, with zero network cost per
+keystroke. A server-side mirror of the same validators lives in
+`supabase/functions/_shared/researchRubric.ts` for `research-copilot`'s use — the two are
+deliberately independent implementations, same pattern as `academicCopilot.ts` vs.
+`academic-copilot/index.ts`'s heuristic fallback, not shared code across the Vite/Deno boundary.
+
+**AI Copilot Panel** (`ResearchWorkspaceView.tsx`, provider in `src/lib/ai/researchCopilot.ts`):
+"Run AI Audit", "Generate [Dummy Table Shells]", and "Synthesize [Literature Matrix]" call the
+live `research-copilot` Edge Function (see AI / Supabase Edge Functions above) and fall back to a
+deterministic heuristic if it's unavailable — same dual-path pattern and `source`/`provider` UI
+badging as the Dissertation Assistant/Casebook Builder. "Precision Sample Size (Fisher's Formula)"
+stays a pure client-side formula (`n = Z^2 p(1-p)/d^2`) — never sent to an AI provider.
+
+Migration 14 widens `ai_action_logs.action_type`'s CHECK constraint to add `research_audit`,
+`literature_matrix`, `table_shells` alongside the 4 original academicCopilot action types, so
+these are logged/audited the same way as every other AI action in this app.
+
+**Manually verified**: migration applied live (all 9 seed templates confirmed present); a full
+resident-session browser walkthrough — create workspace → apply WACP template → edit PICO title
+(live word-count gauge) → save chapter → paste Vancouver references (citation + African-literature
+gauges both went green) → add/resolve a correction log row → Fisher's sample-size calc → all 3 AI
+Copilot actions run against real OpenAI responses (confirmed via curl and in-browser) →
+full-page-reload persistence confirmed. Merged to `main` via PR #8.
+
 ## SaaS Multi-Tenancy & Platform Operator (migration 11)
 
 The app was extended from a single-department tool into a multi-tenant
