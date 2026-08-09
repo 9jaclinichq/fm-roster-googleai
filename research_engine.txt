@@ -1,0 +1,70 @@
+Execute Universal Research Engine with Full Template Customization Power & Exhaustive Seed Library:
+
+1. GIT BRANCH SETUP:
+   - Create and switch to a new branch: `feature/universal-research-engine`.
+
+2. DATABASE SCHEMA MIGRATION:
+   - Create `supabase/migrations/12_universal_research_engine.sql` containing:
+     a) `research_templates` table:
+        (id, tenant_id [nullable - NULL for global templates, tenant_id for institution/group templates], created_by_user_id [nullable - NULL for system templates, user_id for individual custom templates], name, is_public [boolean, default true], organization_or_body ['WACP', 'NPMCN', 'ICMJE', 'CONSORT', 'STROBE', 'PRISMA', 'CARE', 'University_Thesis', 'Custom_Doctor'], specialty, study_design ['cross_sectional', 'cohort', 'case_control', 'clinical_trial', 'qualitative', 'systematic_review', 'case_series'], proposal_rubric [jsonb], dissertation_rubric [jsonb], referencing_style ['vancouver', 'apa7', 'harvard'], word_count_limits [jsonb], created_at, updated_at).
+
+     b) EXHAUSTIVE SEED TEMPLATES:
+        - 'WACP Family Medicine Proposal (v5.0, May 2025)'
+        - 'WACP Fellowship Dissertation (v4.1, Aug 2022)'
+        - 'NPMCN Family Medicine Fellowship Proposal & Thesis'
+        - 'ICMJE / Vancouver General Medical Manuscript'
+        - 'STROBE Cross-Sectional / Observational Study'
+        - 'CONSORT Randomized Controlled Trial Protocol'
+        - 'PRISMA Systematic Review & Meta-Analysis'
+        - 'CARE Clinical Case Series & Case Report'
+        - 'Standard MSc / MPH Academic Thesis'
+
+     c) `research_workspaces` table:
+        (id, tenant_id [nullable - allows independent doctors to use platform without institutional linking], workforce_id / user_id, title, study_design, template_id, pico_framework [jsonb], target_exam_date, folder_tree [jsonb], status ['proposal_draft', 'proposal_approved', 'data_collection', 'thesis_writeup', 'completed'], created_at).
+
+     d) `research_chapters` table:
+        (id, workspace_id, chapter_type ['proposal', 'ch1_intro', 'ch2_lit_review', 'ch3_methods', 'ch4_results', 'ch5_discussion'], chapter_number [0-5], title, word_count, content_text, section_scores [jsonb], ai_audit_logs [jsonb], updated_at).
+
+     e) `research_correction_logs` table:
+        (id, workspace_id, comment_source ['college_assessor', 'supervisor_round_1', 'supervisor_round_2', 'peer_reviewer'], section_topic, original_comment, action_taken, status ['pending', 'resolved'], created_at).
+
+     f) RLS policies: Permissive anon SELECT/INSERT/UPDATE with tenant_id/user_id filtering at databaseService.
+
+3. TEMPLATE CUSTOMIZATION & FORKING ENGINE (`src/lib/research/templateEngine.ts`):
+   - Helper functions to:
+     * Load global public seed templates.
+     * Duplicate/fork any existing template into a Custom Individual or Tenant Template.
+     * Edit section word caps, chapter titles, scoring rubrics, referencing rules (Vancouver vs APA7), and custom prompt rules.
+
+4. DEFAULT 7-FOLDER DRIVE TAXONOMY (`src/lib/research/folderStructure.ts`):
+   - Pre-configure exact folder and subfolder hierarchy for every new workspace:
+     * `00-Proposal`: [Submitted-Final, Supervisor-Corrections, Synopsis-of-Corrections, Working-Drafts]
+     * `01-Literature`: [Annotated-Bibliographies, Literature-Matrix, PDFs-Zotero Backup, Search-Strategy]
+     * `02-Methodology`: [Ethics, Instruments, Pretest]
+     * `03-Data-Collection`: [Cleaned-Data, Participant-Logs, Raw Data, DATA ENTRY TRACKER, RECRUITMENT LOG]
+     * `04-Analysis`: [Results-Drafts, SPSS-Output, Statistical Notes]
+     * `05-Writeup`: [Chapter-Drafts, Final-Submission, Supervisor-Feedback]
+     * `06-Guidelines-and-Resources`: [College-Guidelines, Reference-Papers, WACP Standards]
+     * `07-Admin`: [Ethics-Approval, Supervisor-Correspondence, Timeline]
+
+5. DUAL-ENGINE AI PROMPT HEURISTICS (`supabase/functions/_shared/researchRubric.ts`):
+   - Dynamic prompt engine that reads rules directly from the selected `research_templates` record:
+     * Validates PICO/PECO Title Structure (<= 25 words or template limit).
+     * Enforces active template word count caps and chapter ranges.
+     * Validates citation syntax (Vancouver ICMJE with >= 25% African literature check for WACP, or APA7/Harvard for custom templates).
+     * Server-side rolling AI quota guard (50 actions / 14 days for free tier).
+
+6. UNIVERSAL RESEARCH WORKSPACE & TEMPLATE BUILDER UI (`src/components/ResearchWorkspaceView.tsx`):
+   - Template Library & Customization Modal:
+     * Browse seeded templates (WACP, NPMCN, STROBE, PRISMA, CARE, CONSORT, MSc).
+     * "Create / Fork Custom Template" button: Customize chapter names, word caps, citation styles, and rubric items for personal use or department-wide use.
+   - Interactive 7-Folder Drive Navigator.
+   - Real-Time Rubric Scorecard: Live gauges for title word count, section word limits, citation syntax, and African literature ratio.
+   - Interactive Synopsis of Corrections Generator: Tabular manager mapping Assessor/Supervisor feedback to "Action Taken" responses.
+   - AI Copilot Panel: Action buttons for "Audit Draft against Active Rubric", "Calculate Precision Sample Size (Fisher's Z)", "Generate Dummy Table Shells", "Synthesize Literature Matrix".
+
+7. FRONTEND INTEGRATION & VERIFICATION:
+   - Wire `ResearchWorkspaceView` into `App.tsx` and `Navbar.tsx` (accessible to both institutional residents and independent doctors).
+   - Update `src/lib/databaseService.ts` with helpers for research templates, custom template creation, workspaces, and correction logs.
+   - Run `npx tsc --noEmit` and `npm run build`.
+   - Commit changes, push `feature/universal-research-engine` to GitHub, and open a Pull Request against `main`.

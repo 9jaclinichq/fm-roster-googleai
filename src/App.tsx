@@ -43,6 +43,9 @@ const OralExamSimulatorView = lazy(() =>
 const ConsultantReviewView = lazy(() =>
   import('./components/ConsultantReviewView').then(m => ({ default: m.ConsultantReviewView }))
 );
+const ResearchWorkspaceView = lazy(() =>
+  import('./components/ResearchWorkspaceView').then(m => ({ default: m.ResearchWorkspaceView }))
+);
 // Public routes added by the SaaS multi-tenancy pass — neither is gated by
 // resident/chief session state. GuestReviewView is reachable by anyone
 // holding a review token (a capability URL); SaaSOperatorConsoleView
@@ -120,6 +123,7 @@ function MainAppContent() {
     if (path.startsWith('/resident/exam-readiness')) return 'resident-exam-readiness';
     if (path.startsWith('/resident/viva-simulator')) return 'resident-viva-simulator';
     if (path.startsWith('/resident/consultant-review')) return 'resident-consultant-review';
+    if (path.startsWith('/resident/research')) return 'resident-research';
     if (path.startsWith('/resident-form')) return 'resident';
     return 'resident-login';
   };
@@ -187,6 +191,7 @@ function MainAppContent() {
         onNavigateToExamReadiness={() => navigate('/resident/exam-readiness')}
         onNavigateToVivaSimulator={() => navigate('/resident/viva-simulator')}
         onNavigateToConsultantReview={() => navigate('/resident/consultant-review')}
+        onNavigateToResearch={() => navigate('/resident/research')}
         currentView={getCurrentViewName()}
       />
 
@@ -324,6 +329,21 @@ function MainAppContent() {
             element={
               currentResident ? (
                 <ConsultantReviewView reviewer={currentResident} canApprove={currentResident.subadminRoles.length > 0} />
+              ) : (
+                <Navigate to="/resident/login" replace />
+              )
+            }
+          />
+
+          {/* Universal Research Engine — gated the same as every other
+              resident view today (see ResearchWorkspaceView's header note:
+              a standalone "independent doctor" identity is schema-ready
+              but not built, so this route is resident-session-only for now). */}
+          <Route
+            path="/resident/research"
+            element={
+              currentResident ? (
+                <ResearchWorkspaceView resident={currentResident} />
               ) : (
                 <Navigate to="/resident/login" replace />
               )
