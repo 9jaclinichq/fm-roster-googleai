@@ -558,10 +558,25 @@ Deployment below).
   in `europe-west2`, `--allow-unauthenticated`). Vite bakes `VITE_*` vars at
   build time, so the Supabase URL/anon key flow in as `--build-arg`s from the
   `_VITE_SUPABASE_URL`/`_VITE_SUPABASE_ANON_KEY` trigger substitutions —
-  Cloud Run runtime env vars would be invisible to the static bundle. The
-  Artifact Registry repo must be created once manually (see cloudbuild.yaml
-  header). Local `docker build` has NOT been run on this machine (Docker not
-  installed) — the pipeline is config-reviewed, not container-verified.
+  Cloud Run runtime env vars would be invisible to the static bundle.
+  **Status: deployed and live** — service URL
+  https://privydoc-doc-workspace-62182046731.europe-west2.run.app (project
+  `privydoc-500414`), built via manual `gcloud builds submit` (pass
+  `COMMIT_SHA=<sha>` in `--substitutions`; manual builds don't auto-bind it)
+  and verified serving with the nginx security headers. Setup that was needed
+  once: Artifact Registry repo `privydoc` created; the default compute SA
+  (`62182046731-compute@...`, this project's Cloud Build SA) granted
+  `cloudbuild.builds.builder`, `run.admin`, and `iam.serviceAccountUser`.
+  The Dockerfile explicitly installs the rollup/lightningcss/tailwind-oxide
+  Linux-musl native binaries after `npm ci` — the Windows-generated
+  package-lock.json omits them (npm/cli#4828) and the Alpine build fails
+  without each of them in turn; don't remove those installs. A GitHub CI/CD
+  trigger (`deploy-doc-workspace-main`, push-to-main) is NOT yet created:
+  `gcloud builds triggers create github` returns an opaque INVALID_ARGUMENT
+  because the repo isn't connected to the Cloud Build GitHub App — a one-time
+  console OAuth step at
+  https://console.cloud.google.com/cloud-build/triggers/connect (then re-run
+  the trigger create command).
 - No CI (`.github/workflows` does not exist). `npm run lint` is `tsc --noEmit`
   only — there is no test runner/script in `package.json`.
 
