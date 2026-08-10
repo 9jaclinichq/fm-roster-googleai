@@ -570,13 +570,15 @@ Deployment below).
   The Dockerfile explicitly installs the rollup/lightningcss/tailwind-oxide
   Linux-musl native binaries after `npm ci` — the Windows-generated
   package-lock.json omits them (npm/cli#4828) and the Alpine build fails
-  without each of them in turn; don't remove those installs. A GitHub CI/CD
-  trigger (`deploy-doc-workspace-main`, push-to-main) is NOT yet created:
-  `gcloud builds triggers create github` returns an opaque INVALID_ARGUMENT
-  because the repo isn't connected to the Cloud Build GitHub App — a one-time
-  console OAuth step at
-  https://console.cloud.google.com/cloud-build/triggers/connect (then re-run
-  the trigger create command).
+  without each of them in turn; don't remove those installs. **CI/CD is live**:
+  GitHub trigger `deploy-doc-workspace-main` (global region, 1st-gen GitHub
+  App repo link, branch `^main$`, `cloudbuild.yaml`, both `_VITE_*`
+  substitutions, service account = the compute SA above) auto-builds and
+  deploys every push to `main`. It had to be created through the console UI —
+  `gcloud builds triggers create github` kept returning an opaque
+  INVALID_ARGUMENT even with the repo connected (a CLI/API quirk; the console
+  form with identical parameters worked). An org policy on this project
+  requires triggers to name a user-managed/explicit service account.
 - No CI (`.github/workflows` does not exist). `npm run lint` is `tsc --noEmit`
   only — there is no test runner/script in `package.json`.
 
