@@ -585,6 +585,17 @@ Deployment below).
   specify 'build.logs_bucket' ..." (the trigger's very first run failed
   exactly this way; fixed in commit b9fe843, whose own triggered build then
   succeeded and deployed).
+- **Firebase Hosting fronting**: site `privydoc-doc-workspace`
+  (https://privydoc-doc-workspace.web.app) rewrites every path (`**`) to the
+  Cloud Run service via `firebase.json` + `.firebaserc` (deploy target
+  `doc-workspace`). ⚠️ This project's DEFAULT hosting site
+  (`privydoc-500414.web.app`) serves a DIFFERENT live PrivyDoc product, and
+  `privydoc-root-redirect.web.app` 301s to app.privydoc.com.ng — never deploy
+  hosting to those from this repo. `firebase.json` deliberately defines ONLY
+  the `doc-workspace` target so a bare `firebase deploy --only hosting`
+  cannot touch them. `firebase-hosting-empty/` must stay empty: any static
+  file there would shadow the Cloud Run rewrite. Note the hosting layer
+  caches: Cloud Run serves `index.html` with `no-cache` so HTML stays fresh.
 - No CI (`.github/workflows` does not exist). `npm run lint` is `tsc --noEmit`
   only — there is no test runner/script in `package.json`.
 

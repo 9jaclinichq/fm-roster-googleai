@@ -1,0 +1,4 @@
+# Intentionally empty. Firebase Hosting requires a public directory, but this
+# site serves nothing statically — every path rewrites to the Cloud Run
+# service privydoc-doc-workspace (see firebase.json). A static file here would
+# take precedence over the rewrite and shadow the app.

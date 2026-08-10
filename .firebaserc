@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "privydoc-500414"
+  },
+  "targets": {
+    "privydoc-500414": {
+      "hosting": {
+        "doc-workspace": ["privydoc-doc-workspace"]
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "hosting": [
+    {
+      "target": "doc-workspace",
+      "public": "firebase-hosting-empty",
+      "ignore": ["**/.*"],
+      "rewrites": [
+        {
+          "source": "**",
+          "run": {
+            "serviceId": "privydoc-doc-workspace",
+            "region": "europe-west2"
+          }
+        }
+      ]
+    }
+  ]
+}
