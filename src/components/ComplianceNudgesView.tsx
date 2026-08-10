@@ -20,6 +20,12 @@ const SEVERITY_STYLES: Record<NudgeSeverity, string> = {
 };
 
 const ACTION_LABELS: Record<string, string> = {
+  '/workspace/dissertation': 'Go to Dissertation',
+  '/workspace/casebook': 'Go to Casebook',
+  '/workspace/exam-readiness': 'Update Exam Readiness',
+  '/workspace/form': 'Go to Roster Form',
+  // Legacy pre-rebrand paths — chief-authored nudge rows persisted in the
+  // DB may still carry these; navigation is handled by App.tsx's redirects.
   '/resident/dissertation': 'Go to Dissertation',
   '/resident/casebook': 'Go to Casebook',
   '/resident/exam-readiness': 'Update Exam Readiness',
@@ -42,7 +48,7 @@ async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
       nudge_type: 'dissertation_not_started',
       severity: 'medium',
       title: 'Dissertation not yet started — register a working title to begin the WACP pipeline.',
-      action_link: '/resident/dissertation',
+      action_link: '/workspace/dissertation',
     });
   } else {
     const milestones = await databaseService.getDissertationMilestones(dissertation.id);
@@ -52,7 +58,7 @@ async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
         nudge_type: 'ethics_pending',
         severity: 'high',
         title: 'Proposal pending ethics approval — required for Part 2 exam eligibility.',
-        action_link: '/resident/dissertation',
+        action_link: '/workspace/dissertation',
       });
     }
   }
@@ -64,7 +70,7 @@ async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
       nudge_type: 'missing_case_reports',
       severity: missing >= 5 ? 'high' : 'medium',
       title: `Missing ${missing} Case Report${missing === 1 ? '' : 's'} for Part 2 Exam Eligibility.`,
-      action_link: '/resident/casebook',
+      action_link: '/workspace/casebook',
     });
   }
 
@@ -73,7 +79,7 @@ async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
       nudge_type: 'evidemy_incomplete',
       severity: 'medium',
       title: 'CME/Evidemy modules unverified — update your completion count.',
-      action_link: '/resident/exam-readiness',
+      action_link: '/workspace/exam-readiness',
     });
   }
 
@@ -82,7 +88,7 @@ async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
       nudge_type: 'logbook_unverified',
       severity: 'medium',
       title: 'Physical logbook has not been verified.',
-      action_link: '/resident/exam-readiness',
+      action_link: '/workspace/exam-readiness',
     });
   }
 
@@ -91,7 +97,7 @@ async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
       nudge_type: 'fees_unpaid',
       severity: 'high',
       title: 'Exam fees are not yet marked as paid.',
-      action_link: '/resident/exam-readiness',
+      action_link: '/workspace/exam-readiness',
     });
   }
 
@@ -100,7 +106,7 @@ async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
       nudge_type: 'forms_unsubmitted',
       severity: 'high',
       title: 'College forms have not been submitted.',
-      action_link: '/resident/exam-readiness',
+      action_link: '/workspace/exam-readiness',
     });
   }
 
@@ -112,7 +118,7 @@ async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
         nudge_type: 'roster_pending',
         severity: 'medium',
         title: `Roster submission pending for "${activeColl.title}".`,
-        action_link: '/resident-form',
+        action_link: '/workspace/form',
       });
     }
   }

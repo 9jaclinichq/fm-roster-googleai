@@ -61,7 +61,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
           </div>
           <h2 className="text-xl font-bold tracking-tight">Chief Resident Portal</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            Department administrative login & residents dashboard
+            Department administrative login & workspace management
           </p>
         </div>
 

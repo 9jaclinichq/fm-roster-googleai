@@ -8,6 +8,7 @@ import { ResidentFormView } from './components/ResidentFormView';
 import { AnnouncementBoardView } from './components/AnnouncementBoardView';
 import { databaseService } from './lib/databaseService';
 import { TerminologyProvider } from './lib/terminology';
+import { getActiveBrand } from './config/branding';
 import { WorkforceMember } from './types';
 
 // Code-split the heavier resident views — each pulls its own weight in
@@ -62,6 +63,19 @@ const SaaSOperatorConsoleView = lazy(() =>
 
 const SUBADMIN_ROLE_IDS = ['hod', 'rtc', 'cme_coord', 'consultant', 'super_admin'];
 
+// Silent backward-compatibility redirects for pre-rebrand URLs: any
+// bookmarked /resident/* (or /resident-form) path lands on its /workspace/*
+// equivalent with the query string preserved. See src/config/branding.ts
+// for the rebrand context.
+function LegacyResidentRedirect() {
+  const location = useLocation();
+  const target =
+    location.pathname === '/resident-form'
+      ? '/workspace/form'
+      : location.pathname.replace(/^\/resident/, '/workspace');
+  return <Navigate to={`${target}${location.search}`} replace />;
+}
+
 interface ResidentSession {
   id: string;
   name: string;
@@ -76,6 +90,13 @@ interface ResidentSession {
 function MainAppContent() {
   const navigate = useNavigate();
   const location = useLocation();
+  const brand = getActiveBrand();
+
+  // Keep the tab title in sync with the active brand profile (B2C
+  // independent-doctor vs. B2B institutional — see src/config/branding.ts).
+  useEffect(() => {
+    document.title = brand.productName;
+  }, [brand.productName]);
 
   // Session State
   const [currentResident, setCurrentResident] = useState<ResidentSession | null>(null);
@@ -119,16 +140,16 @@ function MainAppContent() {
     const path = location.pathname;
     if (path.startsWith('/chief/dashboard')) return 'chief';
     if (path.startsWith('/chief')) return 'chief-login';
-    if (path.startsWith('/resident/announcements')) return 'resident-announcements';
-    if (path.startsWith('/resident/dissertation')) return 'resident-dissertation';
-    if (path.startsWith('/resident/casebook')) return 'resident-casebook';
-    if (path.startsWith('/resident/library')) return 'resident-library';
-    if (path.startsWith('/resident/exam-readiness')) return 'resident-exam-readiness';
-    if (path.startsWith('/resident/viva-simulator')) return 'resident-viva-simulator';
-    if (path.startsWith('/resident/consultant-review')) return 'resident-consultant-review';
-    if (path.startsWith('/resident/research')) return 'resident-research';
-    if (path.startsWith('/resident/casebook-logbook')) return 'resident-casebook-logbook';
-    if (path.startsWith('/resident-form')) return 'resident';
+    if (path.startsWith('/workspace/announcements')) return 'resident-announcements';
+    if (path.startsWith('/workspace/dissertation')) return 'resident-dissertation';
+    if (path.startsWith('/workspace/casebook')) return 'resident-casebook';
+    if (path.startsWith('/workspace/library')) return 'resident-library';
+    if (path.startsWith('/workspace/exam-readiness')) return 'resident-exam-readiness';
+    if (path.startsWith('/workspace/viva-simulator')) return 'resident-viva-simulator';
+    if (path.startsWith('/workspace/consultant-review')) return 'resident-consultant-review';
+    if (path.startsWith('/workspace/research')) return 'resident-research';
+    if (path.startsWith('/workspace/casebook-logbook')) return 'resident-casebook-logbook';
+    if (path.startsWith('/workspace/form')) return 'resident';
     return 'resident-login';
   };
 
@@ -136,7 +157,7 @@ function MainAppContent() {
     const session: ResidentSession = { ...resident, subadminRoles: [] };
     setCurrentResident(session);
     localStorage.setItem('fm_session_resident', JSON.stringify(session));
-    navigate('/resident-form');
+    navigate('/workspace/form');
     // Clear preset
     setPresetResident(null);
     refreshSubadminRoles(session);
@@ -145,7 +166,7 @@ function MainAppContent() {
   const handleResidentLogout = () => {
     setCurrentResident(null);
     localStorage.removeItem('fm_session_resident');
-    navigate('/resident/login');
+    navigate('/workspace/login');
   };
 
   const handleChiefLogin = (adminCode: string) => {
@@ -169,7 +190,7 @@ function MainAppContent() {
   // Dev helper clicks
   const handleSelectResidentFromHelper = (member: WorkforceMember) => {
     setPresetResident(member);
-    navigate('/resident/login');
+    navigate('/workspace/login');
   };
 
   const handleSelectAdminFromHelper = (code: string) => {
@@ -186,17 +207,17 @@ function MainAppContent() {
         onResidentLogout={handleResidentLogout}
         onChiefLogout={handleChiefLogout}
         onNavigateToChief={() => navigate('/chief/login')}
-        onNavigateToResident={() => navigate('/resident/login')}
-        onNavigateToResidentForm={() => navigate('/resident-form')}
-        onNavigateToAnnouncements={() => navigate('/resident/announcements')}
-        onNavigateToDissertation={() => navigate('/resident/dissertation')}
-        onNavigateToCasebook={() => navigate('/resident/casebook')}
-        onNavigateToLibrary={() => navigate('/resident/library')}
-        onNavigateToExamReadiness={() => navigate('/resident/exam-readiness')}
-        onNavigateToVivaSimulator={() => navigate('/resident/viva-simulator')}
-        onNavigateToConsultantReview={() => navigate('/resident/consultant-review')}
-        onNavigateToResearch={() => navigate('/resident/research')}
-        onNavigateToCasebookLogbook={() => navigate('/resident/casebook-logbook')}
+        onNavigateToResident={() => navigate('/workspace/login')}
+        onNavigateToResidentForm={() => navigate('/workspace/form')}
+        onNavigateToAnnouncements={() => navigate('/workspace/announcements')}
+        onNavigateToDissertation={() => navigate('/workspace/dissertation')}
+        onNavigateToCasebook={() => navigate('/workspace/casebook')}
+        onNavigateToLibrary={() => navigate('/workspace/library')}
+        onNavigateToExamReadiness={() => navigate('/workspace/exam-readiness')}
+        onNavigateToVivaSimulator={() => navigate('/workspace/viva-simulator')}
+        onNavigateToConsultantReview={() => navigate('/workspace/consultant-review')}
+        onNavigateToResearch={() => navigate('/workspace/research')}
+        onNavigateToCasebookLogbook={() => navigate('/workspace/casebook-logbook')}
         currentView={getCurrentViewName()}
       />
 
@@ -218,17 +239,17 @@ function MainAppContent() {
             path="/" 
             element={
               currentResident 
-                ? <Navigate to="/resident-form" replace /> 
-                : <Navigate to="/resident/login" replace />
+                ? <Navigate to="/workspace/form" replace /> 
+                : <Navigate to="/workspace/login" replace />
             } 
           />
 
           {/* Resident Login */}
           <Route
-            path="/resident/login"
+            path="/workspace/login"
             element={
               currentResident ? (
-                <Navigate to="/resident-form" replace />
+                <Navigate to="/workspace/form" replace />
               ) : (
                 <ResidentLoginView
                   onLoginSuccess={handleResidentLogin}
@@ -241,7 +262,7 @@ function MainAppContent() {
 
           {/* Resident Submission Form */}
           <Route
-            path="/resident-form"
+            path="/workspace/form"
             element={
               currentResident ? (
                 <ResidentFormView
@@ -249,79 +270,79 @@ function MainAppContent() {
                   onLogout={handleResidentLogout}
                 />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
 
           {/* Resident Announcement Board */}
           <Route
-            path="/resident/announcements"
+            path="/workspace/announcements"
             element={
               currentResident ? (
                 <AnnouncementBoardView resident={currentResident} />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
 
           {/* Dissertation Assistant */}
           <Route
-            path="/resident/dissertation"
+            path="/workspace/dissertation"
             element={
               currentResident ? (
                 <DissertationAssistantView resident={currentResident} />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
 
           {/* Casebook Builder */}
           <Route
-            path="/resident/casebook"
+            path="/workspace/casebook"
             element={
               currentResident ? (
                 <CasebookBuilderView resident={currentResident} />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
 
           {/* Knowledge Library */}
           <Route
-            path="/resident/library"
+            path="/workspace/library"
             element={
               currentResident ? (
                 <KnowledgeLibraryView />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
 
           {/* Exam Readiness Scorecard */}
           <Route
-            path="/resident/exam-readiness"
+            path="/workspace/exam-readiness"
             element={
               currentResident ? (
                 <ExamReadinessView resident={currentResident} />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
 
           {/* Mock Viva Oral Exam Simulator */}
           <Route
-            path="/resident/viva-simulator"
+            path="/workspace/viva-simulator"
             element={
               currentResident ? (
                 <OralExamSimulatorView resident={currentResident} />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
@@ -330,12 +351,12 @@ function MainAppContent() {
               peer-assist review), with subadmin roles additionally able to
               grant final approval (see ConsultantReviewView's canApprove prop). */}
           <Route
-            path="/resident/consultant-review"
+            path="/workspace/consultant-review"
             element={
               currentResident ? (
                 <ConsultantReviewView reviewer={currentResident} canApprove={currentResident.subadminRoles.length > 0} />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
@@ -345,29 +366,29 @@ function MainAppContent() {
               a standalone "independent doctor" identity is schema-ready
               but not built, so this route is resident-session-only for now). */}
           <Route
-            path="/resident/research"
+            path="/workspace/research"
             element={
               currentResident ? (
                 <ResearchWorkspaceView resident={currentResident} />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
 
           {/* Casebook & Clinical Logbook Engine — sits alongside the
-              original Casebook Builder (/resident/casebook, case_reports)
+              original Casebook Builder (/workspace/casebook, case_reports)
               rather than replacing it; see migration 15's header. The
               Admin Logbook Panel inside this view is conditionally shown
               to residents holding a subadmin role, same gating pattern as
               ConsultantReviewView's canApprove prop. */}
           <Route
-            path="/resident/casebook-logbook"
+            path="/workspace/casebook-logbook"
             element={
               currentResident ? (
                 <CasebookWorkspaceView resident={currentResident} canManageLogbooks={currentResident.subadminRoles.length > 0} />
               ) : (
-                <Navigate to="/resident/login" replace />
+                <Navigate to="/workspace/login" replace />
               )
             }
           />
@@ -381,7 +402,7 @@ function MainAppContent() {
               ) : (
                 <ChiefLoginView
                   onLoginSuccess={handleChiefLogin}
-                  onNavigateToResident={() => navigate('/resident/login')}
+                  onNavigateToResident={() => navigate('/workspace/login')}
                   presetCode={presetAdminCode}
                 />
               )
@@ -400,6 +421,11 @@ function MainAppContent() {
             }
           />
 
+          {/* Legacy pre-rebrand routes — silent redirects to /workspace/* */}
+          <Route path="/resident-form" element={<LegacyResidentRedirect />} />
+          <Route path="/resident" element={<Navigate to="/workspace/login" replace />} />
+          <Route path="/resident/*" element={<LegacyResidentRedirect />} />
+
           {/* Guest Review — public, no login required (see GuestReviewView) */}
           <Route path="/guest-review/:token" element={<GuestReviewView />} />
 
@@ -417,8 +443,8 @@ function MainAppContent() {
       {/* Humble Footer */}
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400 font-medium shrink-0">
         <div className="max-w-7xl mx-auto px-4">
-          <p>&copy; {new Date().getFullYear()} Department of Family Medicine. All rights reserved.</p>
-          <p className="mt-1 text-[10px] text-slate-300">FM Residents Dashboard &bull; Production Version 0.1</p>
+          <p>&copy; {new Date().getFullYear()} {brand.copyrightHolder}. All rights reserved.</p>
+          <p className="mt-1 text-[10px] text-slate-300">{brand.productName} &bull; Production Version 0.1</p>
           <p className="mt-2">
             <a href="#/saas-operator" className="text-[10px] text-slate-300 hover:text-slate-500 hover:underline">
               Platform Operator Console

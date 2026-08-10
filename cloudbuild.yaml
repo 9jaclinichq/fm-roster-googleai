@@ -1,0 +1,60 @@
+# PrivyDoc Workspace — GCP Cloud Build pipeline: build the static SPA
+# image, push it to Artifact Registry, deploy to Cloud Run.
+#
+# Trigger setup notes:
+#   - Requires an Artifact Registry Docker repository named "privydoc" in
+#     europe-west2 (gcloud artifacts repositories create privydoc
+#     --repository-format=docker --location=europe-west2).
+#   - _VITE_SUPABASE_URL / _VITE_SUPABASE_ANON_KEY must be set as trigger
+#     substitution values — Vite bakes them into the bundle at build time
+#     (see Dockerfile). The anon key ships in the client bundle by design.
+
+substitutions:
+  _REGION: europe-west2
+  _REPOSITORY: privydoc
+  _IMAGE: doc-workspace
+  _SERVICE: privydoc-doc-workspace
+  _VITE_SUPABASE_URL: ''
+  _VITE_SUPABASE_ANON_KEY: ''
+
+steps:
+  # Step 1: build the image
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA
+      - --build-arg
+      - VITE_SUPABASE_URL=${_VITE_SUPABASE_URL}
+      - --build-arg
+      - VITE_SUPABASE_ANON_KEY=${_VITE_SUPABASE_ANON_KEY}
+      - .
+
+  # Step 2: push to Artifact Registry
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA
+
+  # Step 3: deploy to Cloud Run
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA
+      - --region
+      - ${_REGION}
+      - --platform
+      - managed
+      - --port
+      - '8080'
+      - --allow-unauthenticated
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA
