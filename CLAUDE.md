@@ -532,6 +532,20 @@ Workspace** (branch `feature/gcp-cloudrun-branding-cleanup`):
 - Internal view-key identifiers (`'resident-dissertation'` etc. in
   `App.tsx`/`Navbar.tsx`) intentionally kept — they're not user-facing.
 
+**Manually verified in a browser** (after PR #10 merged): every legacy
+redirect (`#/resident/login`, `#/resident-form`, `#/resident/research?src=nudge`
+— query string preserved — `#/resident/casebook-logbook`,
+`#/resident/announcements`, bare `#/resident`) lands on its `/workspace/*`
+equivalent; session restore chains correctly through the redirected login
+route; Navbar/footer/tab-title all show the new PrivyDoc branding; nav-tab
+clicks and compliance-nudge action buttons navigate to the new routes with
+views rendering fully; zero console errors against the live DB.
+`resolveBrandForHostname` was verified by direct import in the page
+(`doc.privydoc.com.ng` → B2C profile; `localhost`/other hosts → B2B UCH) since
+a hostname can't be faked in a local browser session. Still NOT verified:
+the Docker container itself (Docker not installed on this machine — see
+Deployment below).
+
 ## Deployment
 
 - **Netlify**: `netlify.toml` configures `npm run build` → `dist/`, with SPA
