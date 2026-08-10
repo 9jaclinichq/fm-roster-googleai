@@ -578,7 +578,13 @@ Deployment below).
   `gcloud builds triggers create github` kept returning an opaque
   INVALID_ARGUMENT even with the repo connected (a CLI/API quirk; the console
   form with identical parameters worked). An org policy on this project
-  requires triggers to name a user-managed/explicit service account.
+  requires triggers to name a user-managed/explicit service account — and any
+  build running under an explicit SA must declare a logging mode, which is why
+  `cloudbuild.yaml` sets `options: logging: CLOUD_LOGGING_ONLY`. Don't remove
+  it: without it every triggered build fails instantly with "must either
+  specify 'build.logs_bucket' ..." (the trigger's very first run failed
+  exactly this way; fixed in commit b9fe843, whose own triggered build then
+  succeeded and deployed).
 - No CI (`.github/workflows` does not exist). `npm run lint` is `tsc --noEmit`
   only — there is no test runner/script in `package.json`.
 
