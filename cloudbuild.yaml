@@ -9,6 +9,12 @@
 #     substitution values — Vite bakes them into the bundle at build time
 #     (see Dockerfile). The anon key ships in the client bundle by design.
 
+# Required because the trigger runs under an explicit service account
+# (org policy) — such builds must pick a logging mode or they fail
+# instantly with "must either specify 'build.logs_bucket' ...".
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 substitutions:
   _REGION: europe-west2
   _REPOSITORY: privydoc
