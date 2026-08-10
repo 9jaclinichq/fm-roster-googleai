@@ -14,12 +14,16 @@ WORKDIR /app
 # Install deps first so Docker layer caching survives source-only changes.
 COPY package.json package-lock.json ./
 # package-lock.json is generated on Windows and, due to npm's optional-deps
-# bug (npm/cli#4828), omits rollup's Linux native binary — npm ci alone then
-# fails the Vite build on Alpine with "Cannot find module
-# @rollup/rollup-linux-x64-musl". Install it explicitly (--no-save keeps the
-# lock untouched), version-matched to the locked rollup.
+# bug (npm/cli#4828), omits the Linux-musl native binaries for rollup,
+# lightningcss, and Tailwind's oxide — npm ci alone then fails the Vite
+# build on Alpine with "Cannot find module" for each in turn. Install them
+# explicitly (--no-save keeps the lock untouched), version-matched to their
+# locked parent packages.
 RUN npm ci \
-  && npm install --no-save @rollup/rollup-linux-x64-musl@"$(node -p "require('rollup/package.json').version")"
+  && npm install --no-save \
+    @rollup/rollup-linux-x64-musl@"$(node -p "require('rollup/package.json').version")" \
+    lightningcss-linux-x64-musl@"$(node -p "require('lightningcss/package.json').version")" \
+    @tailwindcss/oxide-linux-x64-musl@"$(node -p "require('@tailwindcss/oxide/package.json').version")"
 
 COPY . .
 
