@@ -1,4 +1,4 @@
-# CLAUDE.md — FM Residents Dashboard
+# CLAUDE.md — PrivyDoc Workspace (formerly FM Residents Dashboard)
 
 ## AI Philosophy: Embedded Infrastructure, Not Chat
 
@@ -22,7 +22,8 @@ assistant bolted onto the side of it. That means:
 
 ## Project Summary
 
-**FM Residents Dashboard** — a monthly workforce data collection system for a
+**PrivyDoc Workspace** (formerly FM Residents Dashboard — see the Branding &
+Routing section) — a monthly workforce data collection system for a
 Department of Family Medicine. Residents log in with a name + 6-digit code to
 submit their current/next rotation and leave details (with document uploads).
 A Chief Resident logs in with a single shared admin code to manage the
@@ -300,7 +301,7 @@ deployed function (real OpenAI responses confirmed) and re-verified end-to-end i
 ## Casebook & Clinical Logbook Engine (migrations 15-16)
 
 A template-driven WACP/NPMCN PMR (Membership) and 15-Casebook (Fellowship) portfolio workspace,
-reachable at `/resident/casebook-logbook`, backed by 5 new tables from migration 15:
+reachable at `/workspace/casebook-logbook` (formerly `/resident/casebook-logbook`), backed by 5 new tables from migration 15:
 
 - **`casebook_templates`**: framework/rubric templates — `framework_type` (WACP_PMR_10,
   WACP_CASEBOOK_15, NPMCN_CASEBOOK_15, GENERIC_10, CUSTOM_CLINICAL), each with a thematic
@@ -322,7 +323,7 @@ reachable at `/resident/casebook-logbook`, backed by 5 new tables from migration
   `MultiRosterManagerView.tsx`'s ingest flow) rather than the file itself being parsed.
 
 **SCOPE DECISION — sits alongside the original Casebook Builder, not replacing it.** `case_reports`
-(migration 04) + `CasebookBuilderView.tsx` + `/resident/casebook` remain a simpler, already-live
+(migration 04) + `CasebookBuilderView.tsx` + `/workspace/casebook` remain a simpler, already-live
 15-slot MVP. `clinical_case_reports` here is a materially richer clinical write-up model at a
 **different** route/nav tab — an explicit choice made with the user rather than silently colliding
 two "casebook" concepts or migrating existing resident data. Both stay live and independent.
@@ -378,7 +379,7 @@ against a real provider instead. Merged to `main` via PR #9.
 
 ## Universal Research Engine (migrations 13-14)
 
-A template-driven research proposal/dissertation workspace, reachable at `/resident/research`
+A template-driven research proposal/dissertation workspace, reachable at `/workspace/research` (formerly `/resident/research`)
 (gated exactly like every other resident view — see scope note below), backed by 4 new tables
 from migration 13:
 
@@ -407,7 +408,7 @@ Security Notes; not a real security boundary.
 could be either an institutional resident or an unaffiliated individual doctor, with
 `tenant_id`/`workforce_id` both nullable on `research_workspaces` to support that. That identity
 system was **not built** in this pass -- this app has no standalone user identity outside
-`workforce` (see Role Model above). `/resident/research` is gated exactly like every other
+`workforce` (see Role Model above). `/workspace/research` is gated exactly like every other
 resident view today; the nullable columns exist so a future "independent doctor" login doesn't
 require a schema change, but no such login flow exists yet.
 
@@ -507,17 +508,46 @@ built in migration 11 — `SaaSOperatorConsoleView`, `TenantCustomizationView`,
 `GuestReviewView` — not the rest of the app), and `tenant_ai_adaptation_rules`
 actually being read/applied by the Edge Functions when constructing prompts.
 
+## Branding & Routing (PrivyDoc rebrand)
+
+The product was rebranded from "FM Residents Dashboard" to **PrivyDoc
+Workspace** (branch `feature/gcp-cloudrun-branding-cleanup`):
+
+- **`src/config/branding.ts`** is the single source of truth for user-facing
+  product naming. Two profiles: B2C independent doctor ("PrivyDoc Medical
+  Workspace", served when the hostname is `doc.privydoc.com.ng` / a `doc.*`
+  privydoc.com.ng subdomain) and B2B institutional ("PrivyDoc Workspace — UCH
+  Family Medicine", the default everywhere else including localhost).
+  `getActiveBrand()` drives the Navbar brand block, footer, and `document.title`.
+  Brand selection is cosmetic only — NOT a tenant/auth boundary.
+- Branding here is PRODUCT naming only; ROLE vocabulary ("Resident", "Chief
+  Resident"...) stays with the tenant terminology system in
+  `src/lib/terminology.tsx` and was deliberately not renamed.
+- **All `/resident/*` routes moved to `/workspace/*`** (and `/resident-form` →
+  `/workspace/form`). Old paths silently redirect via `LegacyResidentRedirect`
+  in `App.tsx` (query string preserved) — don't remove those redirect routes;
+  chief-authored `compliance_nudges` rows in the live DB may still carry old
+  `action_link` paths (`ComplianceNudgesView.tsx` also keeps legacy keys in
+  its `ACTION_LABELS` map for the same reason).
+- Internal view-key identifiers (`'resident-dissertation'` etc. in
+  `App.tsx`/`Navbar.tsx`) intentionally kept — they're not user-facing.
+
 ## Deployment
 
 - **Netlify**: `netlify.toml` configures `npm run build` → `dist/`, with SPA
-  fallback redirect (`/* → /index.html`, 200). This is the only deployment
-  config found in the repo.
-- **Cloud Run**: no Dockerfile, cloudbuild.yaml, or other Cloud Run config
-  exists in the repo despite `metadata.json` referencing
-  `MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API` and `APP_URL` (Cloud Run env vars)
-  — these appear to be leftover scaffolding from Google AI Studio, not an
-  active deployment target. Don't assume a Cloud Run pipeline exists; confirm
-  with the user before building against it.
+  fallback redirect (`/* → /index.html`, 200).
+- **GCP Cloud Run**: `Dockerfile` (multi-stage: `node:20-alpine` build →
+  `nginx:alpine` serving `dist/` on port 8080), `nginx.conf` (SPA fallback,
+  security headers, immutable caching for hashed `/assets/`), and
+  `cloudbuild.yaml` (build → push to Artifact Registry repo `privydoc`,
+  image `doc-workspace` → deploy Cloud Run service `privydoc-doc-workspace`
+  in `europe-west2`, `--allow-unauthenticated`). Vite bakes `VITE_*` vars at
+  build time, so the Supabase URL/anon key flow in as `--build-arg`s from the
+  `_VITE_SUPABASE_URL`/`_VITE_SUPABASE_ANON_KEY` trigger substitutions —
+  Cloud Run runtime env vars would be invisible to the static bundle. The
+  Artifact Registry repo must be created once manually (see cloudbuild.yaml
+  header). Local `docker build` has NOT been run on this machine (Docker not
+  installed) — the pipeline is config-reviewed, not container-verified.
 - No CI (`.github/workflows` does not exist). `npm run lint` is `tsc --noEmit`
   only — there is no test runner/script in `package.json`.
 

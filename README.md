@@ -1,6 +1,6 @@
-# FM Residents Dashboard
+# PrivyDoc Workspace
 
-FM Residents Dashboard is a production-grade, highly responsive monthly information collection system built for the **Department of Family Medicine**. It is designed to coordinate monthly resident rotations, track leave statuses, and collect supporting documents through an integrated administrative dashboard for scheduling managers (Chief Residents).
+PrivyDoc Workspace (formerly FM Residents Dashboard) is a production-grade, highly responsive monthly information collection system built for the **Department of Family Medicine**. It is designed to coordinate monthly resident rotations, track leave statuses, and collect supporting documents through an integrated administrative dashboard for scheduling managers (Chief Residents).
 
 The application is built with **React 18+**, **Vite**, **TypeScript**, and **Tailwind CSS**, and is fully connected to **Supabase** for database, RLS security, and storage capabilities.
 

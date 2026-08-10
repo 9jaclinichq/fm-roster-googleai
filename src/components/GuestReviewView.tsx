@@ -141,7 +141,7 @@ export const GuestReviewView: React.FC = () => {
           <p className="text-xs text-slate-500">
             Guest access only covers this one item. Create a free account to see your review history and other tools.
           </p>
-          <Link to="/resident/login" className="inline-block mt-1 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition">
+          <Link to="/workspace/login" className="inline-block mt-1 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition">
             Explore the platform
           </Link>
         </div>

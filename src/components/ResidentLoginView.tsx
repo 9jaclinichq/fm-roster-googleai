@@ -107,7 +107,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
           </div>
           <h2 className="text-xl font-bold tracking-tight">Resident Portal</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            Access your Department of Family Medicine Residents Dashboard
+            Access your PrivyDoc Medical Workspace
           </p>
         </div>
 

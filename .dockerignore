@@ -1,0 +1,18 @@
+# Keep the Docker build context small and deterministic.
+node_modules
+dist
+.git
+.github
+
+# Env files are never baked implicitly — Supabase URL/anon key arrive as
+# explicit --build-arg values (see Dockerfile / cloudbuild.yaml).
+.env
+.env.*
+!.env.example
+
+# Backend-only / local-only artifacts irrelevant to the static bundle.
+supabase
+netlify.toml
+*.log
+.tmp-run-migration.cjs
+branding.txt

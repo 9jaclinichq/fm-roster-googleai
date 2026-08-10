@@ -1,5 +1,6 @@
 import React from 'react';
 import { databaseService } from '../lib/databaseService';
+import { getActiveBrand } from '../config/branding';
 import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope } from 'lucide-react';
 
 interface NavbarProps {
@@ -67,17 +68,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigateToCasebookLogbook,
   currentView
 }) => {
+  const brand = getActiveBrand();
   return (
     <header id="app-header" className="bg-white border-b border-slate-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16 flex-wrap md:flex-nowrap gap-4 py-2 md:py-0">
           <div className="flex items-center space-x-3 cursor-pointer shrink-0" onClick={onNavigateToResident}>
             <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-base shadow-sm">
-              FM
+              {brand.logoInitials}
             </div>
             <div>
-              <h1 className="font-bold text-slate-900 tracking-tight text-base sm:text-lg leading-tight">Residents <span className="text-blue-600 font-semibold">Dashboard</span></h1>
-              <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Department of Family Medicine</p>
+              <h1 className="font-bold text-slate-900 tracking-tight text-base sm:text-lg leading-tight">PrivyDoc <span className="text-blue-600 font-semibold">Workspace</span></h1>
+              <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">{brand.orgLabel}</p>
             </div>
           </div>
 
