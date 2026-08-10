@@ -508,6 +508,44 @@ built in migration 11 — `SaaSOperatorConsoleView`, `TenantCustomizationView`,
 `GuestReviewView` — not the rest of the app), and `tenant_ai_adaptation_rules`
 actually being read/applied by the Edge Functions when constructing prompts.
 
+## Billing, Tiers & AI Copilot Feature Gating (migration 17)
+
+Paystack/Flutterwave-backed Pro upgrades gating the Research & PMR/Casebook
+AI Copilot actions:
+
+- **`src/config/tiers.ts`**: Free = 50 AI actions per rolling 14 days
+  (Research + Casebook action types only — the original academic-copilot
+  types are deliberately ungated); Pro/Unlimited = no cap. ⚠️ The Pro price
+  (₦5,000/mo) is a PLACEHOLDER nobody has signed off — the charged amount
+  lives in `payment-checkout/index.ts` (authoritative), mirrored
+  display-only in tiers.ts.
+- **`useWorkspaceQuota`** (`src/lib/billing/`): client-side per-member gate
+  counting `ai_action_logs`; fails OPEN on read errors. The tenant-level
+  `check_and_increment_tenant_ai_quota` RPC inside the copilot Edge
+  Functions remains the authoritative backstop. Exhaustion opens
+  `UpgradeCheckoutModal` (wired into Research + Casebook workspace views).
+- **Migration 17**: `user_subscriptions` ("user" = workforce row; SELECT-only
+  RLS for anon — writes are service-role-only so anon can't self-grant Pro)
+  and `payment_events` (no policies at all; webhook idempotency via UNIQUE
+  (provider, event_type, reference)). Applied live.
+- **Edge Functions** (both deployed + live-verified): `payment-checkout`
+  initializes provider-hosted checkout server-side (amount can't be forged
+  client-side; returns redirect URL; inserts 'pending' subscription row) —
+  real checkout URLs confirmed from BOTH live providers. `payment-webhook`
+  verifies Paystack via HMAC-SHA512 of the raw body (curl-verified: unsigned
+  → 401, forged → 401) and Flutterwave via `verif-hash` CONSTANT-TIME
+  EQUALITY — a flagged deviation from the task brief's "HMAC for both":
+  Flutterwave v3 doesn't sign payloads, it sends the dashboard-configured
+  secret hash verbatim. Activation (pending → active, 30-day period) happens
+  ONLY in the webhook, never client-side.
+- **NOT yet done** (needs the user / dashboards): `FLUTTERWAVE_WEBHOOK_HASH`
+  secret is unset (Flutterwave webhooks 503 until it matches the dashboard
+  value); the webhook URL
+  (`https://gdumksfffewpdqqwvcdo.supabase.co/functions/v1/payment-webhook`)
+  is not yet registered in either provider dashboard; no end-to-end paid
+  transaction has been tested (live Paystack key — a real test moves real
+  money); no browser walkthrough of the modal flow yet.
+
 ## Branding & Routing (PrivyDoc rebrand)
 
 The product was rebranded from "FM Residents Dashboard" to **PrivyDoc

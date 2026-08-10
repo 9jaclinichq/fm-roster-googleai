@@ -52,17 +52,26 @@ export const B2B_UCH_BRAND: BrandProfile = {
 /** Canonical B2C subdomain for the independent-doctor workspace. */
 export const B2C_HOSTNAME = 'doc.privydoc.com.ng';
 
+/** Canonical B2B subdomain for the departmental/institutional workspace. */
+export const B2B_HOSTNAME = 'workspace.privydoc.com.ng';
+
 /**
  * Resolve the active brand from a hostname. `doc.privydoc.com.ng` (and any
  * `doc.*` subdomain of privydoc.com.ng, e.g. a staging `doc.staging...`)
- * serves the B2C independent-doctor brand; every other host — including
- * localhost and the current institutional deployment — gets the B2B
+ * serves the B2C independent-doctor brand. `workspace.privydoc.com.ng` is
+ * the canonical departmental/institutional host — matched explicitly so the
+ * dual-hostname contract is stated in code, even though the fallthrough
+ * default would produce the same B2B profile; every other host — including
+ * localhost and the current single-tenant deployment — also gets the B2B
  * UCH tenant brand, which matches today's single-tenant reality.
  */
 export function resolveBrandForHostname(hostname: string): BrandProfile {
   const h = hostname.toLowerCase();
   if (h === B2C_HOSTNAME || (h.startsWith('doc.') && h.endsWith('privydoc.com.ng'))) {
     return B2C_INDEPENDENT_BRAND;
+  }
+  if (h === B2B_HOSTNAME || (h.startsWith('workspace.') && h.endsWith('privydoc.com.ng'))) {
+    return B2B_UCH_BRAND;
   }
   return B2B_UCH_BRAND;
 }

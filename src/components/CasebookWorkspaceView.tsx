@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
 import { casebookCopilot, CasebookCopilotSource } from '../lib/ai/casebookCopilot';
+import { useWorkspaceQuota } from '../lib/billing/useWorkspaceQuota';
+import { UpgradeCheckoutModal } from './UpgradeCheckoutModal';
 import {
   createGenogramTemplate, addGenogramNode, updateGenogramNode,
   calculateFamilyApgar, FAMILY_APGAR_INTERPRETATION_LABELS,
@@ -107,6 +109,11 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
   const [parsedStations, setParsedStations] = useState<{ station_name: string; procedures: { procedure_or_competency: string; required_count: number }[] }[] | null>(null);
   const [parsedSource, setParsedSource] = useState<CasebookCopilotSource | null>(null);
 
+  // AI Copilot feature gating — same free-tier rolling-window allowance and
+  // upgrade checkout as the Research Engine (see src/config/tiers.ts).
+  const quota = useWorkspaceQuota(resident.id);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId) || null;
   const activeTemplate = templates.find(t => t.id === activeWorkspace?.template_id) || null;
   const activeCase = cases.find(c => c.case_number === activeCaseNumber) || null;
@@ -201,6 +208,10 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
 
   const handleRunAudit = async () => {
     if (!activeWorkspace || !activeCaseNumber) return;
+    if (quota.exhausted) {
+      setShowUpgradeModal(true);
+      return;
+    }
     setIsAuditing(true);
     try {
       const result = await casebookCopilot.auditCase(resident.id, draft.title || '', draft.discussion_text || draft.hpi_text || '', draft.references_text || '', activeTemplate);
@@ -209,6 +220,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
       const saved = await databaseService.upsertClinicalCaseReport(activeWorkspace.id, activeCaseNumber, { rubric_scores: result.scores });
       setCases(prev => prev.map(c => (c.case_number === activeCaseNumber ? saved : c)));
       setDraft(prev => ({ ...prev, rubric_scores: result.scores }));
+      quota.refresh();
     } finally {
       setIsAuditing(false);
     }
@@ -216,6 +228,10 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
 
   const handleGenerateQuestions = async () => {
     if (!activeWorkspace || !activeCaseNumber) return;
+    if (quota.exhausted) {
+      setShowUpgradeModal(true);
+      return;
+    }
     setIsGeneratingQuestions(true);
     try {
       const result = await casebookCopilot.generateDefenseQuestions(resident.id, draft.title || '', draft.discussion_text || draft.hpi_text || '', draft.thematic_area || 'custom', activeTemplate);
@@ -223,12 +239,17 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
       const saved = await databaseService.upsertClinicalCaseReport(activeWorkspace.id, activeCaseNumber, { defense_questions: result.questions });
       setCases(prev => prev.map(c => (c.case_number === activeCaseNumber ? saved : c)));
       setDraft(prev => ({ ...prev, defense_questions: result.questions }));
+      quota.refresh();
     } finally {
       setIsGeneratingQuestions(false);
     }
   };
 
   const handleParseLogbook = async () => {
+    if (quota.exhausted) {
+      setShowUpgradeModal(true);
+      return;
+    }
     setIsParsingLogbook(true);
     try {
       let fileUrl: string | null = null;
@@ -638,9 +659,25 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
             </div>
 
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-              <div className="flex items-center space-x-1.5">
-                <Sparkles className="text-slate-500" size={16} />
-                <h3 className="font-bold text-slate-900 text-sm">AI Copilot</h3>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-1.5">
+                  <Sparkles className="text-slate-500" size={16} />
+                  <h3 className="font-bold text-slate-900 text-sm">AI Copilot</h3>
+                </div>
+                {!quota.loading && (
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      quota.limit == null
+                        ? 'bg-indigo-50 text-indigo-700 border-indigo-100'
+                        : quota.exhausted
+                          ? 'bg-rose-50 text-rose-700 border-rose-100'
+                          : 'bg-slate-50 text-slate-500 border-slate-200'
+                    }`}
+                    title={quota.limit == null ? 'Pro / Unlimited plan' : `${quota.used} of ${quota.limit} free AI actions used in the current rolling window`}
+                  >
+                    {quota.limit == null ? 'PRO — UNLIMITED' : `${quota.used}/${quota.limit} USED`}
+                  </span>
+                )}
               </div>
 
               <div className="space-y-1.5">
@@ -715,6 +752,18 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
           )}
         </div>
       )}
+
+      <UpgradeCheckoutModal
+        open={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        workforceId={resident.id}
+        used={quota.used}
+        limit={quota.limit}
+        onPaymentCompleted={async () => {
+          await quota.refresh();
+          setShowUpgradeModal(false);
+        }}
+      />
     </div>
   );
 };

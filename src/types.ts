@@ -774,3 +774,34 @@ export interface FamilyToolsData {
   family_circle?: FamilyCircleData;
   duvall_stage?: DuvallStageNumber;
 }
+
+// --- Billing & Subscriptions (migration 17) ---
+
+export type SubscriptionPlan = 'free' | 'pro_unlimited';
+export type SubscriptionStatus = 'pending' | 'active' | 'cancelled' | 'expired';
+export type PaymentProvider = 'paystack' | 'flutterwave';
+
+// Mirrors user_subscriptions (migration 17). "user" = a workforce row —
+// this app has no standalone user identity outside workforce.
+export interface UserSubscription {
+  id: string;
+  tenant_id: string | null;
+  workforce_id: string;
+  plan: SubscriptionPlan;
+  status: SubscriptionStatus;
+  provider: PaymentProvider;
+  provider_reference: string;
+  amount_ngn: number | null;
+  customer_email: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Returned by the payment-checkout Edge Function.
+export interface PaymentCheckoutResult {
+  provider: PaymentProvider;
+  checkout_url: string;
+  reference: string;
+}

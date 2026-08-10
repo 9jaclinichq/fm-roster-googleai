@@ -64,6 +64,9 @@ import {
   ClinicalLogbook,
   AdminLogbookParsingQueueEntry,
   LogbookParsedStatus,
+  UserSubscription,
+  PaymentProvider,
+  PaymentCheckoutResult,
 } from '../types';
 import { buildDefaultFolderTree } from './research/folderStructure';
 
@@ -1690,6 +1693,72 @@ export const databaseService = {
     }
     const row = Array.isArray(data) ? data[0] : data;
     return row as TenantAiQuota;
+  },
+
+  // --- BILLING & SUBSCRIPTIONS (migration 17) ---
+
+  // Counts this member's quota-relevant AI actions in the rolling window —
+  // the client-side half of AI Copilot feature gating (see src/config/
+  // tiers.ts for how this relates to the authoritative tenant-level quota
+  // enforced inside the copilot Edge Functions).
+  async countQuotaAiActions(workforceId: string, sinceIso: string, actionTypes: readonly string[]): Promise<number> {
+    checkSupabase();
+
+    const { count, error } = await supabase!
+      .from('ai_action_logs')
+      .select('id', { count: 'exact', head: true })
+      .eq('workforce_id', workforceId)
+      .gte('created_at', sinceIso)
+      .in('action_type', actionTypes as string[]);
+
+    if (error) {
+      console.warn('Error counting AI actions for quota:', error);
+      throw error;
+    }
+    return count ?? 0;
+  },
+
+  async getActiveSubscription(workforceId: string): Promise<UserSubscription | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('user_subscriptions')
+      .select('*')
+      .eq('workforce_id', workforceId)
+      .eq('status', 'active')
+      .gt('current_period_end', new Date().toISOString())
+      .order('current_period_end', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('Error fetching active subscription:', error);
+      throw error;
+    }
+    return data || null;
+  },
+
+  // Initializes a provider-hosted checkout via the payment-checkout Edge
+  // Function (the charged amount lives server-side there — a forged client
+  // can't change it) and returns the URL to open. The webhook, not the
+  // client, is what activates the subscription afterwards.
+  async initiatePaymentCheckout(
+    provider: PaymentProvider,
+    workforceId: string,
+    tenantId: string,
+    email: string
+  ): Promise<PaymentCheckoutResult> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.functions.invoke('payment-checkout', {
+      body: { provider, workforce_id: workforceId, tenant_id: tenantId, email },
+    });
+
+    if (error || !data?.checkout_url) {
+      console.warn('Error initiating payment checkout:', error || data);
+      throw new Error(data?.error || error?.message || 'Failed to initiate checkout');
+    }
+    return data as PaymentCheckoutResult;
   },
 
   // --- SAAS OPERATOR (platform owner — separate identity from workforce) ---

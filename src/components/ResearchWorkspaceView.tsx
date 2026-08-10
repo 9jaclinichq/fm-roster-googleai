@@ -3,6 +3,8 @@ import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
 import { loadAvailableTemplates, forkTemplate, editTemplate, TemplateEditPayload } from '../lib/research/templateEngine';
 import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../lib/research/rubricEngine';
 import { researchCopilot, DraftAuditResult, LiteratureMatrixResult, TableShellsResult, ResearchCopilotSource } from '../lib/ai/researchCopilot';
+import { useWorkspaceQuota } from '../lib/billing/useWorkspaceQuota';
+import { UpgradeCheckoutModal } from './UpgradeCheckoutModal';
 import {
   ResearchWorkspace,
   ResearchTemplate,
@@ -116,6 +118,12 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
   const [isGeneratingShells, setIsGeneratingShells] = useState(false);
   const [matrixResult, setMatrixResult] = useState<LiteratureMatrixResult | null>(null);
   const [isSynthesizingMatrix, setIsSynthesizingMatrix] = useState(false);
+
+  // AI Copilot feature gating — free tier gets a rolling-window allowance,
+  // exhaustion opens the Paystack/Flutterwave upgrade checkout instead of
+  // running the action (see src/config/tiers.ts).
+  const quota = useWorkspaceQuota(resident.id);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId) || null;
   const activeTemplate = templates.find(t => t.id === activeWorkspace?.template_id) || null;
@@ -335,10 +343,15 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
 
   const handleRunAudit = async () => {
     if (!activeWorkspace) return;
+    if (quota.exhausted) {
+      setShowUpgradeModal(true);
+      return;
+    }
     setIsAuditing(true);
     try {
       const result = await researchCopilot.auditDraft(resident.id, picoTitle, draftContent, referencesDraft, activeTemplate);
       setAuditResult(result);
+      quota.refresh();
     } finally {
       setIsAuditing(false);
     }
@@ -346,10 +359,15 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
 
   const handleGenerateTableShells = async () => {
     if (!activeWorkspace) return;
+    if (quota.exhausted) {
+      setShowUpgradeModal(true);
+      return;
+    }
     setIsGeneratingShells(true);
     try {
       const result = await researchCopilot.generateTableShells(resident.id, activeWorkspace.title, activeWorkspace.study_design, activeTemplate);
       setTableShellsResult(result);
+      quota.refresh();
     } finally {
       setIsGeneratingShells(false);
     }
@@ -357,10 +375,15 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
 
   const handleSynthesizeMatrix = async () => {
     if (!referencesDraft.trim()) return;
+    if (quota.exhausted) {
+      setShowUpgradeModal(true);
+      return;
+    }
     setIsSynthesizingMatrix(true);
     try {
       const result = await researchCopilot.synthesizeLiteratureMatrix(resident.id, referencesDraft, activeTemplate);
       setMatrixResult(result);
+      quota.refresh();
     } finally {
       setIsSynthesizingMatrix(false);
     }
@@ -678,9 +701,25 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
           </div>
 
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center space-x-1.5">
-              <Sparkles className="text-slate-500" size={16} />
-              <h3 className="font-bold text-slate-900 text-sm">AI Copilot Panel</h3>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-1.5">
+                <Sparkles className="text-slate-500" size={16} />
+                <h3 className="font-bold text-slate-900 text-sm">AI Copilot Panel</h3>
+              </div>
+              {!quota.loading && (
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    quota.limit == null
+                      ? 'bg-indigo-50 text-indigo-700 border-indigo-100'
+                      : quota.exhausted
+                        ? 'bg-rose-50 text-rose-700 border-rose-100'
+                        : 'bg-slate-50 text-slate-500 border-slate-200'
+                  }`}
+                  title={quota.limit == null ? 'Pro / Unlimited plan' : `${quota.used} of ${quota.limit} free AI actions used in the current rolling window`}
+                >
+                  {quota.limit == null ? 'PRO — UNLIMITED' : `${quota.used}/${quota.limit} USED`}
+                </span>
+              )}
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed">
               These tools try a live AI provider first (OpenAI, then Gemini) and fall back to a
@@ -903,6 +942,18 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
           </div>
         </div>
       )}
+
+      <UpgradeCheckoutModal
+        open={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        workforceId={resident.id}
+        used={quota.used}
+        limit={quota.limit}
+        onPaymentCompleted={async () => {
+          await quota.refresh();
+          setShowUpgradeModal(false);
+        }}
+      />
     </div>
   );
 };
