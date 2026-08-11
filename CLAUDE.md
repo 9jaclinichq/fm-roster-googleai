@@ -538,13 +538,17 @@ AI Copilot actions:
   Flutterwave v3 doesn't sign payloads, it sends the dashboard-configured
   secret hash verbatim. Activation (pending → active, 30-day period) happens
   ONLY in the webhook, never client-side.
-- **NOT yet done** (needs the user / dashboards): `FLUTTERWAVE_WEBHOOK_HASH`
-  secret is unset (Flutterwave webhooks 503 until it matches the dashboard
-  value); the webhook URL
+- `FLUTTERWAVE_WEBHOOK_HASH` is SET on the project (value matches the
+  Flutterwave dashboard's secret hash; never write the value into this repo)
+  and live-verified: correct hash → 200, wrong hash → 401. Flutterwave is
+  the DEFAULT/recommended provider in the upgrade modal
+  (`DEFAULT_PAYMENT_PROVIDER` in tiers.ts); Paystack is the secondary option.
+- **NOT yet done** (needs the user / dashboards): confirm the webhook URL
   (`https://gdumksfffewpdqqwvcdo.supabase.co/functions/v1/payment-webhook`)
-  is not yet registered in either provider dashboard; no end-to-end paid
-  transaction has been tested (live Paystack key — a real test moves real
-  money); no browser walkthrough of the modal flow yet.
+  is registered in BOTH provider dashboards (the user has configured the
+  Flutterwave secret-hash side); no end-to-end paid transaction has been
+  tested (live Paystack key — a real test moves real money); no browser
+  walkthrough of the modal flow yet.
 
 ## Branding & Routing (PrivyDoc rebrand)
 
