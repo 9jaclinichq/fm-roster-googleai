@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
-import { WORKSPACE_TIERS, AI_QUOTA_WINDOW_DAYS } from '../config/tiers';
+import { WORKSPACE_TIERS, AI_QUOTA_WINDOW_DAYS, DEFAULT_PAYMENT_PROVIDER } from '../config/tiers';
 import { PaymentProvider } from '../types';
 import { X, Sparkles, CreditCard, RefreshCw, ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
 
@@ -128,23 +128,33 @@ export const UpgradeCheckoutModal: React.FC<UpgradeCheckoutModalProps> = ({
                   className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleCheckout('paystack')}
-                  disabled={busyProvider !== null}
-                  className="flex items-center justify-center space-x-1.5 px-3 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                >
-                  {busyProvider === 'paystack' ? <RefreshCw size={13} className="animate-spin" /> : <CreditCard size={13} />}
-                  <span>Pay with Paystack</span>
-                </button>
-                <button
-                  onClick={() => handleCheckout('flutterwave')}
-                  disabled={busyProvider !== null}
-                  className="flex items-center justify-center space-x-1.5 px-3 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                >
-                  {busyProvider === 'flutterwave' ? <RefreshCw size={13} className="animate-spin" /> : <CreditCard size={13} />}
-                  <span>Pay with Flutterwave</span>
-                </button>
+              {/* Provider ordering/prominence follows DEFAULT_PAYMENT_PROVIDER
+                  (src/config/tiers.ts) — currently Flutterwave-first, with
+                  the other provider as a low-key secondary option. */}
+              <div className="space-y-2">
+                {(
+                  [
+                    DEFAULT_PAYMENT_PROVIDER,
+                    DEFAULT_PAYMENT_PROVIDER === 'flutterwave' ? 'paystack' : 'flutterwave',
+                  ] as PaymentProvider[]
+                ).map((provider, idx) => (
+                  <button
+                    key={provider}
+                    onClick={() => handleCheckout(provider)}
+                    disabled={busyProvider !== null}
+                    className={
+                      idx === 0
+                        ? 'w-full flex items-center justify-center space-x-1.5 px-3 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-xl text-sm font-bold transition cursor-pointer shadow-sm'
+                        : 'w-full flex items-center justify-center space-x-1.5 px-3 py-2 border border-slate-300 hover:bg-slate-50 disabled:opacity-50 text-slate-600 rounded-xl text-xs font-semibold transition cursor-pointer'
+                    }
+                  >
+                    {busyProvider === provider ? <RefreshCw size={13} className="animate-spin" /> : <CreditCard size={13} />}
+                    <span>
+                      Pay with {provider === 'flutterwave' ? 'Flutterwave' : 'Paystack'}
+                      {idx === 0 ? ' — Recommended' : ' instead'}
+                    </span>
+                  </button>
+                ))}
               </div>
             </>
           ) : (

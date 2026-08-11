@@ -19,6 +19,15 @@
 
 export type WorkspaceTierId = 'free' | 'pro_unlimited';
 
+/**
+ * The payment provider presented as the primary/default checkout in the
+ * upgrade modal (both brand hostnames — the modal is brand-agnostic). The
+ * other provider stays available as a secondary option. Server-side, both
+ * remain fully supported by payment-checkout/payment-webhook regardless of
+ * this ordering.
+ */
+export const DEFAULT_PAYMENT_PROVIDER = 'flutterwave' as const;
+
 export interface WorkspaceTier {
   id: WorkspaceTierId;
   label: string;
