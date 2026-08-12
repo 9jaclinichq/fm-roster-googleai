@@ -69,6 +69,11 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentView
 }) => {
   const brand = getActiveBrand();
+  // Pre-auth login screens (Resident/Chief) already carry their own
+  // portal-switch link in the login card footer — showing the same action
+  // again up here is redundant, and the LIVE DB/PREVIEW ENGINE badge is
+  // irrelevant chrome before anyone has signed in.
+  const isLoginScreen = currentView === 'resident-login' || currentView === 'chief-login';
   return (
     <header id="app-header" className="bg-white border-b border-slate-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -85,17 +90,19 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <div className="flex items-center space-x-2 sm:space-x-4 ml-auto">
             {/* Supabase Status Badge */}
-            <div 
-              className={`flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
-                databaseService.isMock 
-                  ? 'bg-amber-50 text-amber-700 border-amber-100' 
-                  : 'bg-emerald-50 text-emerald-700 border-emerald-100'
-              }`}
-              title={databaseService.isMock ? 'Running with browser Local Storage for preview' : 'Connected to live Supabase database'}
-            >
-              <Database size={12} className={databaseService.isMock ? 'text-amber-500' : 'text-emerald-500'} />
-              <span>{databaseService.isMock ? 'PREVIEW ENGINE' : 'LIVE DB'}</span>
-            </div>
+            {!isLoginScreen && (
+              <div
+                className={`flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
+                  databaseService.isMock
+                    ? 'bg-amber-50 text-amber-700 border-amber-100'
+                    : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                }`}
+                title={databaseService.isMock ? 'Running with browser Local Storage for preview' : 'Connected to live Supabase database'}
+              >
+                <Database size={12} className={databaseService.isMock ? 'text-amber-500' : 'text-emerald-500'} />
+                <span>{databaseService.isMock ? 'PREVIEW ENGINE' : 'LIVE DB'}</span>
+              </div>
+            )}
 
             {/* View switcher & Session states */}
             {currentResident && (
@@ -130,7 +137,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
-            {!currentResident && (!isChiefAuthenticated || !currentView.startsWith('chief')) && (
+            {!isLoginScreen && !currentResident && (!isChiefAuthenticated || !currentView.startsWith('chief')) && (
               <div className="flex items-center space-x-2">
                 {currentView.startsWith('chief') ? (
                   <button

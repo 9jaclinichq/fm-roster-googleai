@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { ShieldAlert, AlertCircle, Key, RefreshCw } from 'lucide-react';
+import { useTerminology } from '../lib/terminology';
 
 interface ChiefLoginViewProps {
   onLoginSuccess: (adminCode: string) => void;
@@ -16,6 +17,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
   const [adminCode, setAdminCode] = useState<string>('');
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const { t } = useTerminology();
 
   useEffect(() => {
     if (presetCode) {
@@ -59,7 +61,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
           <div className="mx-auto bg-white/10 text-white w-12 h-12 rounded-xl flex items-center justify-center mb-3 border border-white/10">
             <ShieldAlert size={20} />
           </div>
-          <h2 className="text-xl font-bold tracking-tight">Chief Resident Portal</h2>
+          <h2 className="text-xl font-bold tracking-tight">{t('admin', 'Chief Resident')} Portal</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
             Department administrative login & workspace management
           </p>

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { WorkforceMember } from '../types';
 import { KeyRound, User, ChevronDown, Sparkles, Check, AlertCircle } from 'lucide-react';
+import { getActiveBrand } from '../config/branding';
+import { useTerminology } from '../lib/terminology';
 
 interface ResidentLoginViewProps {
   onLoginSuccess: (resident: { id: string; name: string; category: string }) => void;
@@ -21,6 +23,11 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
+  const brand = getActiveBrand();
+  const { t } = useTerminology();
+  // B2C independent doctors aren't "residents" in a training program, so the
+  // portal label follows the active brand profile — see src/config/branding.ts.
+  const portalLabel = brand.key === 'b2c_independent' ? 'Doctor Portal' : 'Resident Portal';
 
   useEffect(() => {
     async function loadWorkforce() {
@@ -105,9 +112,9 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
           <div className="mx-auto bg-white/15 text-white w-12 h-12 rounded-xl flex items-center justify-center mb-3 shadow-inner">
             <KeyRound size={20} />
           </div>
-          <h2 className="text-xl font-bold tracking-tight">Resident Portal</h2>
+          <h2 className="text-xl font-bold tracking-tight">{portalLabel}</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            Access your PrivyDoc Medical Workspace
+            Access your medical workspace
           </p>
         </div>
 
@@ -213,7 +220,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
             onClick={onNavigateToChief}
             className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
           >
-            Are you the Chief Resident? Admin Portal &rarr;
+            Are you the {t('admin', 'Chief Resident')}? Admin Portal &rarr;
           </button>
         </div>
       </div>

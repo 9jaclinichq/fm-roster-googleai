@@ -445,11 +445,10 @@ function MainAppContent() {
         <div className="max-w-7xl mx-auto px-4">
           <p>&copy; {new Date().getFullYear()} {brand.copyrightHolder}. All rights reserved.</p>
           <p className="mt-1 text-[10px] text-slate-300">{brand.productName} &bull; Production Version 0.1</p>
-          <p className="mt-2">
-            <a href="#/saas-operator" className="text-[10px] text-slate-300 hover:text-slate-500 hover:underline">
-              Platform Operator Console
-            </a>
-          </p>
+          {/* Platform Operator Console link deliberately not advertised here —
+              too sensitive to surface to every visitor. The /saas-operator
+              route still resolves directly for anyone who already knows the
+              URL; only the code itself gates access (see SaaSOperatorConsoleView). */}
         </div>
       </footer>
     </div>
