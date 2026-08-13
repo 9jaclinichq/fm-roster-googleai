@@ -47,6 +47,8 @@ import {
   Megaphone,
   Pin,
   ShieldCheck,
+  Link2,
+  Unlink,
 } from 'lucide-react';
 
 const ANNOUNCEMENT_CATEGORIES: AnnouncementCategory[] = ['Roster', 'Exam', 'CME', 'Admin'];
@@ -122,6 +124,13 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [editingMember, setEditingMember] = useState<WorkforceMember | null>(null);
   const [editMemberName, setEditMemberName] = useState<string>('');
   const [editMemberCategory, setEditMemberCategory] = useState<Category>('Registrar');
+
+  // Link a workforce row to an individual doctor's self-registered account
+  // (migration 18) — see chief_link_doctor_by_email in databaseService.ts.
+  const [linkingMemberId, setLinkingMemberId] = useState<string | null>(null);
+  const [linkDoctorEmail, setLinkDoctorEmail] = useState<string>('');
+  const [linkDoctorError, setLinkDoctorError] = useState<string>('');
+  const [isLinkingDoctor, setIsLinkingDoctor] = useState<boolean>(false);
 
   // Settings state
   const [newCollectionTitle, setNewCollectionTitle] = useState<string>('');
@@ -370,6 +379,47 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
       setResidentCodes(prev => ({ ...prev, [memberId]: newCode }));
       const member = workforce.find(w => w.id === memberId);
       triggerSuccess(`Access code for "${member?.full_name || 'resident'}" reset to ${newCode}.`);
+    } catch (err) {
+      console.warn(err);
+    }
+  };
+
+  // Workforce: Link/Unlink an individual doctor account (migration 18)
+  const handleLinkDoctor = async (e: React.FormEvent, memberId: string) => {
+    e.preventDefault();
+    setLinkDoctorError('');
+
+    if (!adminCode) {
+      setLinkDoctorError('Session expired. Please log in again.');
+      return;
+    }
+    if (!linkDoctorEmail.trim()) {
+      setLinkDoctorError('Please enter the doctor\'s registered email.');
+      return;
+    }
+
+    setIsLinkingDoctor(true);
+    try {
+      const result = await databaseService.chiefLinkDoctorByEmail(adminCode, memberId, linkDoctorEmail.trim());
+      setWorkforce(prev => prev.map(w => (w.id === memberId ? { ...w, doctor_id: result.doctor_id } : w)));
+      triggerSuccess(`Linked ${result.doctor_full_name || linkDoctorEmail.trim()}'s account to this workforce entry.`);
+      setLinkingMemberId(null);
+      setLinkDoctorEmail('');
+    } catch (err) {
+      console.warn(err);
+      setLinkDoctorError(err instanceof Error ? err.message : 'Failed to link doctor account.');
+    } finally {
+      setIsLinkingDoctor(false);
+    }
+  };
+
+  const handleUnlinkDoctor = async (memberId: string) => {
+    if (!adminCode) return;
+    try {
+      await databaseService.chiefUnlinkDoctor(adminCode, memberId);
+      setWorkforce(prev => prev.map(w => (w.id === memberId ? { ...w, doctor_id: null } : w)));
+      const member = workforce.find(w => w.id === memberId);
+      triggerSuccess(`Unlinked doctor account from "${member?.full_name || 'this workforce entry'}".`);
     } catch (err) {
       console.warn(err);
     }
@@ -1029,7 +1079,8 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs font-medium text-slate-700">
                     {workforce.map((member) => (
-                      <tr key={member.id} className="hover:bg-slate-50/50">
+                      <React.Fragment key={member.id}>
+                      <tr className="hover:bg-slate-50/50">
                         <td className="px-4 py-3 font-bold text-slate-900">{member.full_name}</td>
                         <td className="px-4 py-3 text-slate-500">{member.category}</td>
                         <td className="px-4 py-3">
@@ -1069,8 +1120,71 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                           >
                             <RefreshCw size={13} />
                           </button>
+                          {member.doctor_id ? (
+                            <button
+                              onClick={() => handleUnlinkDoctor(member.id)}
+                              className="p-1 hover:bg-slate-100 text-emerald-600 hover:text-emerald-800 rounded transition cursor-pointer"
+                              title="Unlink Doctor Account"
+                            >
+                              <Unlink size={13} />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setLinkingMemberId(linkingMemberId === member.id ? null : member.id);
+                                setLinkDoctorEmail('');
+                                setLinkDoctorError('');
+                              }}
+                              className="p-1 hover:bg-slate-100 text-slate-500 hover:text-slate-950 rounded transition cursor-pointer"
+                              title="Link Doctor Account"
+                            >
+                              <Link2 size={13} />
+                            </button>
+                          )}
                         </td>
                       </tr>
+                      {linkingMemberId === member.id && (
+                        <tr className="bg-slate-50/70">
+                          <td colSpan={5} className="px-4 py-3">
+                            <form
+                              onSubmit={(e) => handleLinkDoctor(e, member.id)}
+                              className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
+                            >
+                              <input
+                                type="email"
+                                required
+                                value={linkDoctorEmail}
+                                onChange={(e) => setLinkDoctorEmail(e.target.value)}
+                                placeholder="Doctor's registered email"
+                                className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition"
+                              />
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="submit"
+                                  disabled={isLinkingDoctor}
+                                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg text-[11px] font-bold transition cursor-pointer"
+                                >
+                                  {isLinkingDoctor ? 'Linking...' : 'Link Account'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setLinkingMemberId(null)}
+                                  className="p-2 hover:bg-slate-100 text-slate-500 rounded-lg transition cursor-pointer"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                            </form>
+                            {linkDoctorError && (
+                              <p className="text-[11px] text-rose-600 font-semibold mt-1.5">{linkDoctorError}</p>
+                            )}
+                            <p className="text-[10px] text-slate-400 mt-1.5">
+                              Links this workforce entry to an already-registered individual doctor account by email.
+                            </p>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>

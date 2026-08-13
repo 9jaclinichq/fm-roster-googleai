@@ -6,6 +6,9 @@ import { LoadingShell } from './components/LoadingShell';
 import { ResidentLoginView } from './components/ResidentLoginView';
 import { ResidentFormView } from './components/ResidentFormView';
 import { AnnouncementBoardView } from './components/AnnouncementBoardView';
+import { AuthLandingView } from './components/AuthLandingView';
+import { DoctorAuthView } from './components/DoctorAuthView';
+import { DoctorHomeView } from './components/DoctorHomeView';
 import { databaseService } from './lib/databaseService';
 import { TerminologyProvider } from './lib/terminology';
 import { getActiveBrand } from './config/branding';
@@ -87,6 +90,17 @@ interface ResidentSession {
   subadminRoles: string[];
 }
 
+// Individual doctor identity (migration 18) — real Supabase Auth, separate
+// from ResidentSession above. A doctor session only unlocks the existing
+// resident dashboard once linked to a workforce row (see the effect that
+// populates currentResident from it below); until then it just gates
+// DoctorHomeView's waiting-room screen.
+interface DoctorSession {
+  id: string;
+  email: string;
+  fullName: string;
+}
+
 function MainAppContent() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -101,6 +115,7 @@ function MainAppContent() {
   // Session State
   const [currentResident, setCurrentResident] = useState<ResidentSession | null>(null);
   const [isChiefAuthenticated, setIsChiefAuthenticated] = useState<boolean>(false);
+  const [currentDoctor, setCurrentDoctor] = useState<DoctorSession | null>(null);
 
   // DevHelper Preset triggers
   const [presetResident, setPresetResident] = useState<WorkforceMember | null>(null);
@@ -121,6 +136,50 @@ function MainAppContent() {
     if (chiefSession === 'true') {
       setIsChiefAuthenticated(true);
     }
+  }, []);
+
+  // Restore/track the individual-doctor session (migration 18) — separate
+  // from the localStorage-based restore above since Supabase Auth persists
+  // its own session token. Fires once on mount with the restored session (if
+  // any, event 'INITIAL_SESSION') and again on every subsequent sign-in/out.
+  useEffect(() => {
+    const unsubscribe = databaseService.onDoctorAuthStateChange(async (event, userId) => {
+      if (!userId) {
+        setCurrentDoctor(null);
+        return;
+      }
+      try {
+        const profile = await databaseService.getDoctorProfile(userId);
+        if (!profile) return;
+        setCurrentDoctor({ id: profile.id, email: profile.email, fullName: profile.full_name });
+
+        // The convergence point: once this doctor is linked to a workforce
+        // row, populate currentResident from it exactly as a code-based
+        // login would — every existing resident view/route/nav-tab needs no
+        // changes to work for a doctor-linked resident.
+        const linkedWorkforce = await databaseService.getLinkedWorkforceForDoctor(profile.id);
+        if (linkedWorkforce) {
+          const session: ResidentSession = {
+            id: linkedWorkforce.id,
+            name: linkedWorkforce.full_name,
+            category: linkedWorkforce.category,
+            subadminRoles: [],
+          };
+          setCurrentResident(session);
+          refreshSubadminRoles(session);
+        }
+
+        // Only redirect on an actual fresh login, never on a page-reload
+        // restore (which would otherwise clobber a deep-linked resident route).
+        if (event === 'SIGNED_IN') {
+          navigate(linkedWorkforce ? '/workspace/form' : '/doctor/home');
+        }
+      } catch (err) {
+        console.warn('Failed to resolve doctor session:', err);
+      }
+    });
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshSubadminRoles = async (resident: ResidentSession) => {
@@ -150,6 +209,10 @@ function MainAppContent() {
     if (path.startsWith('/workspace/research')) return 'resident-research';
     if (path.startsWith('/workspace/casebook-logbook')) return 'resident-casebook-logbook';
     if (path.startsWith('/workspace/form')) return 'resident';
+    if (path === '/login') return 'auth-landing';
+    if (path.startsWith('/doctor/register')) return 'doctor-register';
+    if (path.startsWith('/doctor/login')) return 'doctor-login';
+    if (path.startsWith('/doctor/home')) return 'doctor-home';
     return 'resident-login';
   };
 
@@ -166,7 +229,19 @@ function MainAppContent() {
   const handleResidentLogout = () => {
     setCurrentResident(null);
     localStorage.removeItem('fm_session_resident');
+    // No-op if this resident session didn't come from a doctor-link — but if
+    // it did, this prevents the still-live Supabase Auth session from
+    // silently re-populating currentResident on next reload (see the
+    // doctor-auth-state effect above).
+    databaseService.logoutDoctor();
     navigate('/workspace/login');
+  };
+
+  const handleDoctorLogout = () => {
+    setCurrentDoctor(null);
+    setCurrentResident(null);
+    databaseService.logoutDoctor();
+    navigate('/login');
   };
 
   const handleChiefLogin = (adminCode: string) => {
@@ -204,8 +279,10 @@ function MainAppContent() {
       <Navbar
         currentResident={currentResident}
         isChiefAuthenticated={isChiefAuthenticated}
+        currentDoctor={currentDoctor}
         onResidentLogout={handleResidentLogout}
         onChiefLogout={handleChiefLogout}
+        onDoctorLogout={handleDoctorLogout}
         onNavigateToChief={() => navigate('/chief/login')}
         onNavigateToResident={() => navigate('/workspace/login')}
         onNavigateToResidentForm={() => navigate('/workspace/form')}
@@ -235,13 +312,59 @@ function MainAppContent() {
         <Suspense fallback={<LoadingShell />}>
         <Routes>
           {/* Default entry point */}
-          <Route 
-            path="/" 
+          <Route
+            path="/"
             element={
-              currentResident 
-                ? <Navigate to="/workspace/form" replace /> 
-                : <Navigate to="/workspace/login" replace />
-            } 
+              currentResident ? (
+                <Navigate to="/workspace/form" replace />
+              ) : currentDoctor ? (
+                <Navigate to="/doctor/home" replace />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+
+          {/* Auth landing chooser (institutional vs. individual doctor) */}
+          <Route
+            path="/login"
+            element={
+              currentResident ? (
+                <Navigate to="/workspace/form" replace />
+              ) : currentDoctor ? (
+                <Navigate to="/doctor/home" replace />
+              ) : (
+                <AuthLandingView />
+              )
+            }
+          />
+
+          {/* Individual Doctor Login/Register (migration 18) */}
+          <Route
+            path="/doctor/login"
+            element={
+              currentDoctor ? <Navigate to="/doctor/home" replace /> : <DoctorAuthView />
+            }
+          />
+          <Route
+            path="/doctor/register"
+            element={
+              currentDoctor ? <Navigate to="/doctor/home" replace /> : <DoctorAuthView />
+            }
+          />
+          <Route
+            path="/doctor/home"
+            element={
+              currentDoctor ? (
+                currentResident ? (
+                  <Navigate to="/workspace/form" replace />
+                ) : (
+                  <DoctorHomeView doctor={currentDoctor} onLogout={handleDoctorLogout} />
+                )
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
           />
 
           {/* Resident Login */}

@@ -20,6 +20,23 @@ export interface WorkforceMember {
   // existing call sites don't request it and there's only one tenant
   // seeded today; not yet used to filter any existing query client-side.
   tenant_id?: string;
+  // Nullable link to an individual doctor's own auth-based identity
+  // (migration 18) — set once a Chief links this workforce row to a
+  // self-registered doctor_profiles account. Most existing rows have this
+  // NULL (created via the plaintext-code Resident flow, unchanged).
+  doctor_id?: string | null;
+  created_at: string;
+}
+
+// An individual doctor's self-registered identity (migration 18) — 1:1 with
+// a real Supabase Auth user, unlike every other identity in this app (see
+// Role Model in CLAUDE.md). Exists independently of `workforce`; gains
+// access to the resident dashboard only once a Chief links a workforce row
+// to it via WorkforceMember.doctor_id.
+export interface DoctorProfile {
+  id: string;
+  email: string;
+  full_name: string;
   created_at: string;
 }
 

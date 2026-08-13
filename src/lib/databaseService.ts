@@ -67,6 +67,7 @@ import {
   UserSubscription,
   PaymentProvider,
   PaymentCheckoutResult,
+  DoctorProfile,
 } from '../types';
 import { buildDefaultFolderTree } from './research/folderStructure';
 
@@ -91,7 +92,7 @@ function checkSupabase() {
 // is deliberately excluded — that column is locked down at the database
 // level (see supabase/migrations/01_rbac_and_rotations.sql) and only ever
 // returned by the chief_* RPCs below, which re-verify the admin code first.
-const WORKFORCE_PUBLIC_COLUMNS = 'id, full_name, category, active, on_floor, tenant_id, created_at';
+const WORKFORCE_PUBLIC_COLUMNS = 'id, full_name, category, active, on_floor, tenant_id, doctor_id, created_at';
 
 // Fixed id of the UCH Family Medicine seed tenant (migration 11) — the
 // only tenant that exists today. Used as a fallback default; components
@@ -1781,6 +1782,133 @@ export const databaseService = {
     if (error) {
       console.warn('Error logging operator event:', error);
       // Non-fatal: an audit-log write failure shouldn't block the action itself.
+    }
+  },
+
+  // --- INDIVIDUAL DOCTOR IDENTITY (migration 18 — real Supabase Auth,
+  // additive alongside the plaintext-code Resident/Chief flow above; see
+  // that migration's header and CLAUDE.md's Role Model for why) ---
+  async registerDoctor(
+    email: string,
+    password: string,
+    fullName: string
+  ): Promise<{ needsEmailConfirmation: boolean }> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.auth.signUp({
+      email,
+      password,
+      options: { data: { full_name: fullName } },
+    });
+    if (error) {
+      console.warn('Error registering doctor:', error);
+      throw error;
+    }
+    // doctor_profiles row is created server-side by the on_auth_user_created_doctor
+    // trigger, not here — see migration 18. If the project has "confirm email"
+    // enabled, data.session is null until the user clicks the confirmation
+    // link; the caller should show a "check your email" message in that case.
+    return { needsEmailConfirmation: !data.session };
+  },
+
+  async loginDoctor(email: string, password: string): Promise<void> {
+    checkSupabase();
+
+    const { error } = await supabase!.auth.signInWithPassword({ email, password });
+    if (error) {
+      console.warn('Error logging in doctor:', error);
+      throw error;
+    }
+  },
+
+  async logoutDoctor(): Promise<void> {
+    if (!supabase) return;
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.warn('Error logging out doctor:', error);
+    }
+  },
+
+  // Thin wrapper so App.tsx doesn't import supabase.auth directly — keeps
+  // the "all Supabase calls go through databaseService" convention intact.
+  // Fires once immediately on subscribe with the restored session (if any,
+  // event 'INITIAL_SESSION') and again on every subsequent sign-in/out —
+  // the caller uses `event` to tell a fresh login apart from a page-reload
+  // restore (only the former should trigger a redirect). Returns an
+  // unsubscribe function.
+  onDoctorAuthStateChange(callback: (event: string, userId: string | null) => void): () => void {
+    if (!supabase) return () => {};
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      callback(event, session?.user?.id ?? null);
+    });
+    return () => data.subscription.unsubscribe();
+  },
+
+  async getDoctorProfile(userId: string): Promise<DoctorProfile | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('doctor_profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) {
+      console.warn('Error fetching doctor profile:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Phase-1 simplification: a doctor linked to more than one workforce row
+  // (multiple organizations) gets the most-recently-linked one here. A
+  // proper org switcher is a future follow-up — not built.
+  async getLinkedWorkforceForDoctor(doctorId: string): Promise<WorkforceMember | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('workforce')
+      .select(WORKFORCE_PUBLIC_COLUMNS)
+      .eq('doctor_id', doctorId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.warn('Error fetching linked workforce for doctor:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async chiefLinkDoctorByEmail(
+    adminCode: string,
+    workforceId: string,
+    doctorEmail: string
+  ): Promise<{ doctor_id: string; doctor_full_name: string }> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_link_doctor_by_email', {
+      p_admin_code: adminCode,
+      p_workforce_id: workforceId,
+      p_doctor_email: doctorEmail,
+    });
+    if (error) {
+      console.warn('Error linking doctor to workforce:', error);
+      throw error;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    return row;
+  },
+
+  async chiefUnlinkDoctor(adminCode: string, workforceId: string): Promise<void> {
+    checkSupabase();
+
+    const { error } = await supabase!.rpc('chief_unlink_doctor', {
+      p_admin_code: adminCode,
+      p_workforce_id: workforceId,
+    });
+    if (error) {
+      console.warn('Error unlinking doctor from workforce:', error);
+      throw error;
     }
   },
 

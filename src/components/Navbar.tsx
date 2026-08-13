@@ -6,8 +6,10 @@ import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationC
 interface NavbarProps {
   currentResident: { id: string; name: string; category: string } | null;
   isChiefAuthenticated: boolean;
+  currentDoctor: { id: string; email: string; fullName: string } | null;
   onResidentLogout: () => void;
   onChiefLogout: () => void;
+  onDoctorLogout: () => void;
   onNavigateToChief: () => void;
   onNavigateToResident: () => void;
   onNavigateToResidentForm: () => void;
@@ -33,7 +35,11 @@ interface NavbarProps {
     | 'resident-casebook-logbook'
     | 'chief'
     | 'resident-login'
-    | 'chief-login';
+    | 'chief-login'
+    | 'auth-landing'
+    | 'doctor-login'
+    | 'doctor-register'
+    | 'doctor-home';
 }
 
 const RESIDENT_VIEWS = [
@@ -52,8 +58,10 @@ const RESIDENT_VIEWS = [
 export const Navbar: React.FC<NavbarProps> = ({
   currentResident,
   isChiefAuthenticated,
+  currentDoctor,
   onResidentLogout,
   onChiefLogout,
+  onDoctorLogout,
   onNavigateToChief,
   onNavigateToResident,
   onNavigateToResidentForm,
@@ -73,7 +81,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   // portal-switch link in the login card footer — showing the same action
   // again up here is redundant, and the LIVE DB/PREVIEW ENGINE badge is
   // irrelevant chrome before anyone has signed in.
-  const isLoginScreen = currentView === 'resident-login' || currentView === 'chief-login';
+  const isLoginScreen =
+    currentView === 'resident-login' ||
+    currentView === 'chief-login' ||
+    currentView === 'auth-landing' ||
+    currentView === 'doctor-login' ||
+    currentView === 'doctor-register';
   return (
     <header id="app-header" className="bg-white border-b border-slate-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -129,6 +142,25 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
                 <button
                   onClick={onChiefLogout}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md text-xs font-semibold shadow-sm transition cursor-pointer"
+                >
+                  <LogOut size={13} />
+                  <span className="hidden sm:inline">Logout</span>
+                </button>
+              </div>
+            )}
+
+            {/* Doctor identity, unlinked case only — once a Chief links the
+                account, currentResident takes over and the block above
+                renders instead (see App.tsx's doctor-auth-state effect). */}
+            {currentDoctor && !currentResident && (
+              <div className="flex items-center space-x-2">
+                <div className="hidden md:block text-right">
+                  <div className="text-xs font-bold text-slate-800">{currentDoctor.fullName || currentDoctor.email}</div>
+                  <div className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">Individual Doctor</div>
+                </div>
+                <button
+                  onClick={onDoctorLogout}
                   className="flex items-center space-x-1.5 px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md text-xs font-semibold shadow-sm transition cursor-pointer"
                 >
                   <LogOut size={13} />
