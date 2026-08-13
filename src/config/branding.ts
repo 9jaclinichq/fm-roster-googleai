@@ -81,3 +81,28 @@ export function getActiveBrand(): BrandProfile {
   if (typeof window === 'undefined') return B2B_UCH_BRAND;
   return resolveBrandForHostname(window.location.hostname);
 }
+
+/**
+ * Session-aware brand for the footer only (review annotation: "before it
+ * labels the footer the organisation or a personal login" — the footer
+ * should reflect who's actually signed in, not just which domain served the
+ * page). Every other brand-driven surface (Navbar, login screens, tab
+ * title) intentionally keeps using the hostname-only getActiveBrand() —
+ * this is a narrower, session-aware variant for the one spot the review
+ * flagged, not a replacement.
+ *
+ * Precedence: an institutional session (a resident/chief — including a
+ * doctor account a Chief has linked to a workforce row, migration 18) is
+ * always org-branded, regardless of which domain they happened to load the
+ * app from. An authenticated-but-unlinked individual doctor is always
+ * personally-branded. With no session at all (pre-login screens), falls
+ * back to the domain guess since there's nothing else to go on yet.
+ */
+export function getFooterBrand(session: {
+  hasInstitutionalSession: boolean;
+  hasIndividualDoctorSession: boolean;
+}): BrandProfile {
+  if (session.hasInstitutionalSession) return B2B_UCH_BRAND;
+  if (session.hasIndividualDoctorSession) return B2C_INDEPENDENT_BRAND;
+  return getActiveBrand();
+}

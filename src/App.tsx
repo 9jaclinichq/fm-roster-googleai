@@ -11,7 +11,7 @@ import { DoctorAuthView } from './components/DoctorAuthView';
 import { DoctorHomeView } from './components/DoctorHomeView';
 import { databaseService } from './lib/databaseService';
 import { TerminologyProvider } from './lib/terminology';
-import { getActiveBrand } from './config/branding';
+import { getActiveBrand, getFooterBrand } from './config/branding';
 import { WorkforceMember } from './types';
 
 // Code-split the heavier resident views — each pulls its own weight in
@@ -116,6 +116,13 @@ function MainAppContent() {
   const [currentResident, setCurrentResident] = useState<ResidentSession | null>(null);
   const [isChiefAuthenticated, setIsChiefAuthenticated] = useState<boolean>(false);
   const [currentDoctor, setCurrentDoctor] = useState<DoctorSession | null>(null);
+
+  // Footer-only brand — reflects who's actually signed in (org vs.
+  // personal), not just the domain. See getFooterBrand's doc comment.
+  const footerBrand = getFooterBrand({
+    hasInstitutionalSession: !!currentResident || isChiefAuthenticated,
+    hasIndividualDoctorSession: !!currentDoctor,
+  });
 
   // DevHelper Preset triggers
   const [presetResident, setPresetResident] = useState<WorkforceMember | null>(null);
@@ -563,11 +570,13 @@ function MainAppContent() {
         </Suspense>
       </main>
 
-      {/* Humble Footer */}
+      {/* Humble Footer — brand here is session-aware (org vs. personal),
+          not just domain-based like everywhere else; see getFooterBrand's
+          doc comment for why. */}
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400 font-medium shrink-0">
         <div className="max-w-7xl mx-auto px-4">
-          <p>&copy; {new Date().getFullYear()} {brand.copyrightHolder}. All rights reserved.</p>
-          <p className="mt-1 text-[10px] text-slate-300">{brand.productName} &bull; Production Version 0.1</p>
+          <p>&copy; {new Date().getFullYear()} {footerBrand.copyrightHolder}. All rights reserved.</p>
+          <p className="mt-1 text-[10px] text-slate-300">{footerBrand.productName} &bull; Production Version 0.1</p>
           {/* Platform Operator Console link deliberately not advertised here —
               too sensitive to surface to every visitor. The /saas-operator
               route still resolves directly for anyone who already knows the
