@@ -79,12 +79,16 @@ interface EdgeFunctionSuccess<T> {
 async function callEdgeFunction<T>(
   action: 'audit_draft' | 'synthesize_literature_matrix' | 'generate_table_shells',
   text: string,
-  template: ResearchTemplate | null
+  template: ResearchTemplate | null,
+  workforceId: string
 ): Promise<EdgeFunctionSuccess<T> | null> {
   if (!supabase) return null;
   try {
+    // workforce_id lets the server-side quota gate recognize THIS member's
+    // own active Pro subscription (migration 22) — without it, a paying
+    // resident could still get blocked by the tenant's shared free pool.
     const { data, error } = await supabase.functions.invoke('research-copilot', {
-      body: { action, text, template: templatePayload(template), tenant_id: DEFAULT_TENANT_ID },
+      body: { action, text, template: templatePayload(template), tenant_id: DEFAULT_TENANT_ID, workforce_id: workforceId },
     });
     if (error) {
       console.warn(`Edge Function research-copilot (${action}) failed, using heuristic fallback:`, error.message);
@@ -182,7 +186,7 @@ export const researchCopilot = {
     }
 
     const text = `Title: ${title || '(no title yet)'}\n\nContent:\n${trimmedContent}\n\nReferences:\n${references.trim() || '(none provided)'}`;
-    const edgeResult = await callEdgeFunction<{ compliant: boolean; notes: string[] }>('audit_draft', text, template);
+    const edgeResult = await callEdgeFunction<{ compliant: boolean; notes: string[] }>('audit_draft', text, template, workforceId);
 
     let result: DraftAuditResult;
     if (edgeResult && Array.isArray(edgeResult.result.notes)) {
@@ -216,7 +220,7 @@ export const researchCopilot = {
       return result;
     }
 
-    const edgeResult = await callEdgeFunction<{ rows: LiteratureMatrixRow[] }>('synthesize_literature_matrix', trimmed, template);
+    const edgeResult = await callEdgeFunction<{ rows: LiteratureMatrixRow[] }>('synthesize_literature_matrix', trimmed, template, workforceId);
 
     let result: LiteratureMatrixResult;
     if (edgeResult && Array.isArray(edgeResult.result.rows)) {
@@ -231,7 +235,7 @@ export const researchCopilot = {
 
   async generateTableShells(workforceId: string, title: string, studyDesign: ResearchStudyDesign | null, template: ResearchTemplate | null): Promise<TableShellsResult> {
     const text = `Study title: ${title || '(untitled)'}\nStudy design: ${studyDesign || 'unspecified'}`;
-    const edgeResult = await callEdgeFunction<{ tables: TableShell[] }>('generate_table_shells', text, template);
+    const edgeResult = await callEdgeFunction<{ tables: TableShell[] }>('generate_table_shells', text, template, workforceId);
 
     let result: TableShellsResult;
     if (edgeResult && Array.isArray(edgeResult.result.tables)) {

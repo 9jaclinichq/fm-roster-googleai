@@ -66,12 +66,16 @@ interface EdgeFunctionSuccess<T> {
 async function callEdgeFunction<T>(
   action: 'audit_case' | 'generate_defense_questions' | 'parse_logbook_curriculum',
   text: string,
-  template: CasebookTemplate | null
+  template: CasebookTemplate | null,
+  workforceId: string
 ): Promise<EdgeFunctionSuccess<T> | null> {
   if (!supabase) return null;
   try {
+    // workforce_id lets the server-side quota gate recognize THIS member's
+    // own active Pro subscription (migration 22) — without it, a paying
+    // resident could still get blocked by the tenant's shared free pool.
     const { data, error } = await supabase.functions.invoke('casebook-copilot', {
-      body: { action, text, template: templatePayload(template), tenant_id: DEFAULT_TENANT_ID },
+      body: { action, text, template: templatePayload(template), tenant_id: DEFAULT_TENANT_ID, workforce_id: workforceId },
     });
     if (error) {
       console.warn(`Edge Function casebook-copilot (${action}) failed, using heuristic fallback:`, error.message);
@@ -176,7 +180,7 @@ export const casebookCopilot = {
     }
 
     const text = `Title: ${title || '(no title yet)'}\n\nCase Write-up:\n${trimmed}\n\nReferences:\n${references.trim() || '(none provided)'}`;
-    const edgeResult = await callEdgeFunction<{ scores: Record<string, number>; overall_notes: string[] }>('audit_case', text, template);
+    const edgeResult = await callEdgeFunction<{ scores: Record<string, number>; overall_notes: string[] }>('audit_case', text, template, workforceId);
 
     let result: CaseAuditResult;
     if (edgeResult && edgeResult.result.scores) {
@@ -205,7 +209,7 @@ export const casebookCopilot = {
     }
 
     const text = `Title: ${title || '(no title yet)'}\nThematic area: ${thematicArea}\n\nCase Write-up:\n${trimmed}`;
-    const edgeResult = await callEdgeFunction<{ questions: DefenseQuestion[] }>('generate_defense_questions', text, template);
+    const edgeResult = await callEdgeFunction<{ questions: DefenseQuestion[] }>('generate_defense_questions', text, template, workforceId);
 
     let result: DefenseQuestionsResult;
     if (edgeResult && Array.isArray(edgeResult.result.questions)) {
@@ -226,7 +230,7 @@ export const casebookCopilot = {
       return result;
     }
 
-    const edgeResult = await callEdgeFunction<{ stations: ParsedLogbookStation[] }>('parse_logbook_curriculum', trimmed, null);
+    const edgeResult = await callEdgeFunction<{ stations: ParsedLogbookStation[] }>('parse_logbook_curriculum', trimmed, null, workforceId);
 
     let result: LogbookParseResult;
     if (edgeResult && Array.isArray(edgeResult.result.stations)) {

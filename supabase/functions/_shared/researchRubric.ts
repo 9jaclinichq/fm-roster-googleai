@@ -165,10 +165,10 @@ export interface QuotaResult {
 
 // Reuses the SAME server-side quota RPC every other AI-backed Edge
 // Function in this app already calls (check_and_increment_tenant_ai_quota,
-// migration 11) — 50 actions / 14 days for the free tier. No new quota
-// mechanism needed; research actions share the tenant's single AI budget
-// rather than getting a separate one.
-export async function checkResearchAiQuota(supabaseUrl: string, serviceRoleKey: string, tenantId: string): Promise<QuotaResult | null> {
+// migration 11/22) — 50 actions / 14 days for the free tier, unless
+// workforceId has their own active Pro subscription (migration 22), in
+// which case they're unlimited regardless of the tenant's shared pool.
+export async function checkResearchAiQuota(supabaseUrl: string, serviceRoleKey: string, tenantId: string, workforceId?: string): Promise<QuotaResult | null> {
   try {
     const res = await fetch(`${supabaseUrl}/rest/v1/rpc/check_and_increment_tenant_ai_quota`, {
       method: 'POST',
@@ -177,7 +177,7 @@ export async function checkResearchAiQuota(supabaseUrl: string, serviceRoleKey: 
         Authorization: `Bearer ${serviceRoleKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ p_tenant_id: tenantId }),
+      body: JSON.stringify({ p_tenant_id: tenantId, p_workforce_id: workforceId ?? null }),
     });
     if (!res.ok) return null;
     const rows = await res.json();

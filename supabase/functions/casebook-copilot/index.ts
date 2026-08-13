@@ -33,6 +33,7 @@ interface RequestBody {
   text: string;
   template?: CasebookTemplateRubric;
   tenant_id?: string;
+  workforce_id?: string;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -182,7 +183,7 @@ Deno.serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     if (supabaseUrl && serviceRoleKey) {
-      const quota = await checkCasebookAiQuota(supabaseUrl, serviceRoleKey, body.tenant_id);
+      const quota = await checkCasebookAiQuota(supabaseUrl, serviceRoleKey, body.tenant_id, body.workforce_id);
       if (quota && !quota.allowed) {
         return jsonResponse(
           {

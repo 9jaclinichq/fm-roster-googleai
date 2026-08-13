@@ -145,9 +145,10 @@ export interface QuotaResult {
 
 // Reuses the SAME server-side quota RPC every AI-backed Edge Function in
 // this app already calls (check_and_increment_tenant_ai_quota, migration
-// 11) — casebook actions share the tenant's single AI budget, not a
-// separate one.
-export async function checkCasebookAiQuota(supabaseUrl: string, serviceRoleKey: string, tenantId: string): Promise<QuotaResult | null> {
+// 11/22) — casebook actions share the tenant's single AI budget, unless
+// workforceId has their own active Pro subscription (migration 22), in
+// which case they're unlimited regardless of the tenant's shared pool.
+export async function checkCasebookAiQuota(supabaseUrl: string, serviceRoleKey: string, tenantId: string, workforceId?: string): Promise<QuotaResult | null> {
   try {
     const res = await fetch(`${supabaseUrl}/rest/v1/rpc/check_and_increment_tenant_ai_quota`, {
       method: 'POST',
@@ -156,7 +157,7 @@ export async function checkCasebookAiQuota(supabaseUrl: string, serviceRoleKey: 
         Authorization: `Bearer ${serviceRoleKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ p_tenant_id: tenantId }),
+      body: JSON.stringify({ p_tenant_id: tenantId, p_workforce_id: workforceId ?? null }),
     });
     if (!res.ok) return null;
     const rows = await res.json();
