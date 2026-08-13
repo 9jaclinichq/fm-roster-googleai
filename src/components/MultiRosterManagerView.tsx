@@ -74,6 +74,16 @@ export const MultiRosterManagerView: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
+  // Tap-to-assign fallback for touch devices: native HTML5 drag-and-drop
+  // (below) never fires on iOS/Android at all, so tapping a resident chip
+  // to select them, then tapping a slot to place them, is the only way this
+  // screen works on a phone or tablet. Kept alongside drag-and-drop rather
+  // than replacing it — desktop mouse users see no change.
+  const [selectedResidentId, setSelectedResidentId] = useState<string | null>(null);
+  const toggleSelectedResident = (residentId: string) => {
+    setSelectedResidentId(prev => (prev === residentId ? null : residentId));
+  };
+
   const load = async () => {
     setIsLoading(true);
     try {
@@ -171,10 +181,11 @@ export const MultiRosterManagerView: React.FC = () => {
 
   const residentName = (id: string) => workforce.find(w => w.id === id)?.full_name || id;
 
-  const dropOnGopSlot = (e: React.DragEvent, slotIndex: number) => {
-    e.preventDefault();
-    const residentId = e.dataTransfer.getData('text/resident-id');
-    if (!residentId) return;
+  // Each assignment is a plain function taking a residentId directly, used
+  // by BOTH the drag-and-drop handlers (desktop) and the tap-to-assign
+  // handlers (touch) below — one source of truth for the actual assignment
+  // logic regardless of which input method triggered it.
+  const assignToGopSlot = (residentId: string, slotIndex: number) => {
     setGopGrid(prev => ({
       ...prev,
       slots: prev.slots.map((s, i) => i === slotIndex
@@ -182,11 +193,18 @@ export const MultiRosterManagerView: React.FC = () => {
         : s),
     }));
   };
-
-  const dropOnEmergencyShift = (e: React.DragEvent, shiftIndex: number) => {
+  const dropOnGopSlot = (e: React.DragEvent, slotIndex: number) => {
     e.preventDefault();
     const residentId = e.dataTransfer.getData('text/resident-id');
-    if (!residentId) return;
+    if (residentId) assignToGopSlot(residentId, slotIndex);
+  };
+  const tapAssignGopSlot = (slotIndex: number) => {
+    if (!selectedResidentId) return;
+    assignToGopSlot(selectedResidentId, slotIndex);
+    setSelectedResidentId(null);
+  };
+
+  const assignToEmergencyShift = (residentId: string, shiftIndex: number) => {
     setEmergencyGrid(prev => ({
       ...prev,
       shifts: prev.shifts.map((s, i) => i === shiftIndex
@@ -194,11 +212,18 @@ export const MultiRosterManagerView: React.FC = () => {
         : s),
     }));
   };
-
-  const dropOnSatellitePosting = (e: React.DragEvent, postingIndex: number) => {
+  const dropOnEmergencyShift = (e: React.DragEvent, shiftIndex: number) => {
     e.preventDefault();
     const residentId = e.dataTransfer.getData('text/resident-id');
-    if (!residentId) return;
+    if (residentId) assignToEmergencyShift(residentId, shiftIndex);
+  };
+  const tapAssignEmergencyShift = (shiftIndex: number) => {
+    if (!selectedResidentId) return;
+    assignToEmergencyShift(selectedResidentId, shiftIndex);
+    setSelectedResidentId(null);
+  };
+
+  const assignToSatellitePosting = (residentId: string, postingIndex: number) => {
     setSatelliteGrid(prev => ({
       ...prev,
       postings: prev.postings.map((p, i) => i === postingIndex
@@ -206,15 +231,32 @@ export const MultiRosterManagerView: React.FC = () => {
         : p),
     }));
   };
-
-  const dropOnSupervisionDuty = (e: React.DragEvent, dutyIndex: number, slot: 'first_on_duty' | 'second_on_duty') => {
+  const dropOnSatellitePosting = (e: React.DragEvent, postingIndex: number) => {
     e.preventDefault();
     const residentId = e.dataTransfer.getData('text/resident-id');
-    if (!residentId) return;
+    if (residentId) assignToSatellitePosting(residentId, postingIndex);
+  };
+  const tapAssignSatellitePosting = (postingIndex: number) => {
+    if (!selectedResidentId) return;
+    assignToSatellitePosting(selectedResidentId, postingIndex);
+    setSelectedResidentId(null);
+  };
+
+  const assignToSupervisionDuty = (residentId: string, dutyIndex: number, slot: 'first_on_duty' | 'second_on_duty') => {
     setSupervisionGrid(prev => ({
       ...prev,
       duties: prev.duties.map((d, i) => i === dutyIndex ? { ...d, [slot]: residentName(residentId) } : d),
     }));
+  };
+  const dropOnSupervisionDuty = (e: React.DragEvent, dutyIndex: number, slot: 'first_on_duty' | 'second_on_duty') => {
+    e.preventDefault();
+    const residentId = e.dataTransfer.getData('text/resident-id');
+    if (residentId) assignToSupervisionDuty(residentId, dutyIndex, slot);
+  };
+  const tapAssignSupervisionDuty = (dutyIndex: number, slot: 'first_on_duty' | 'second_on_duty') => {
+    if (!selectedResidentId) return;
+    assignToSupervisionDuty(selectedResidentId, dutyIndex, slot);
+    setSelectedResidentId(null);
   };
 
   const saveDraft = async () => {
@@ -395,21 +437,37 @@ export const MultiRosterManagerView: React.FC = () => {
         <h4 className="font-bold text-slate-800 text-xs sm:text-sm">Step 3 — HITL Visual Editor</h4>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-          {/* On-floor resident chips (draggable) */}
+          {/* On-floor resident chips — draggable on desktop; tappable on
+              touch (select a chip, then tap a slot below to assign them,
+              since native drag-and-drop doesn't fire on phones/tablets). */}
           <div className="lg:col-span-1 space-y-2">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Drag Residents Into Grid</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Assign Residents</span>
+            <p className="text-[9px] text-slate-400 leading-relaxed">
+              Drag a resident into a slot on desktop, or on a touch device tap a resident then tap a slot to assign them.
+            </p>
             <div className="space-y-1.5 max-h-96 overflow-y-auto">
-              {onFloorResidents.map(w => (
-                <div
-                  key={w.id}
-                  draggable
-                  onDragStart={e => handleDragStart(e, w.id)}
-                  className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-[10px] font-bold text-blue-800 cursor-grab active:cursor-grabbing"
-                >
-                  <User size={11} />
-                  <span className="truncate">{w.full_name}</span>
-                </div>
-              ))}
+              {onFloorResidents.map(w => {
+                const isSelected = selectedResidentId === w.id;
+                return (
+                  <button
+                    type="button"
+                    key={w.id}
+                    draggable
+                    onDragStart={e => handleDragStart(e, w.id)}
+                    onClick={() => toggleSelectedResident(w.id)}
+                    aria-pressed={isSelected}
+                    className={`w-full flex items-center space-x-1.5 px-2.5 py-2 rounded-lg text-[10px] font-bold border cursor-grab active:cursor-grabbing transition ${
+                      isSelected
+                        ? 'bg-blue-600 border-blue-600 text-white ring-2 ring-blue-300'
+                        : 'bg-blue-50 border-blue-200 text-blue-800'
+                    }`}
+                  >
+                    <User size={11} />
+                    <span className="truncate">{w.full_name}</span>
+                    {isSelected && <span className="ml-auto text-[9px] font-semibold uppercase tracking-wider">Tap a slot</span>}
+                  </button>
+                );
+              })}
               {onFloorResidents.length === 0 && <p className="text-[10px] text-slate-400">No on-floor residents.</p>}
             </div>
             {notOnFloorResidents.length > 0 && (
@@ -446,7 +504,10 @@ export const MultiRosterManagerView: React.FC = () => {
                     key={i}
                     onDragOver={e => e.preventDefault()}
                     onDrop={e => dropOnGopSlot(e, i)}
-                    className="border border-slate-200 rounded-lg p-2.5 flex items-center justify-between gap-3"
+                    onClick={() => tapAssignGopSlot(i)}
+                    className={`border rounded-lg p-2.5 flex items-center justify-between gap-3 transition ${
+                      selectedResidentId ? 'border-blue-300 bg-blue-50/60 cursor-pointer' : 'border-slate-200'
+                    }`}
                   >
                     <div className="min-w-0">
                       <div className="text-[10px] font-bold text-slate-500">{slot.date_or_day} — {slot.clinic_type}</div>
@@ -454,12 +515,21 @@ export const MultiRosterManagerView: React.FC = () => {
                     </div>
                     <div className="flex flex-wrap gap-1 justify-end min-w-[120px]">
                       {(slot.residents || []).map(rid => (
-                        <span key={rid} className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full px-2 py-0.5">
+                        <span key={rid} className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full pl-2 pr-1 py-0.5">
                           {residentName(rid)}
-                          <X size={9} className="cursor-pointer" onClick={() => setGopGrid(prev => ({ ...prev, slots: prev.slots.map((s, si) => si === i ? { ...s, residents: (s.residents || []).filter(r => r !== rid) } : s) }))} />
+                          <button
+                            type="button"
+                            aria-label={`Remove ${residentName(rid)}`}
+                            className="p-1 -m-0.5 hover:bg-emerald-200 rounded-full cursor-pointer"
+                            onClick={e => { e.stopPropagation(); setGopGrid(prev => ({ ...prev, slots: prev.slots.map((s, si) => si === i ? { ...s, residents: (s.residents || []).filter(r => r !== rid) } : s) })); }}
+                          >
+                            <X size={9} />
+                          </button>
                         </span>
                       ))}
-                      {(!slot.residents || slot.residents.length === 0) && <span className="text-[9px] text-slate-300 italic">drop resident here</span>}
+                      {(!slot.residents || slot.residents.length === 0) && (
+                        <span className="text-[9px] text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -482,16 +552,33 @@ export const MultiRosterManagerView: React.FC = () => {
               <div className="space-y-2">
                 {emergencyGrid.shifts.length === 0 && <p className="text-xs text-slate-400 py-4 text-center">No shifts yet.</p>}
                 {emergencyGrid.shifts.map((shift, i) => (
-                  <div key={i} onDragOver={e => e.preventDefault()} onDrop={e => dropOnEmergencyShift(e, i)} className="border border-slate-200 rounded-lg p-2.5 flex items-center justify-between gap-3">
+                  <div
+                    key={i}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => dropOnEmergencyShift(e, i)}
+                    onClick={() => tapAssignEmergencyShift(i)}
+                    className={`border rounded-lg p-2.5 flex items-center justify-between gap-3 transition ${
+                      selectedResidentId ? 'border-blue-300 bg-blue-50/60 cursor-pointer' : 'border-slate-200'
+                    }`}
+                  >
                     <div className="text-[10px] font-bold text-slate-500">{shift.date_or_day} — {shift.shift}</div>
                     <div className="flex flex-wrap gap-1 justify-end min-w-[120px]">
                       {shift.on_call.map(rid => (
-                        <span key={rid} className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full px-2 py-0.5">
+                        <span key={rid} className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full pl-2 pr-1 py-0.5">
                           {residentName(rid)}
-                          <X size={9} className="cursor-pointer" onClick={() => setEmergencyGrid(prev => ({ ...prev, shifts: prev.shifts.map((s, si) => si === i ? { ...s, on_call: s.on_call.filter(r => r !== rid) } : s) }))} />
+                          <button
+                            type="button"
+                            aria-label={`Remove ${residentName(rid)}`}
+                            className="p-1 -m-0.5 hover:bg-emerald-200 rounded-full cursor-pointer"
+                            onClick={e => { e.stopPropagation(); setEmergencyGrid(prev => ({ ...prev, shifts: prev.shifts.map((s, si) => si === i ? { ...s, on_call: s.on_call.filter(r => r !== rid) } : s) })); }}
+                          >
+                            <X size={9} />
+                          </button>
                         </span>
                       ))}
-                      {shift.on_call.length === 0 && <span className="text-[9px] text-slate-300 italic">drop resident here</span>}
+                      {shift.on_call.length === 0 && (
+                        <span className="text-[9px] text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -511,13 +598,27 @@ export const MultiRosterManagerView: React.FC = () => {
                   <div key={i} className="border border-slate-200 rounded-lg p-2.5 space-y-1.5">
                     <div className="text-[10px] font-bold text-slate-500">{duty.date_or_day}</div>
                     <div className="grid grid-cols-2 gap-2">
-                      <div onDragOver={e => e.preventDefault()} onDrop={e => dropOnSupervisionDuty(e, i, 'first_on_duty')} className="border border-dashed border-slate-200 rounded-lg p-2 text-xs">
+                      <div
+                        onDragOver={e => e.preventDefault()}
+                        onDrop={e => dropOnSupervisionDuty(e, i, 'first_on_duty')}
+                        onClick={() => tapAssignSupervisionDuty(i, 'first_on_duty')}
+                        className={`border border-dashed rounded-lg p-2 text-xs transition ${
+                          selectedResidentId ? 'border-blue-300 bg-blue-50/60 cursor-pointer' : 'border-slate-200'
+                        }`}
+                      >
                         <span className="text-[9px] text-slate-400 block">1st On Duty</span>
-                        {duty.first_on_duty || <span className="text-slate-300 italic">drop resident here</span>}
+                        {duty.first_on_duty || <span className="text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>}
                       </div>
-                      <div onDragOver={e => e.preventDefault()} onDrop={e => dropOnSupervisionDuty(e, i, 'second_on_duty')} className="border border-dashed border-slate-200 rounded-lg p-2 text-xs">
+                      <div
+                        onDragOver={e => e.preventDefault()}
+                        onDrop={e => dropOnSupervisionDuty(e, i, 'second_on_duty')}
+                        onClick={() => tapAssignSupervisionDuty(i, 'second_on_duty')}
+                        className={`border border-dashed rounded-lg p-2 text-xs transition ${
+                          selectedResidentId ? 'border-blue-300 bg-blue-50/60 cursor-pointer' : 'border-slate-200'
+                        }`}
+                      >
                         <span className="text-[9px] text-slate-400 block">2nd On Duty</span>
-                        {duty.second_on_duty || <span className="text-slate-300 italic">drop resident here</span>}
+                        {duty.second_on_duty || <span className="text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>}
                       </div>
                     </div>
                   </div>
@@ -535,16 +636,33 @@ export const MultiRosterManagerView: React.FC = () => {
               <div className="space-y-2">
                 {satelliteGrid.postings.length === 0 && <p className="text-xs text-slate-400 py-4 text-center">No postings yet.</p>}
                 {satelliteGrid.postings.map((posting, i) => (
-                  <div key={i} onDragOver={e => e.preventDefault()} onDrop={e => dropOnSatellitePosting(e, i)} className="border border-slate-200 rounded-lg p-2.5 flex items-center justify-between gap-3">
+                  <div
+                    key={i}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => dropOnSatellitePosting(e, i)}
+                    onClick={() => tapAssignSatellitePosting(i)}
+                    className={`border rounded-lg p-2.5 flex items-center justify-between gap-3 transition ${
+                      selectedResidentId ? 'border-blue-300 bg-blue-50/60 cursor-pointer' : 'border-slate-200'
+                    }`}
+                  >
                     <div className="text-[10px] font-bold text-slate-500">{posting.facility}{posting.date_or_day ? ` — ${posting.date_or_day}` : ''}</div>
                     <div className="flex flex-wrap gap-1 justify-end min-w-[120px]">
                       {posting.assigned.map(rid => (
-                        <span key={rid} className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full px-2 py-0.5">
+                        <span key={rid} className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full pl-2 pr-1 py-0.5">
                           {residentName(rid)}
-                          <X size={9} className="cursor-pointer" onClick={() => setSatelliteGrid(prev => ({ ...prev, postings: prev.postings.map((p, pi) => pi === i ? { ...p, assigned: p.assigned.filter(r => r !== rid) } : p) }))} />
+                          <button
+                            type="button"
+                            aria-label={`Remove ${residentName(rid)}`}
+                            className="p-1 -m-0.5 hover:bg-emerald-200 rounded-full cursor-pointer"
+                            onClick={e => { e.stopPropagation(); setSatelliteGrid(prev => ({ ...prev, postings: prev.postings.map((p, pi) => pi === i ? { ...p, assigned: p.assigned.filter(r => r !== rid) } : p) })); }}
+                          >
+                            <X size={9} />
+                          </button>
                         </span>
                       ))}
-                      {posting.assigned.length === 0 && <span className="text-[9px] text-slate-300 italic">drop resident here</span>}
+                      {posting.assigned.length === 0 && (
+                        <span className="text-[9px] text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>
+                      )}
                     </div>
                   </div>
                 ))}
