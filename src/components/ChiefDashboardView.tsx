@@ -1128,7 +1128,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                             >
                               <Unlink size={13} />
                             </button>
-                          ) : (
+                          ) : member.active ? (
                             <button
                               onClick={() => {
                                 setLinkingMemberId(linkingMemberId === member.id ? null : member.id);
@@ -1140,7 +1140,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                             >
                               <Link2 size={13} />
                             </button>
-                          )}
+                          ) : null}
                         </td>
                       </tr>
                       {linkingMemberId === member.id && (

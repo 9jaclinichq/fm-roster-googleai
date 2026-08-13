@@ -1881,6 +1881,11 @@ export const databaseService = {
   // Phase-1 simplification: a doctor linked to more than one workforce row
   // (multiple organizations) gets the most-recently-linked one here. A
   // proper org switcher is a future follow-up — not built.
+  //
+  // active = true is re-checked here, not just at link time (migration 21)
+  // — this query runs on every doctor login, so a workforce row deactivated
+  // AFTER a legitimate link immediately stops converging into a resident
+  // session, matching how code-based login already treats deactivation.
   async getLinkedWorkforceForDoctor(doctorId: string): Promise<WorkforceMember | null> {
     checkSupabase();
 
@@ -1888,6 +1893,7 @@ export const databaseService = {
       .from('workforce')
       .select(WORKFORCE_PUBLIC_COLUMNS)
       .eq('doctor_id', doctorId)
+      .eq('active', true)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
