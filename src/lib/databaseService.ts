@@ -107,9 +107,14 @@ export const databaseService = {
   async getWorkforce(): Promise<WorkforceMember[]> {
     checkSupabase();
 
+    // Tenant-scoped defensively (see migration 20's header) — there's no
+    // real per-tenant Chief session to filter by yet, so this hardcodes the
+    // one seeded tenant rather than leaking every tenant's roster to any
+    // Chief. Must become session-driven once real per-tenant login exists.
     const { data, error } = await supabase!
       .from('workforce')
       .select(WORKFORCE_PUBLIC_COLUMNS)
+      .eq('tenant_id', DEFAULT_TENANT_ID)
       .order('full_name', { ascending: true });
 
     if (error) {
@@ -328,9 +333,16 @@ export const databaseService = {
   async getSubmissions(collectionId?: string): Promise<SubmissionWithWorkforce[]> {
     checkSupabase();
 
+    // submissions has no tenant_id column of its own (see CLAUDE.md's SaaS
+    // section — deliberately excluded); tenant-scoped here via an inner
+    // join through workforce.tenant_id instead (safe: workforce_id is
+    // NOT NULL with an ON DELETE CASCADE FK, so every submission always has
+    // a matching workforce row). Same provisional single-tenant hardcoding
+    // as getWorkforce() above — see migration 20's header.
     let query = supabase!
       .from('submissions')
-      .select('*, workforce(full_name, category)');
+      .select('*, workforce!inner(full_name, category, tenant_id)')
+      .eq('workforce.tenant_id', DEFAULT_TENANT_ID);
 
     if (collectionId) {
       query = query.eq('collection_id', collectionId);
@@ -622,9 +634,11 @@ export const databaseService = {
   async getAnnouncements(): Promise<Announcement[]> {
     checkSupabase();
 
+    // Tenant-scoped defensively — see migration 20's header / getWorkforce() above.
     const { data, error } = await supabase!
       .from('announcements')
       .select('*')
+      .eq('tenant_id', DEFAULT_TENANT_ID)
       .order('pinned', { ascending: false })
       .order('created_at', { ascending: false });
 
@@ -811,7 +825,12 @@ export const databaseService = {
   async getKnowledgePacks(category?: KnowledgePackCategory): Promise<KnowledgePack[]> {
     checkSupabase();
 
-    let query = supabase!.from('knowledge_packs').select('*').order('created_at', { ascending: false });
+    // Tenant-scoped defensively — see migration 20's header / getWorkforce() above.
+    let query = supabase!
+      .from('knowledge_packs')
+      .select('*')
+      .eq('tenant_id', DEFAULT_TENANT_ID)
+      .order('created_at', { ascending: false });
     if (category) {
       query = query.eq('category', category);
     }
