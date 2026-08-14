@@ -1,5 +1,5 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
-import { databaseService } from '../lib/databaseService';
+import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
 import { LoadingShell } from './LoadingShell';
 
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
@@ -70,6 +70,9 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   // server-side on every call — it is never trusted blindly. Kept in state
   // (not a one-shot ref) so it stays current if the code is changed mid-session.
   const [adminCode, setAdminCode] = useState<string | null>(() => localStorage.getItem('fm_admin_code'));
+  // Resolved once at login (App.tsx's handleChiefLogin, migration 23) — the
+  // tenant this Chief's admin code belongs to.
+  const [tenantId] = useState<string | null>(() => localStorage.getItem('fm_chief_tenant_id'));
 
   const [collection, setCollection] = useState<Collection | null>(null);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -149,11 +152,20 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const loadDashboardData = async () => {
     setIsLoading(true);
     try {
+      // Every read/write below defaults to DEFAULT_TENANT_ID (UCH) unless
+      // passed a tenant explicitly — must pass this Chief's own resolved
+      // tenant, or a second tenant's Chief sees/creates against UCH's data
+      // in the grids (writes to workforce/user_roles/etc. are still safely
+      // rejected by migration 23's tenant-boundary RPC checks either way,
+      // but the display would be wrong and new collections/announcements/
+      // knowledge packs would land in the wrong tenant).
+      const tid = tenantId ?? DEFAULT_TENANT_ID;
+
       // 1. Get settings
-      const settings = await databaseService.getSettings();
+      const settings = await databaseService.getSettings(tid);
 
       // 2. Get collections
-      const collectionsList = await databaseService.getCollections();
+      const collectionsList = await databaseService.getCollections(tid);
       setCollections(collectionsList);
 
       const activeColl = collectionsList.find(c => c.id === settings.current_collection_id) || collectionsList[0] || null;
@@ -162,18 +174,18 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
       if (activeColl) {
         setChangeDeadlineValue(activeColl.deadline.substring(0, 16));
         // 3. Get submissions for active collection
-        const subs = await databaseService.getSubmissions(activeColl.id);
+        const subs = await databaseService.getSubmissions(activeColl.id, tid);
         setSubmissions(subs);
       } else {
         setSubmissions([]);
       }
 
       // 4. Get workforce (codes are fetched separately via a privileged RPC)
-      const wf = await databaseService.getWorkforce();
+      const wf = await databaseService.getWorkforce(tid);
       setWorkforce(wf);
 
       // 5. Get announcements
-      const ann = await databaseService.getAnnouncements();
+      const ann = await databaseService.getAnnouncements(tid);
       setAnnouncements(ann);
 
       // 6. Get delegated subadmin roles
@@ -316,7 +328,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
     try {
       const deadlineIso = new Date(newCollectionDeadline).toISOString();
-      const newColl = await databaseService.createCollection(newCollectionTitle.trim(), deadlineIso);
+      const newColl = await databaseService.createCollection(newCollectionTitle.trim(), deadlineIso, tenantId ?? DEFAULT_TENANT_ID);
       
       setCollection(newColl);
       setNewCollectionTitle('');
@@ -500,7 +512,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         body: newAnnouncementBody.trim(),
         category: newAnnouncementCategory,
         pinned: newAnnouncementPinned,
-      });
+      }, tenantId ?? DEFAULT_TENANT_ID);
       setAnnouncements(prev => [created, ...prev]);
       setNewAnnouncementTitle('');
       setNewAnnouncementBody('');
@@ -1533,21 +1545,21 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         {/* TAB 6: KNOWLEDGE PACKS */}
         {activeTab === 'knowledge' && (
           <Suspense fallback={<LoadingShell />}>
-            <KnowledgePackManagerView />
+            <KnowledgePackManagerView tenantId={tenantId ?? DEFAULT_TENANT_ID} />
           </Suspense>
         )}
 
         {/* TAB 7: MULTI-ROSTER MANAGER */}
         {activeTab === 'roster' && (
           <Suspense fallback={<LoadingShell />}>
-            <MultiRosterManagerView />
+            <MultiRosterManagerView tenantId={tenantId ?? DEFAULT_TENANT_ID} />
           </Suspense>
         )}
 
         {/* TAB 8: TENANT CUSTOMIZATION */}
         {activeTab === 'customization' && (
           <Suspense fallback={<LoadingShell />}>
-            <TenantCustomizationView />
+            <TenantCustomizationView tenantId={tenantId ?? DEFAULT_TENANT_ID} />
           </Suspense>
         )}
 

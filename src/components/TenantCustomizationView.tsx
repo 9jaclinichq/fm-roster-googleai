@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
+import { databaseService } from '../lib/databaseService';
 import { Tenant, CallDutyRule, TenantAiAdaptationRule } from '../types';
 import { TERMINOLOGY_DEFAULTS } from '../lib/terminology';
 import { Settings2, Sliders, Tag, Sparkles, RefreshCw, Plus } from 'lucide-react';
 
-// Integrated into ChiefDashboardView as a tab. Operates on the single
-// seeded tenant (DEFAULT_TENANT_ID) — there's no tenant-switching login
-// yet, so "the Chief's tenant" is always UCH FM today. See migration 11's
-// header for the full scope/architecture notes this component assumes.
+// Integrated into ChiefDashboardView as a tab. Operates on the Chief's own
+// resolved tenant (migration 23 made the admin code per-tenant, closing
+// the "no tenant-switching login yet" gap this component used to be
+// hardcoded around) — see migration 11's header for the full scope/
+// architecture notes this component otherwise assumes.
 
 const MODULE_TOGGLES: { key: string; label: string; description: string }[] = [
   { key: 'viva_simulator_enabled', label: 'Mock Viva Oral Exam Simulator', description: 'Residents can log self-scored practice viva sessions.' },
@@ -17,7 +18,11 @@ const MODULE_TOGGLES: { key: string; label: string; description: string }[] = [
 
 const TERMINOLOGY_KEYS = Object.keys(TERMINOLOGY_DEFAULTS);
 
-export const TenantCustomizationView: React.FC = () => {
+interface TenantCustomizationViewProps {
+  tenantId: string;
+}
+
+export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = ({ tenantId }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [callDutyRules, setCallDutyRules] = useState<CallDutyRule[]>([]);
@@ -36,9 +41,9 @@ export const TenantCustomizationView: React.FC = () => {
     setIsLoading(true);
     try {
       const [t, rules, adapt] = await Promise.all([
-        databaseService.getTenant(DEFAULT_TENANT_ID),
-        databaseService.getCallDutyRules(DEFAULT_TENANT_ID),
-        databaseService.getTenantAiAdaptationRules(DEFAULT_TENANT_ID),
+        databaseService.getTenant(tenantId),
+        databaseService.getCallDutyRules(tenantId),
+        databaseService.getTenantAiAdaptationRules(tenantId),
       ]);
       if (t) {
         setTenant(t);
@@ -56,13 +61,13 @@ export const TenantCustomizationView: React.FC = () => {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [tenantId]);
 
   const toggleModule = async (key: string) => {
     const updated = { ...moduleFlags, [key]: !(moduleFlags[key] ?? true) };
     setModuleFlags(updated);
     try {
-      await databaseService.updateTenantModuleFlags(DEFAULT_TENANT_ID, updated);
+      await databaseService.updateTenantModuleFlags(tenantId, updated);
       setStatusMessage('Module setting saved.');
     } catch (err) {
       console.warn(err);
@@ -79,7 +84,7 @@ export const TenantCustomizationView: React.FC = () => {
     const updated = { ...moduleFlags, case_reports_required_count: count };
     setModuleFlags(updated);
     try {
-      await databaseService.updateTenantModuleFlags(DEFAULT_TENANT_ID, updated);
+      await databaseService.updateTenantModuleFlags(tenantId, updated);
       setStatusMessage(`Required case count set to ${count}. Note: CasebookBuilderView still hardcodes 15 slots — this value is not yet read by that component.`);
     } catch (err) {
       console.warn(err);
@@ -89,7 +94,7 @@ export const TenantCustomizationView: React.FC = () => {
 
   const saveTerminology = async () => {
     try {
-      await databaseService.updateTenantTerminology(DEFAULT_TENANT_ID, terminology);
+      await databaseService.updateTenantTerminology(tenantId, terminology);
       setStatusMessage('Terminology saved. Applies to newly built tenant-aware views only — see TerminologyProvider scope note.');
     } catch (err) {
       console.warn(err);
@@ -102,9 +107,9 @@ export const TenantCustomizationView: React.FC = () => {
     const value = Number(newRuleValue);
     if (!Number.isFinite(value)) { setStatusMessage('Rule value must be a number.'); return; }
     try {
-      await databaseService.upsertCallDutyRule(DEFAULT_TENANT_ID, newRuleKey.trim(), value);
+      await databaseService.upsertCallDutyRule(tenantId, newRuleKey.trim(), value);
       setNewRuleKey(''); setNewRuleValue('');
-      const rules = await databaseService.getCallDutyRules(DEFAULT_TENANT_ID);
+      const rules = await databaseService.getCallDutyRules(tenantId);
       setCallDutyRules(rules);
       setStatusMessage('Call duty rule saved.');
     } catch (err) {
@@ -125,9 +130,9 @@ export const TenantCustomizationView: React.FC = () => {
       }
     }
     try {
-      await databaseService.upsertTenantAiAdaptationRule(DEFAULT_TENANT_ID, newFeatureKey.trim(), { adapted_prompt_overrides: overrides });
+      await databaseService.upsertTenantAiAdaptationRule(tenantId, newFeatureKey.trim(), { adapted_prompt_overrides: overrides });
       setNewFeatureKey(''); setNewFeaturePrompt('');
-      const adapt = await databaseService.getTenantAiAdaptationRules(DEFAULT_TENANT_ID);
+      const adapt = await databaseService.getTenantAiAdaptationRules(tenantId);
       setAdaptationRules(adapt);
       setStatusMessage('AI adaptation rule saved (not yet applied by the Edge Functions — see note below).');
     } catch (err) {

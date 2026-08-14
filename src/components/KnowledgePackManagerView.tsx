@@ -20,7 +20,11 @@ const CATEGORIES: { value: KnowledgePackCategory; label: string }[] = [
   { value: 'past_questions', label: 'Past Questions' },
 ];
 
-export const KnowledgePackManagerView: React.FC = () => {
+interface KnowledgePackManagerViewProps {
+  tenantId: string;
+}
+
+export const KnowledgePackManagerView: React.FC<KnowledgePackManagerViewProps> = ({ tenantId }) => {
   const [packs, setPacks] = useState<KnowledgePack[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [expandedPackId, setExpandedPackId] = useState<string | null>(null);
@@ -50,13 +54,13 @@ export const KnowledgePackManagerView: React.FC = () => {
 
   const load = () => {
     setIsLoading(true);
-    databaseService.getKnowledgePacks()
+    databaseService.getKnowledgePacks(undefined, tenantId)
       .then(setPacks)
       .catch(err => console.warn('Failed to load knowledge packs:', err))
       .finally(() => setIsLoading(false));
   };
 
-  useEffect(load, []);
+  useEffect(load, [tenantId]);
 
   const toggleExpand = async (packId: string) => {
     if (expandedPackId === packId) {
@@ -97,7 +101,7 @@ export const KnowledgePackManagerView: React.FC = () => {
         file_url: newPackFileUrl.trim(),
         description: newPackDescription.trim() || null,
         tags: newPackTags.split(',').map(t => t.trim()).filter(Boolean),
-      });
+      }, tenantId);
       setPacks(prev => [created, ...prev]);
       setNewPackTitle('');
       setNewPackDescription('');

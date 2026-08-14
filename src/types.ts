@@ -68,7 +68,10 @@ export interface Submission {
 }
 
 export interface Settings {
-  id: number;
+  id: string;
+  // One settings row per tenant since migration 23 (previously a 1-row
+  // global singleton).
+  tenant_id: string;
   // admin_access_code is intentionally NOT included here — the column is
   // locked down at the database level and never returned to the client.
   // Use databaseService.verifyChiefLogin() / updateAdminCode() instead.
@@ -549,6 +552,9 @@ export interface ResearchWorkspace {
   id: string;
   tenant_id: string | null;
   workforce_id: string | null;
+  // Unlinked individual-doctor track (migration 25) — set for a personal
+  // workspace instead of workforce_id.
+  doctor_id: string | null;
   title: string;
   study_design: ResearchStudyDesign | null;
   template_id: string | null;
@@ -618,6 +624,9 @@ export interface CasebookWorkspace {
   id: string;
   tenant_id: string | null;
   workforce_id: string | null;
+  // Unlinked individual-doctor track (migration 25) — set for a personal
+  // workspace instead of workforce_id.
+  doctor_id: string | null;
   title: string;
   framework_type: CasebookFrameworkType;
   template_id: string | null;

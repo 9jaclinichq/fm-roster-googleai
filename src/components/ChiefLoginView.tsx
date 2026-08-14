@@ -4,7 +4,7 @@ import { ShieldAlert, AlertCircle, Key, RefreshCw } from 'lucide-react';
 import { useTerminology } from '../lib/terminology';
 
 interface ChiefLoginViewProps {
-  onLoginSuccess: (adminCode: string) => void;
+  onLoginSuccess: (adminCode: string, tenantId: string, tenantName: string) => void;
   onNavigateToResident: () => void;
   presetCode?: string;
 }
@@ -38,10 +38,11 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
     setIsLoggingIn(true);
     try {
       // Verified server-side — the admin_access_code column is never sent to the client.
+      // Migration 23: the code itself resolves which tenant this Chief belongs to.
       const verified = await databaseService.verifyChiefLogin(adminCode);
 
       if (verified) {
-        onLoginSuccess(adminCode);
+        onLoginSuccess(adminCode, verified.tenantId, verified.tenantName);
       } else {
         setError('Incorrect Admin Access Code. Access Denied.');
       }

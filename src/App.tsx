@@ -9,6 +9,8 @@ import { AnnouncementBoardView } from './components/AnnouncementBoardView';
 import { AuthLandingView } from './components/AuthLandingView';
 import { DoctorAuthView } from './components/DoctorAuthView';
 import { DoctorHomeView } from './components/DoctorHomeView';
+import { AdminPortalChooserView } from './components/AdminPortalChooserView';
+import { CreateOrganizationView } from './components/CreateOrganizationView';
 import { databaseService } from './lib/databaseService';
 import { TerminologyProvider } from './lib/terminology';
 import { getActiveBrand, getFooterBrand } from './config/branding';
@@ -206,6 +208,8 @@ function MainAppContent() {
     const path = location.pathname;
     if (path.startsWith('/chief/dashboard')) return 'chief';
     if (path.startsWith('/chief')) return 'chief-login';
+    if (path.startsWith('/admin-portal')) return 'chief-login';
+    if (path.startsWith('/organization/new')) return 'chief-login';
     if (path.startsWith('/workspace/announcements')) return 'resident-announcements';
     if (path.startsWith('/workspace/dissertation')) return 'resident-dissertation';
     if (path.startsWith('/workspace/casebook')) return 'resident-casebook';
@@ -251,12 +255,16 @@ function MainAppContent() {
     navigate('/login');
   };
 
-  const handleChiefLogin = (adminCode: string) => {
+  const handleChiefLogin = (adminCode: string, tenantId: string, _tenantName: string) => {
     setIsChiefAuthenticated(true);
     localStorage.setItem('fm_session_chief', 'true');
     // Retained only to authorize the chief_* RPCs (workforce codes, admin
     // code changes) — the server re-verifies it on every privileged call.
     localStorage.setItem('fm_admin_code', adminCode);
+    // Migration 23: settings/admin codes are per-tenant now — resolved once
+    // at login and kept alongside the code so tenant-scoped views (e.g.
+    // TenantCustomizationView) know which tenant they're operating on.
+    localStorage.setItem('fm_chief_tenant_id', tenantId);
     navigate('/chief/dashboard');
     // Clear preset
     setPresetAdminCode('');
@@ -266,6 +274,7 @@ function MainAppContent() {
     setIsChiefAuthenticated(false);
     localStorage.removeItem('fm_session_chief');
     localStorage.removeItem('fm_admin_code');
+    localStorage.removeItem('fm_chief_tenant_id');
     navigate('/chief/login');
   };
 
@@ -280,6 +289,14 @@ function MainAppContent() {
     navigate('/chief/login');
   };
 
+  // Hands the freshly-generated admin code from CreateOrganizationView
+  // (migration 24) into ChiefLoginView, same mechanism as the DevHelper
+  // preset above.
+  const handleOrganizationCreated = (adminCode: string) => {
+    setPresetAdminCode(adminCode);
+    navigate('/chief/login');
+  };
+
   return (
     <div id="fm-app" className="min-h-screen flex flex-col bg-slate-50">
       {/* Navigation Header */}
@@ -290,7 +307,7 @@ function MainAppContent() {
         onResidentLogout={handleResidentLogout}
         onChiefLogout={handleChiefLogout}
         onDoctorLogout={handleDoctorLogout}
-        onNavigateToChief={() => navigate('/chief/login')}
+        onNavigateToChief={() => navigate('/admin-portal')}
         onNavigateToResident={() => navigate('/workspace/login')}
         onNavigateToResidentForm={() => navigate('/workspace/form')}
         onNavigateToAnnouncements={() => navigate('/workspace/announcements')}
@@ -383,7 +400,7 @@ function MainAppContent() {
               ) : (
                 <ResidentLoginView
                   onLoginSuccess={handleResidentLogin}
-                  onNavigateToChief={() => navigate('/chief/login')}
+                  onNavigateToChief={() => navigate('/admin-portal')}
                   presetResident={presetResident}
                 />
               )
@@ -491,15 +508,12 @@ function MainAppContent() {
             }
           />
 
-          {/* Universal Research Engine — gated the same as every other
-              resident view today (see ResearchWorkspaceView's header note:
-              a standalone "independent doctor" identity is schema-ready
-              but not built, so this route is resident-session-only for now). */}
+          {/* Universal Research Engine */}
           <Route
             path="/workspace/research"
             element={
               currentResident ? (
-                <ResearchWorkspaceView resident={currentResident} />
+                <ResearchWorkspaceView owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce' }} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )
@@ -516,9 +530,66 @@ function MainAppContent() {
             path="/workspace/casebook-logbook"
             element={
               currentResident ? (
-                <CasebookWorkspaceView resident={currentResident} canManageLogbooks={currentResident.subadminRoles.length > 0} />
+                <CasebookWorkspaceView
+                  owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce' }}
+                  canManageLogbooks={currentResident.subadminRoles.length > 0}
+                />
               ) : (
                 <Navigate to="/workspace/login" replace />
+              )
+            }
+          />
+
+          {/* Unlinked individual-doctor personal workspaces (migration 25) —
+              mirror the /workspace/* routes above but owner.kind: 'doctor'
+              and no tenant/AI-Copilot access (see each view's owner.kind
+              gating). An already-linked doctor is redirected to the
+              institutional route instead, to avoid an ambiguous "which
+              workspace am I in" state. */}
+          <Route
+            path="/doctor/research"
+            element={
+              currentResident ? (
+                <Navigate to="/workspace/research" replace />
+              ) : currentDoctor ? (
+                <ResearchWorkspaceView owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor' }} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+          <Route
+            path="/doctor/casebook-logbook"
+            element={
+              currentResident ? (
+                <Navigate to="/workspace/casebook-logbook" replace />
+              ) : currentDoctor ? (
+                <CasebookWorkspaceView
+                  owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor' }}
+                  canManageLogbooks={false}
+                />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+
+          {/* Admin entry chooser (migration 24 review follow-up) — sits in
+              front of Chief login so "sign in" and "create a new
+              organization" aren't both crammed into ChiefLoginView itself,
+              and so the Platform Operator Console stays a separate,
+              low-key path rather than merged into this one. */}
+          <Route
+            path="/admin-portal"
+            element={isChiefAuthenticated ? <Navigate to="/chief/dashboard" replace /> : <AdminPortalChooserView />}
+          />
+          <Route
+            path="/organization/new"
+            element={
+              isChiefAuthenticated ? (
+                <Navigate to="/chief/dashboard" replace />
+              ) : (
+                <CreateOrganizationView onCreated={handleOrganizationCreated} />
               )
             }
           />

@@ -21,8 +21,19 @@ import {
   GitFork, Settings2, GraduationCap,
 } from 'lucide-react';
 
+// Since migration 25, this view serves two kinds of owner: an institutional
+// resident (workforce_id) or an unlinked individual doctor's personal
+// workspace (doctor_id) — see DoctorHomeView's entry cards. `kind` drives
+// which id column workspace CRUD writes to, and gates AI Copilot (personal
+// workspaces have no tenant/quota context — see migration 25's header).
+interface WorkspaceOwner {
+  id: string;
+  name: string;
+  kind: 'workforce' | 'doctor';
+}
+
 interface ResearchWorkspaceViewProps {
-  resident: { id: string; name: string; category: string };
+  owner: WorkspaceOwner;
 }
 
 const CHAPTER_ORDER: { type: ResearchChapterType; number: number; label: string }[] = [
@@ -64,7 +75,7 @@ const SourceBadge: React.FC<{ source: ResearchCopilotSource }> = ({ source }) =>
   return <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${badge.className}`}>{badge.label}</span>;
 };
 
-export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ resident }) => {
+export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ owner }) => {
   const [workspaces, setWorkspaces] = useState<ResearchWorkspace[]>([]);
   const [templates, setTemplates] = useState<ResearchTemplate[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -122,7 +133,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
   // AI Copilot feature gating — free tier gets a rolling-window allowance,
   // exhaustion opens the Paystack/Flutterwave upgrade checkout instead of
   // running the action (see src/config/tiers.ts).
-  const quota = useWorkspaceQuota(resident.id);
+  const quota = useWorkspaceQuota(owner.id);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId) || null;
@@ -131,9 +142,15 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
 
   useEffect(() => {
     setIsLoading(true);
+    // loadAvailableTemplates' "personal fork" filter is workforce_id-keyed
+    // (research_templates.created_by_workforce_id) — passing a doctor's id
+    // through it is harmless (it just never matches a fork), global
+    // templates still load correctly either way.
     Promise.all([
-      databaseService.getResearchWorkspacesForWorkforce(resident.id),
-      loadAvailableTemplates(DEFAULT_TENANT_ID, resident.id),
+      owner.kind === 'workforce'
+        ? databaseService.getResearchWorkspacesForWorkforce(owner.id)
+        : databaseService.getResearchWorkspacesForDoctor(owner.id),
+      loadAvailableTemplates(DEFAULT_TENANT_ID, owner.id),
     ])
       .then(([ws, tpl]) => {
         setWorkspaces(ws);
@@ -141,7 +158,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
       })
       .catch(err => console.warn('Failed to load research workspaces:', err))
       .finally(() => setIsLoading(false));
-  }, [resident.id]);
+  }, [owner.id, owner.kind]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -173,8 +190,9 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
     setIsCreatingWorkspace(true);
     try {
       const workspace = await databaseService.createResearchWorkspace({
-        tenant_id: DEFAULT_TENANT_ID,
-        workforce_id: resident.id,
+        tenant_id: owner.kind === 'workforce' ? DEFAULT_TENANT_ID : null,
+        workforce_id: owner.kind === 'workforce' ? owner.id : null,
+        doctor_id: owner.kind === 'doctor' ? owner.id : null,
         title: newTitle.trim(),
         study_design: newStudyDesign || null,
         template_id: newTemplateId || null,
@@ -235,10 +253,13 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
   };
 
   const handleFork = async () => {
-    if (!forkSourceId || !forkName.trim()) return;
+    // Defensive guard mirroring the hidden Fork button below — forking
+    // writes created_by_workforce_id, a real FK into workforce(id), so a
+    // doctor's id would fail the constraint rather than just no-op.
+    if (owner.kind !== 'workforce' || !forkSourceId || !forkName.trim()) return;
     setIsForking(true);
     try {
-      const forked = await forkTemplate(forkSourceId, resident.id, {
+      const forked = await forkTemplate(forkSourceId, owner.id, {
         scope: forkScope,
         newName: forkName.trim(),
         tenantId: DEFAULT_TENANT_ID,
@@ -349,7 +370,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
     }
     setIsAuditing(true);
     try {
-      const result = await researchCopilot.auditDraft(resident.id, picoTitle, draftContent, referencesDraft, activeTemplate);
+      const result = await researchCopilot.auditDraft(owner.id, picoTitle, draftContent, referencesDraft, activeTemplate);
       setAuditResult(result);
       quota.refresh();
     } finally {
@@ -365,7 +386,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
     }
     setIsGeneratingShells(true);
     try {
-      const result = await researchCopilot.generateTableShells(resident.id, activeWorkspace.title, activeWorkspace.study_design, activeTemplate);
+      const result = await researchCopilot.generateTableShells(owner.id, activeWorkspace.title, activeWorkspace.study_design, activeTemplate);
       setTableShellsResult(result);
       quota.refresh();
     } finally {
@@ -381,7 +402,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
     }
     setIsSynthesizingMatrix(true);
     try {
-      const result = await researchCopilot.synthesizeLiteratureMatrix(resident.id, referencesDraft, activeTemplate);
+      const result = await researchCopilot.synthesizeLiteratureMatrix(owner.id, referencesDraft, activeTemplate);
       setMatrixResult(result);
       quota.refresh();
     } finally {
@@ -706,7 +727,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
                 <Sparkles className="text-slate-500" size={16} />
                 <h3 className="font-bold text-slate-900 text-sm">AI Copilot Panel</h3>
               </div>
-              {!quota.loading && (
+              {owner.kind === 'workforce' && !quota.loading && (
                 <span
                   className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                     quota.limit == null
@@ -721,11 +742,18 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
                 </span>
               )}
             </div>
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              These tools try a live AI provider first (OpenAI, then Gemini) and fall back to a
-              deterministic local check if neither is configured or available — a badge on each result
-              shows which path produced it. Never a substitute for supervisor review.
-            </p>
+            {owner.kind === 'doctor' ? (
+              <p className="text-[10px] text-amber-600 leading-relaxed bg-amber-50 border border-amber-200 rounded-lg p-2">
+                AI Copilot actions aren't available for personal workspaces yet — only Fisher's sample-size
+                calculator below (a pure formula, not AI) works here. Everything else on this page works normally.
+              </p>
+            ) : (
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                These tools try a live AI provider first (OpenAI, then Gemini) and fall back to a
+                deterministic local check if neither is configured or available — a badge on each result
+                shows which path produced it. Never a substitute for supervisor review.
+              </p>
+            )}
 
             {/* Audit Draft against Active Rubric */}
             <div className="space-y-1.5 pt-2 border-t border-slate-100">
@@ -733,7 +761,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
                 <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><ClipboardCheck size={12} /><span>Audit Draft Against Active Rubric</span></p>
                 <button
                   onClick={handleRunAudit}
-                  disabled={isAuditing || !draftContent.trim()}
+                  disabled={owner.kind === 'doctor' || isAuditing || !draftContent.trim()}
                   className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer shrink-0"
                 >
                   {isAuditing ? 'Auditing...' : 'Run AI Audit'}
@@ -774,7 +802,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
                 <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><Table2 size={12} /><span>Dummy Table Shells</span></p>
                 <button
                   onClick={handleGenerateTableShells}
-                  disabled={isGeneratingShells}
+                  disabled={owner.kind === 'doctor' || isGeneratingShells}
                   className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer shrink-0"
                 >
                   {isGeneratingShells ? 'Generating...' : 'Generate'}
@@ -801,7 +829,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
                 <p className="text-xs font-bold text-slate-700 flex items-center space-x-1.5"><BookOpen size={12} /><span>Literature Matrix</span></p>
                 <button
                   onClick={handleSynthesizeMatrix}
-                  disabled={isSynthesizingMatrix || !referencesDraft.trim()}
+                  disabled={owner.kind === 'doctor' || isSynthesizingMatrix || !referencesDraft.trim()}
                   className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer shrink-0"
                 >
                   {isSynthesizingMatrix ? 'Synthesizing...' : 'Synthesize'}
@@ -846,7 +874,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
                       <p className="text-sm font-bold text-slate-900">{t.name}</p>
-                      <p className="text-[10px] text-slate-500">{t.organization_or_body} &bull; {t.referencing_style} {t.created_by_workforce_id === resident.id ? '• Your fork' : ''}</p>
+                      <p className="text-[10px] text-slate-500">{t.organization_or_body} &bull; {t.referencing_style} {t.created_by_workforce_id === owner.id ? '• Your fork' : ''}</p>
                     </div>
                     <div className="flex items-center space-x-1.5">
                       <button
@@ -855,14 +883,16 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
                       >
                         Use
                       </button>
-                      <button
-                        onClick={() => { setForkSourceId(t.id); setForkName(`${t.name} (Custom)`); }}
-                        className="flex items-center space-x-1 px-2.5 py-1 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-[10px] font-bold transition cursor-pointer"
-                      >
-                        <GitFork size={11} />
-                        <span>Fork</span>
-                      </button>
-                      {t.created_by_workforce_id === resident.id && (
+                      {owner.kind === 'workforce' && (
+                        <button
+                          onClick={() => { setForkSourceId(t.id); setForkName(`${t.name} (Custom)`); }}
+                          className="flex items-center space-x-1 px-2.5 py-1 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-[10px] font-bold transition cursor-pointer"
+                        >
+                          <GitFork size={11} />
+                          <span>Fork</span>
+                        </button>
+                      )}
+                      {t.created_by_workforce_id === owner.id && (
                         <button
                           onClick={() => { setEditingTemplateId(t.id); setEditWordCaps(''); setEditRules(''); }}
                           className="px-2.5 py-1 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-[10px] font-bold transition cursor-pointer"
@@ -946,7 +976,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ re
       <UpgradeCheckoutModal
         open={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
-        workforceId={resident.id}
+        workforceId={owner.id}
         used={quota.used}
         limit={quota.limit}
         onPaymentCompleted={async () => {

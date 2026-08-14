@@ -104,17 +104,16 @@ export const databaseService = {
   isMock: false, // Always false as the app must read only from Supabase.
 
   // --- WORKFORCE SERVICES ---
-  async getWorkforce(): Promise<WorkforceMember[]> {
+  // tenantId defaults to DEFAULT_TENANT_ID so every pre-existing call site
+  // keeps working unchanged; ResidentLoginView's new organization-picker
+  // (migration 26) passes the resident's chosen tenant explicitly.
+  async getWorkforce(tenantId: string = DEFAULT_TENANT_ID): Promise<WorkforceMember[]> {
     checkSupabase();
 
-    // Tenant-scoped defensively (see migration 20's header) — there's no
-    // real per-tenant Chief session to filter by yet, so this hardcodes the
-    // one seeded tenant rather than leaking every tenant's roster to any
-    // Chief. Must become session-driven once real per-tenant login exists.
     const { data, error } = await supabase!
       .from('workforce')
       .select(WORKFORCE_PUBLIC_COLUMNS)
-      .eq('tenant_id', DEFAULT_TENANT_ID)
+      .eq('tenant_id', tenantId)
       .order('full_name', { ascending: true });
 
     if (error) {
@@ -200,12 +199,22 @@ export const databaseService = {
   },
 
   // --- AUTHENTICATION (server-side code verification) ---
-  async verifyResidentLogin(workforceId: string, code: string): Promise<{ id: string; full_name: string; category: string } | null> {
+  // Migration 26: an optional registered-email check. Graceful ratchet, not
+  // a hard requirement yet — the RPC only enforces it for the workforce
+  // rows that have had an email seeded so far (currently just one, pending
+  // the rest of the roster). Always pass whatever the user typed; the RPC
+  // ignores it for members with no email seeded.
+  async verifyResidentLogin(
+    workforceId: string,
+    code: string,
+    email?: string
+  ): Promise<{ id: string; full_name: string; category: string } | null> {
     checkSupabase();
 
     const { data, error } = await supabase!.rpc('verify_resident_login', {
       p_workforce_id: workforceId,
       p_code: code,
+      p_email: email ?? null,
     });
 
     if (error) {
@@ -216,16 +225,20 @@ export const databaseService = {
     return row || null;
   },
 
-  async verifyChiefLogin(code: string): Promise<boolean> {
+  async verifyChiefLogin(code: string): Promise<{ tenantId: string; tenantName: string } | null> {
     checkSupabase();
 
+    // Migration 23: settings/admin codes are per-tenant now — the RPC
+    // resolves and returns which tenant this code belongs to, rather than
+    // just confirming a single global code matched.
     const { data, error } = await supabase!.rpc('verify_chief_login', { p_code: code });
 
     if (error) {
       console.warn('Error verifying chief login:', error);
       throw error;
     }
-    return !!data;
+    const row = data?.[0];
+    return row ? { tenantId: row.tenant_id, tenantName: row.tenant_name } : null;
   },
 
   async updateAdminCode(currentAdminCode: string, newCode: string): Promise<boolean> {
@@ -244,12 +257,17 @@ export const databaseService = {
   },
 
   // --- COLLECTIONS SERVICES ---
-  async getCollections(): Promise<Collection[]> {
+  // tenantId defaults to DEFAULT_TENANT_ID so every pre-existing (resident-
+  // facing) call site keeps working unchanged — see getWorkforce()/
+  // getSettings() above for the same pattern. Chief-facing call sites pass
+  // the Chief's resolved tenant explicitly.
+  async getCollections(tenantId: string = DEFAULT_TENANT_ID): Promise<Collection[]> {
     checkSupabase();
 
     const { data, error } = await supabase!
       .from('collections')
       .select('*')
+      .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -259,19 +277,22 @@ export const databaseService = {
     return data || [];
   },
 
-  async createCollection(title: string, deadline: string): Promise<Collection> {
+  async createCollection(title: string, deadline: string, tenantId: string = DEFAULT_TENANT_ID): Promise<Collection> {
     checkSupabase();
 
-    // 1. Close current collections
+    // 1. Close current collections — scoped to this tenant only, or opening
+    // a new collection for one org would silently close every other org's
+    // open collection too.
     await supabase!
       .from('collections')
       .update({ status: 'closed' })
-      .eq('status', 'open');
+      .eq('status', 'open')
+      .eq('tenant_id', tenantId);
 
     // 2. Create new open collection
     const { data: newColl, error: err1 } = await supabase!
       .from('collections')
-      .insert([{ title, deadline, status: 'open' }])
+      .insert([{ title, deadline, status: 'open', tenant_id: tenantId }])
       .select()
       .single();
 
@@ -280,16 +301,18 @@ export const databaseService = {
       throw err1;
     }
 
-    // 3. Update settings
+    // 3. Point this tenant's settings row at the new collection. Migration
+    // 23 made settings 1-row-per-tenant (keyed by tenant_id, not the old
+    // id = 1 singleton) — a tenant is guaranteed to already have a settings
+    // row (seeded for UCH, created atomically by create_tenant_with_admin
+    // for any self-serve org), so no insert-fallback branch is needed here.
     const { error: err2 } = await supabase!
       .from('settings')
       .update({ current_collection_id: newColl.id })
-      .eq('id', 1);
+      .eq('tenant_id', tenantId);
 
     if (err2) {
-      await supabase!
-        .from('settings')
-        .insert([{ id: 1, current_collection_id: newColl.id }]);
+      console.warn('Error updating settings with new collection:', err2);
     }
 
     return newColl;
@@ -330,19 +353,20 @@ export const databaseService = {
   },
 
   // --- SUBMISSIONS SERVICES ---
-  async getSubmissions(collectionId?: string): Promise<SubmissionWithWorkforce[]> {
+  async getSubmissions(collectionId?: string, tenantId: string = DEFAULT_TENANT_ID): Promise<SubmissionWithWorkforce[]> {
     checkSupabase();
 
     // submissions has no tenant_id column of its own (see CLAUDE.md's SaaS
     // section — deliberately excluded); tenant-scoped here via an inner
     // join through workforce.tenant_id instead (safe: workforce_id is
     // NOT NULL with an ON DELETE CASCADE FK, so every submission always has
-    // a matching workforce row). Same provisional single-tenant hardcoding
-    // as getWorkforce() above — see migration 20's header.
+    // a matching workforce row). tenantId defaults to DEFAULT_TENANT_ID for
+    // resident-facing call sites; Chief-facing callers pass their resolved
+    // tenant explicitly.
     let query = supabase!
       .from('submissions')
       .select('*, workforce!inner(full_name, category, tenant_id)')
-      .eq('workforce.tenant_id', DEFAULT_TENANT_ID);
+      .eq('workforce.tenant_id', tenantId);
 
     if (collectionId) {
       query = query.eq('collection_id', collectionId);
@@ -443,13 +467,17 @@ export const databaseService = {
   // --- SETTINGS SERVICES ---
   // Note: admin_access_code is never selected here — see updateAdminCode()
   // and verifyChiefLogin() for the only supported ways to touch that column.
-  async getSettings(): Promise<Settings> {
+  // `settings` moved from a 1-row global singleton to 1-row-per-tenant in
+  // migration 23 — tenantId defaults to DEFAULT_TENANT_ID so every existing
+  // call site (all of which predate multi-tenant Chief sessions) keeps
+  // working unchanged; pass a real tenant id once one is available.
+  async getSettings(tenantId: string = DEFAULT_TENANT_ID): Promise<Settings> {
     checkSupabase();
 
     const { data, error } = await supabase!
       .from('settings')
-      .select('id, current_collection_id')
-      .eq('id', 1)
+      .select('id, tenant_id, current_collection_id')
+      .eq('tenant_id', tenantId)
       .maybeSingle();
 
     if (error) {
@@ -458,31 +486,27 @@ export const databaseService = {
     }
 
     if (!data) {
-      // Default fallback settings insert if table is blank
-      const defaultSettings = { id: 1, current_collection_id: null };
-      const { data: inserted, error: insertErr } = await supabase!
-        .from('settings')
-        .insert([defaultSettings])
-        .select('id, current_collection_id')
-        .single();
-
-      if (insertErr) {
-        return defaultSettings;
-      }
-      return inserted;
+      // Defensive fallback for a tenant with no settings row yet (should
+      // not happen in practice — create_tenant_with_admin, migration 24,
+      // always creates one alongside the tenant). Not persisted; just a
+      // client-side shape so callers don't have to null-check.
+      return { id: tenantId, tenant_id: tenantId, current_collection_id: null };
     }
 
     return data;
   },
 
-  async updateSettings(updates: Partial<Pick<Settings, 'current_collection_id'>>): Promise<Settings> {
+  async updateSettings(
+    updates: Partial<Pick<Settings, 'current_collection_id'>>,
+    tenantId: string = DEFAULT_TENANT_ID
+  ): Promise<Settings> {
     checkSupabase();
 
     const { data, error } = await supabase!
       .from('settings')
       .update(updates)
-      .eq('id', 1)
-      .select('id, current_collection_id')
+      .eq('tenant_id', tenantId)
+      .select('id, tenant_id, current_collection_id')
       .single();
 
     if (error) {
@@ -631,14 +655,15 @@ export const databaseService = {
   },
 
   // --- ANNOUNCEMENTS ---
-  async getAnnouncements(): Promise<Announcement[]> {
+  // tenantId defaults to DEFAULT_TENANT_ID for resident-facing call sites;
+  // Chief-facing callers pass their resolved tenant explicitly.
+  async getAnnouncements(tenantId: string = DEFAULT_TENANT_ID): Promise<Announcement[]> {
     checkSupabase();
 
-    // Tenant-scoped defensively — see migration 20's header / getWorkforce() above.
     const { data, error } = await supabase!
       .from('announcements')
       .select('*')
-      .eq('tenant_id', DEFAULT_TENANT_ID)
+      .eq('tenant_id', tenantId)
       .order('pinned', { ascending: false })
       .order('created_at', { ascending: false });
 
@@ -655,12 +680,12 @@ export const databaseService = {
     category: Announcement['category'];
     pinned?: boolean;
     created_by_workforce_id?: string | null;
-  }): Promise<Announcement> {
+  }, tenantId: string = DEFAULT_TENANT_ID): Promise<Announcement> {
     checkSupabase();
 
     const { data, error } = await supabase!
       .from('announcements')
-      .insert([{ pinned: false, ...entry }])
+      .insert([{ pinned: false, ...entry, tenant_id: tenantId }])
       .select()
       .single();
 
@@ -822,14 +847,15 @@ export const databaseService = {
   },
 
   // --- KNOWLEDGE LIBRARY ---
-  async getKnowledgePacks(category?: KnowledgePackCategory): Promise<KnowledgePack[]> {
+  // tenantId defaults to DEFAULT_TENANT_ID for resident-facing call sites;
+  // Chief-facing callers pass their resolved tenant explicitly.
+  async getKnowledgePacks(category?: KnowledgePackCategory, tenantId: string = DEFAULT_TENANT_ID): Promise<KnowledgePack[]> {
     checkSupabase();
 
-    // Tenant-scoped defensively — see migration 20's header / getWorkforce() above.
     let query = supabase!
       .from('knowledge_packs')
       .select('*')
-      .eq('tenant_id', DEFAULT_TENANT_ID)
+      .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });
     if (category) {
       query = query.eq('category', category);
@@ -849,12 +875,12 @@ export const databaseService = {
     file_url: string;
     description?: string | null;
     tags?: string[];
-  }): Promise<KnowledgePack> {
+  }, tenantId: string = DEFAULT_TENANT_ID): Promise<KnowledgePack> {
     checkSupabase();
 
     const { data, error } = await supabase!
       .from('knowledge_packs')
-      .insert([{ tags: [], ...entry }])
+      .insert([{ tags: [], ...entry, tenant_id: tenantId }])
       .select()
       .single();
 
@@ -1566,6 +1592,36 @@ export const databaseService = {
     return data;
   },
 
+  // Self-serve "create new organization" (migration 24) — public, reachable
+  // from the login screen's admin-portal chooser, unlike createTenant()
+  // above (operator-console-only). Atomically creates the tenant AND its
+  // settings/admin-code row via a SECURITY DEFINER RPC so no tenant can
+  // exist without an admin code to manage it, and returns the plaintext
+  // code exactly once — same write-once-readable posture as
+  // addWorkforceMember's resident codes.
+  async createTenantWithAdmin(tenant: {
+    name: string;
+    short_code: string;
+    institution?: string | null;
+    department?: string | null;
+  }): Promise<{ tenantId: string; tenantName: string; adminAccessCode: string }> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('create_tenant_with_admin', {
+      p_name: tenant.name,
+      p_short_code: tenant.short_code,
+      p_institution: tenant.institution ?? null,
+      p_department: tenant.department ?? null,
+    });
+
+    if (error) {
+      console.warn('Error creating organization:', error);
+      throw error;
+    }
+    const row = data?.[0];
+    return { tenantId: row.tenant_id, tenantName: row.tenant_name, adminAccessCode: row.admin_access_code };
+  },
+
   async updateTenantPlan(tenantId: string, planType: TenantPlanType): Promise<Tenant> {
     checkSupabase();
 
@@ -2135,6 +2191,24 @@ export const databaseService = {
     return data || [];
   },
 
+  // Unlinked individual-doctor track (migration 25) — mirrors the
+  // ...ForWorkforce query above, filtered by doctor_id instead.
+  async getResearchWorkspacesForDoctor(doctorId: string): Promise<ResearchWorkspace[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('research_workspaces')
+      .select('*')
+      .eq('doctor_id', doctorId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('Error fetching research workspaces:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
   async getResearchWorkspace(id: string): Promise<ResearchWorkspace | null> {
     checkSupabase();
 
@@ -2150,7 +2224,10 @@ export const databaseService = {
   // see src/lib/research/folderStructure.ts.
   async createResearchWorkspace(entry: {
     tenant_id: string | null;
-    workforce_id: string;
+    workforce_id: string | null;
+    // Unlinked individual-doctor track (migration 25) — set alongside a
+    // null workforce_id for a personal workspace, omitted/null otherwise.
+    doctor_id?: string | null;
     title: string;
     study_design?: ResearchWorkspace['study_design'];
     template_id?: string | null;
@@ -2368,6 +2445,24 @@ export const databaseService = {
     return data || [];
   },
 
+  // Unlinked individual-doctor track (migration 25) — mirrors the
+  // ...ForWorkforce query above, filtered by doctor_id instead.
+  async getCasebookWorkspacesForDoctor(doctorId: string): Promise<CasebookWorkspace[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('casebook_workspaces')
+      .select('*')
+      .eq('doctor_id', doctorId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('Error fetching casebook workspaces:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
   async getCasebookWorkspace(id: string): Promise<CasebookWorkspace | null> {
     checkSupabase();
 
@@ -2383,7 +2478,10 @@ export const databaseService = {
   // 15-Casebook tracks: 80-140p; generic/custom: no fixed target).
   async createCasebookWorkspace(entry: {
     tenant_id: string | null;
-    workforce_id: string;
+    workforce_id: string | null;
+    // Unlinked individual-doctor track (migration 25) — set alongside a
+    // null workforce_id for a personal workspace, omitted/null otherwise.
+    doctor_id?: string | null;
     title: string;
     framework_type: CasebookFrameworkType;
     template_id?: string | null;

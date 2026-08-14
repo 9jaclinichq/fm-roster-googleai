@@ -22,8 +22,18 @@ import {
   Stethoscope, HeartPulse, Network, UploadCloud, FileText, Trash2, UserPlus, ListChecks,
 } from 'lucide-react';
 
+// Since migration 25, this view serves two kinds of owner: an institutional
+// resident (workforce_id) or an unlinked individual doctor's personal
+// workspace (doctor_id) — see DoctorHomeView's entry cards and
+// ResearchWorkspaceView's identical WorkspaceOwner pattern.
+interface WorkspaceOwner {
+  id: string;
+  name: string;
+  kind: 'workforce' | 'doctor';
+}
+
 interface CasebookWorkspaceViewProps {
-  resident: { id: string; name: string; category: string };
+  owner: WorkspaceOwner;
   canManageLogbooks: boolean;
 }
 
@@ -73,7 +83,7 @@ const Gauge: React.FC<{ label: string; result: { valid: boolean; message: string
   </div>
 );
 
-export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ resident, canManageLogbooks }) => {
+export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ owner, canManageLogbooks }) => {
   const [workspaces, setWorkspaces] = useState<CasebookWorkspace[]>([]);
   const [templates, setTemplates] = useState<CasebookTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -111,7 +121,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
 
   // AI Copilot feature gating — same free-tier rolling-window allowance and
   // upgrade checkout as the Research Engine (see src/config/tiers.ts).
-  const quota = useWorkspaceQuota(resident.id);
+  const quota = useWorkspaceQuota(owner.id);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId) || null;
@@ -121,15 +131,20 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
 
   useEffect(() => {
     setIsLoading(true);
+    // Logbooks are workforce_id-keyed only (no doctor_id path — see
+    // migration 25's header) — fetching by a doctor's id just returns an
+    // empty list, which is the correct state for a personal workspace.
     Promise.all([
-      databaseService.getCasebookWorkspacesForWorkforce(resident.id),
+      owner.kind === 'workforce'
+        ? databaseService.getCasebookWorkspacesForWorkforce(owner.id)
+        : databaseService.getCasebookWorkspacesForDoctor(owner.id),
       databaseService.getCasebookTemplates(),
-      databaseService.getClinicalLogbooks(resident.id),
+      databaseService.getClinicalLogbooks(owner.id),
     ])
       .then(([ws, tpl, lb]) => { setWorkspaces(ws); setTemplates(tpl); setMyLogbooks(lb); })
       .catch(err => console.warn('Failed to load casebook workspaces:', err))
       .finally(() => setIsLoading(false));
-  }, [resident.id]);
+  }, [owner.id, owner.kind]);
 
   useEffect(() => {
     if (!activeWorkspaceId) { setCases([]); return; }
@@ -148,12 +163,13 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
     try {
       const matchingTemplate = templates.find(t => t.framework_type === newFramework);
       const workspace = await databaseService.createCasebookWorkspace({
-        tenant_id: DEFAULT_TENANT_ID,
-        workforce_id: resident.id,
+        tenant_id: owner.kind === 'workforce' ? DEFAULT_TENANT_ID : null,
+        workforce_id: owner.kind === 'workforce' ? owner.id : null,
+        doctor_id: owner.kind === 'doctor' ? owner.id : null,
         title: newTitle.trim(),
         framework_type: newFramework,
         template_id: matchingTemplate?.id || null,
-        candidate_name: newCandidateName.trim() || resident.name,
+        candidate_name: newCandidateName.trim() || owner.name,
         exam_date: newExamDate || null,
       });
       setWorkspaces(prev => [workspace, ...prev]);
@@ -207,14 +223,14 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
   };
 
   const handleRunAudit = async () => {
-    if (!activeWorkspace || !activeCaseNumber) return;
+    if (owner.kind !== 'workforce' || !activeWorkspace || !activeCaseNumber) return;
     if (quota.exhausted) {
       setShowUpgradeModal(true);
       return;
     }
     setIsAuditing(true);
     try {
-      const result = await casebookCopilot.auditCase(resident.id, draft.title || '', draft.discussion_text || draft.hpi_text || '', draft.references_text || '', activeTemplate);
+      const result = await casebookCopilot.auditCase(owner.id, draft.title || '', draft.discussion_text || draft.hpi_text || '', draft.references_text || '', activeTemplate);
       setAuditNotes(result.notes);
       setAuditSource(result.source);
       const saved = await databaseService.upsertClinicalCaseReport(activeWorkspace.id, activeCaseNumber, { rubric_scores: result.scores });
@@ -227,14 +243,14 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
   };
 
   const handleGenerateQuestions = async () => {
-    if (!activeWorkspace || !activeCaseNumber) return;
+    if (owner.kind !== 'workforce' || !activeWorkspace || !activeCaseNumber) return;
     if (quota.exhausted) {
       setShowUpgradeModal(true);
       return;
     }
     setIsGeneratingQuestions(true);
     try {
-      const result = await casebookCopilot.generateDefenseQuestions(resident.id, draft.title || '', draft.discussion_text || draft.hpi_text || '', draft.thematic_area || 'custom', activeTemplate);
+      const result = await casebookCopilot.generateDefenseQuestions(owner.id, draft.title || '', draft.discussion_text || draft.hpi_text || '', draft.thematic_area || 'custom', activeTemplate);
       setQuestionsSource(result.source);
       const saved = await databaseService.upsertClinicalCaseReport(activeWorkspace.id, activeCaseNumber, { defense_questions: result.questions });
       setCases(prev => prev.map(c => (c.case_number === activeCaseNumber ? saved : c)));
@@ -246,6 +262,13 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
   };
 
   const handleParseLogbook = async () => {
+    // Admin Logbook Parsing writes uploaded_by_workforce_id, a real FK into
+    // workforce(id) — clinical_logbooks/admin_logbook_parsing_queue have no
+    // doctor_id path (migration 25's header flags this as out of scope),
+    // so this stays workforce-only. canManageLogbooks should already gate
+    // this panel out of a doctor's UI, but this is a defense-in-depth
+    // guard against a broken FK write, not just a redundant check.
+    if (owner.kind !== 'workforce') return;
     if (quota.exhausted) {
       setShowUpgradeModal(true);
       return;
@@ -255,13 +278,13 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
       let fileUrl: string | null = null;
       if (logbookFile) fileUrl = await databaseService.uploadLogbookDocument(logbookFile);
 
-      const result = await casebookCopilot.parseLogbookCurriculum(resident.id, logbookRawText);
+      const result = await casebookCopilot.parseLogbookCurriculum(owner.id, logbookRawText);
       setParsedStations(result.stations);
       setParsedSource(result.source);
 
       await databaseService.createAdminLogbookParsingQueueEntry({
         tenant_id: DEFAULT_TENANT_ID,
-        uploaded_by_workforce_id: resident.id,
+        uploaded_by_workforce_id: owner.id,
         file_url: fileUrl,
         raw_text_content: logbookRawText || null,
       });
@@ -273,10 +296,13 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
   };
 
   const applyStationToMyLogbook = async (stationName: string, procedure: string, requiredCount: number) => {
+    // Same FK constraint as handleParseLogbook above — clinical_logbooks
+    // is workforce_id-keyed only.
+    if (owner.kind !== 'workforce') return;
     try {
       const saved = await databaseService.upsertClinicalLogbookEntry({
         tenant_id: DEFAULT_TENANT_ID,
-        workforce_id: resident.id,
+        workforce_id: owner.id,
         station_name: stationName,
         procedure_or_competency: procedure,
         required_count: requiredCount,
@@ -396,7 +422,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-700 uppercase">Candidate Name</label>
-                  <input type="text" value={newCandidateName} onChange={e => setNewCandidateName(e.target.value)} placeholder={resident.name} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-1 focus:ring-slate-950" />
+                  <input type="text" value={newCandidateName} onChange={e => setNewCandidateName(e.target.value)} placeholder={owner.name} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-1 focus:ring-slate-950" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-700 uppercase">Exam Date</label>
@@ -664,7 +690,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
                   <Sparkles className="text-slate-500" size={16} />
                   <h3 className="font-bold text-slate-900 text-sm">AI Copilot</h3>
                 </div>
-                {!quota.loading && (
+                {owner.kind === 'workforce' && !quota.loading && (
                   <span
                     className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                       quota.limit == null
@@ -680,8 +706,15 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
                 )}
               </div>
 
+              {owner.kind === 'doctor' && (
+                <p className="text-[10px] text-amber-600 leading-relaxed bg-amber-50 border border-amber-200 rounded-lg p-2">
+                  AI Copilot actions aren't available for personal workspaces yet. The scorecard above still
+                  works normally.
+                </p>
+              )}
+
               <div className="space-y-1.5">
-                <button onClick={handleRunAudit} disabled={isAuditing} className="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-xl text-[11px] transition cursor-pointer">
+                <button onClick={handleRunAudit} disabled={owner.kind === 'doctor' || isAuditing} className="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-xl text-[11px] transition cursor-pointer">
                   {isAuditing ? 'Auditing...' : 'Audit Against WACP Rubric'}
                 </button>
                 {auditNotes && (
@@ -695,7 +728,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
               </div>
 
               <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                <button onClick={handleGenerateQuestions} disabled={isGeneratingQuestions} className="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-xl text-[11px] transition cursor-pointer">
+                <button onClick={handleGenerateQuestions} disabled={owner.kind === 'doctor' || isGeneratingQuestions} className="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold rounded-xl text-[11px] transition cursor-pointer">
                   {isGeneratingQuestions ? 'Generating...' : 'Generate Defense Questions'}
                 </button>
                 {draft.defense_questions && draft.defense_questions.length > 0 && (
@@ -715,8 +748,11 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
         </div>
       )}
 
-      {/* Admin / Chief Resident Logbook Panel */}
-      {canManageLogbooks && !activeCaseNumber && (
+      {/* Admin / Chief Resident Logbook Panel — workforce-only, see
+          handleParseLogbook's comment on why (clinical_logbooks has no
+          doctor_id path). canManageLogbooks should already exclude a bare
+          doctor session, this is a defense-in-depth gate. */}
+      {owner.kind === 'workforce' && canManageLogbooks && !activeCaseNumber && (
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
           <div className="flex items-center space-x-1.5">
             <UploadCloud className="text-slate-500" size={16} />
@@ -756,7 +792,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ re
       <UpgradeCheckoutModal
         open={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
-        workforceId={resident.id}
+        workforceId={owner.id}
         used={quota.used}
         limit={quota.limit}
         onPaymentCompleted={async () => {

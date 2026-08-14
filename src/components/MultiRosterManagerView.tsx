@@ -47,7 +47,11 @@ const INGESTION_TYPES: { id: RosterTypeId; label: string }[] = [
   { id: 'satellite_outreach', label: 'Satellite Outposts' },
 ];
 
-export const MultiRosterManagerView: React.FC = () => {
+interface MultiRosterManagerViewProps {
+  tenantId: string;
+}
+
+export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ tenantId }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [collection, setCollection] = useState<Collection | null>(null);
   const [workforce, setWorkforce] = useState<WorkforceMember[]>([]);
@@ -88,9 +92,9 @@ export const MultiRosterManagerView: React.FC = () => {
     setIsLoading(true);
     try {
       const [wf, settings, collections] = await Promise.all([
-        databaseService.getWorkforce(),
-        databaseService.getSettings(),
-        databaseService.getCollections(),
+        databaseService.getWorkforce(tenantId),
+        databaseService.getSettings(tenantId),
+        databaseService.getCollections(tenantId),
       ]);
       setWorkforce(wf.filter(w => w.active));
       const activeColl = collections.find(c => c.id === settings.current_collection_id) || null;
@@ -300,7 +304,7 @@ export const MultiRosterManagerView: React.FC = () => {
         body: `The combined GOP, A&E, supervision, and satellite duty roster for ${MONTH_NAMES[month - 1]} ${year} has been published. Check the roster for your assignments.`,
         category: 'Roster',
         pinned: true,
-      });
+      }, tenantId);
 
       setStatusMessage('Roster published and announcement posted.');
       setTimeout(() => setStatusMessage(''), 4000);
