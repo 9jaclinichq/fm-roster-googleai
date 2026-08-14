@@ -124,6 +124,7 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
   const [isLoading, setIsLoading] = useState(true);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [analytics, setAnalytics] = useState<{ totalTenants: number; totalMembers: number; activeMasterRosters: number; aiActionCount: number } | null>(null);
+  const [usageBreakdown, setUsageBreakdown] = useState<Awaited<ReturnType<typeof databaseService.getTenantUsageBreakdown>>>([]);
   const [statusMessage, setStatusMessage] = useState('');
   const [showProvisionForm, setShowProvisionForm] = useState(false);
 
@@ -145,9 +146,14 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
   const load = async () => {
     setIsLoading(true);
     try {
-      const [t, a] = await Promise.all([databaseService.getTenants(), databaseService.getPlatformAnalyticsSummary()]);
+      const [t, a, u] = await Promise.all([
+        databaseService.getTenants(),
+        databaseService.getPlatformAnalyticsSummary(),
+        databaseService.getTenantUsageBreakdown(),
+      ]);
       setTenants(t);
       setAnalytics(a);
+      setUsageBreakdown(u.slice().sort((x, y) => y.aiActionsThisWindow - x.aiActionsThisWindow));
     } catch (err) {
       console.warn(err);
       setStatusMessage('Failed to load operator console data.');
@@ -275,6 +281,47 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
             Global counts across all tenants (not tenant-scoped). Revenue metrics require live subscription/charge
             data, which this pass does not build — see paystack-subaccount's scope note.
           </p>
+
+          {/* Per-Tenant Usage Breakdown */}
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="p-4 border-b border-slate-100">
+              <h2 className="font-bold text-slate-800 flex items-center gap-2"><Sparkles size={16} /> Per-Tenant Usage</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Sorted by AI actions this 14-day window — spot free-tier heavy users (upsell candidates) or paying tenants gone quiet.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    <th className="px-4 py-2">Tenant</th>
+                    <th className="px-4 py-2">Plan</th>
+                    <th className="px-4 py-2">Status</th>
+                    <th className="px-4 py-2 text-right">Members</th>
+                    <th className="px-4 py-2 text-right">AI Actions (14d)</th>
+                    <th className="px-4 py-2 text-right">Submissions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {usageBreakdown.map(row => (
+                    <tr key={row.tenantId}>
+                      <td className="px-4 py-2 font-semibold text-slate-800">{row.name}</td>
+                      <td className="px-4 py-2 text-slate-600">{row.planType}</td>
+                      <td className="px-4 py-2">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${row.status === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right text-slate-600">{row.memberCount}</td>
+                      <td className="px-4 py-2 text-right font-semibold text-slate-800">{row.aiActionsThisWindow}</td>
+                      <td className="px-4 py-2 text-right text-slate-600">{row.submissionCount}</td>
+                    </tr>
+                  ))}
+                  {usageBreakdown.length === 0 && (
+                    <tr><td colSpan={6} className="px-4 py-6 text-center text-xs text-slate-400">No tenants yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
           {/* Tenant Management */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">

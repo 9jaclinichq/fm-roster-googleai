@@ -298,6 +298,19 @@ literally. Reuses the same quota RPC and `AI_API_KEY`/`GEMINI_API_KEY` secrets �
 needed. **Status: deployed and live-verified** — curl-tested all 3 actions directly against the
 deployed function (real OpenAI responses confirmed) and re-verified end-to-end in the browser.
 
+**AI-rigor tuning is now wired here** (2026-08-14, first Edge Function to actually read
+`tenant_ai_adaptation_rules` — schema/UI-only since migration 11 until this). `casebookRubric.ts`'s
+`fetchTenantAdaptationPromptOverride`/`appendTenantAdaptationOverride` fetch the tenant's
+`feature_key = 'casebook_copilot'` row and splice its `adapted_prompt_overrides.extra_instructions`
+(a single trusted free-text field, length-capped, type-checked) onto the system prompt for
+`audit_case`/`generate_defense_questions` — never replacing the base safety/rubric framing, only
+appended on top. Any failure (network, malformed row, no tenant_id) silently falls back to the
+unmodified prompt. Deliberately a proof of concept on this one Edge Function only —
+`academic-copilot`/`research-copilot`/`roster-parser` are NOT wired yet; extending the same pattern
+to them is a follow-up, not attempted in this pass. Live-verified via a direct curl call with a test
+adaptation rule set, confirming the deployed function still returns a valid response with the splice
+active.
+
 ## Casebook & Clinical Logbook Engine (migrations 15-16)
 
 A template-driven WACP/NPMCN PMR (Membership) and 15-Casebook (Fellowship) portfolio workspace,
@@ -543,6 +556,25 @@ AI Copilot actions:
   and live-verified: correct hash → 200, wrong hash → 401. Flutterwave is
   the DEFAULT/recommended provider in the upgrade modal
   (`DEFAULT_PAYMENT_PROVIDER` in tiers.ts); Paystack is the secondary option.
+- **Per-tenant usage breakdown** (2026-08-14, `SaaSOperatorConsoleView`'s new
+  "Per-Tenant Usage" table, `databaseService.getTenantUsageBreakdown()`):
+  replaces the old flat global-only analytics with a per-tenant table (plan,
+  status, member count, AI actions this 14-day window, submission count),
+  sorted by AI actions descending so the operator can spot free-tier-heavy
+  tenants (upsell candidates) or paying tenants gone quiet. No schema change —
+  joins `tenants`/`tenant_ai_usage`/`workforce`/`submissions` client-side.
+- **Per-module pricing/feature-flag granularity is a deliberately deferred
+  gap, not an oversight.** Today `module_flags` is a single tenant-wide
+  on/off (3 modules only) and `plan_type`/`priceNgnPerMonth` are one flat
+  price per tenant — there is no way for Module A to be Free-tier and
+  Module B to require Pro for the same tenant. Building that needs a real
+  schema decision (a `module_pricing` table or column), a rewrite of
+  `check_and_increment_tenant_ai_quota`/`tenant_ai_usage` to add a
+  feature/module dimension instead of one flat per-tenant counter, a
+  matching rewrite of `useWorkspaceQuota`/`WORKSPACE_TIERS` from two flat
+  tiers to a matrix, and — since `PLAN_AMOUNT_NGN` is real-money billing —
+  explicit user sign-off before touching it. Flagged here rather than
+  force-fit; revisit once a real tenant asks for split pricing.
 - **NOT yet done** (needs the user / dashboards): confirm the webhook URL
   (`https://gdumksfffewpdqqwvcdo.supabase.co/functions/v1/payment-webhook`)
   is registered in BOTH provider dashboards (the user has configured the

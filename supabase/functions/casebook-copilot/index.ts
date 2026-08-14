@@ -18,7 +18,13 @@
 // AI-backed Edge Function (check_and_increment_tenant_ai_quota, migration
 // 11) via casebookRubric.ts's checkCasebookAiQuota.
 
-import { buildCasebookSystemPrompt, checkCasebookAiQuota, CasebookTemplateRubric } from '../_shared/casebookRubric.ts';
+import {
+  buildCasebookSystemPrompt,
+  checkCasebookAiQuota,
+  fetchTenantAdaptationPromptOverride,
+  appendTenantAdaptationOverride,
+  CasebookTemplateRubric,
+} from '../_shared/casebookRubric.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -179,28 +185,36 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'No text provided.' }, 400);
   }
 
-  if (body.tenant_id) {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    if (supabaseUrl && serviceRoleKey) {
-      const quota = await checkCasebookAiQuota(supabaseUrl, serviceRoleKey, body.tenant_id, body.workforce_id);
-      if (quota && !quota.allowed) {
-        return jsonResponse(
-          {
-            error: 'quota_exceeded',
-            message: 'Free-tier AI action limit reached for this cycle. Upgrade your plan to continue, or wait for the quota to reset.',
-            resets_at: quota.resets_at,
-          },
-          429
-        );
-      }
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+  if (body.tenant_id && supabaseUrl && serviceRoleKey) {
+    const quota = await checkCasebookAiQuota(supabaseUrl, serviceRoleKey, body.tenant_id, body.workforce_id);
+    if (quota && !quota.allowed) {
+      return jsonResponse(
+        {
+          error: 'quota_exceeded',
+          message: 'Free-tier AI action limit reached for this cycle. Upgrade your plan to continue, or wait for the quota to reset.',
+          resets_at: quota.resets_at,
+        },
+        429
+      );
     }
   }
 
   // parse_logbook_curriculum has no per-workspace template (it's an admin
   // upload, not tied to a candidate's active framework) — only audit_case
   // and generate_defense_questions get the dynamic per-template prompt.
-  const systemPrompt = template && action !== 'parse_logbook_curriculum' ? buildCasebookSystemPrompt(basePrompt, template) : basePrompt;
+  let systemPrompt = template && action !== 'parse_logbook_curriculum' ? buildCasebookSystemPrompt(basePrompt, template) : basePrompt;
+
+  // AI-rigor tuning (tenant_ai_adaptation_rules, migration 11) — wired
+  // into an Edge Function for the first time here as a proof of concept.
+  // Any failure (network, malformed row, no tenant_id) silently keeps the
+  // unmodified prompt rather than failing the whole request.
+  if (body.tenant_id && supabaseUrl && serviceRoleKey) {
+    const extraInstructions = await fetchTenantAdaptationPromptOverride(supabaseUrl, serviceRoleKey, body.tenant_id);
+    systemPrompt = appendTenantAdaptationOverride(systemPrompt, extraInstructions);
+  }
 
   const result = (await callOpenAI(systemPrompt, text)) ?? (await callGemini(systemPrompt, text));
 

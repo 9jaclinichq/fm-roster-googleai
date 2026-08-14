@@ -41,6 +41,7 @@ import {
   MasterRosterStatus,
   Tenant,
   TenantPlanType,
+  TenantStatus,
   CallDutyRule,
   TenantAiAdaptationRule,
   TenantAiQuota,
@@ -2094,6 +2095,58 @@ export const databaseService = {
       activeMasterRosters: rosters.count || 0,
       aiActionCount: aiActions.count || 0,
     };
+  },
+
+  // Per-tenant breakdown for the Platform Operator Console — the summary
+  // above is a flat global count, useless for spotting which specific
+  // tenant is heavy-usage-free-tier (upsell candidate) or a paying tenant
+  // gone quiet. No schema change: joins four small tables client-side
+  // rather than a Postgres view, consistent with this file's existing
+  // flat-.select()-composed-in-TS pattern.
+  async getTenantUsageBreakdown(): Promise<{
+    tenantId: string;
+    name: string;
+    planType: TenantPlanType;
+    status: TenantStatus;
+    memberCount: number;
+    aiActionsThisWindow: number;
+    submissionCount: number;
+  }[]> {
+    checkSupabase();
+
+    const [tenants, usage, members, submissions] = await Promise.all([
+      supabase!.from('tenants').select('id, name, plan_type, status'),
+      supabase!.from('tenant_ai_usage').select('tenant_id, action_count'),
+      supabase!.from('workforce').select('id, tenant_id').eq('active', true),
+      // submissions has no tenant_id of its own (see getSubmissions' comment
+      // above) — go through the same workforce join to attribute each
+      // submission to a tenant.
+      supabase!.from('submissions').select('id, workforce!inner(tenant_id)'),
+    ]);
+
+    if (tenants.error) { console.warn('Error fetching tenants:', tenants.error); throw tenants.error; }
+
+    const usageByTenant = new Map<string, number>();
+    for (const row of usage.data || []) usageByTenant.set(row.tenant_id, row.action_count);
+
+    const membersByTenant = new Map<string, number>();
+    for (const row of members.data || []) membersByTenant.set(row.tenant_id, (membersByTenant.get(row.tenant_id) || 0) + 1);
+
+    const submissionsByTenant = new Map<string, number>();
+    for (const row of (submissions.data || []) as unknown as { workforce: { tenant_id: string } }[]) {
+      const tid = row.workforce?.tenant_id;
+      if (tid) submissionsByTenant.set(tid, (submissionsByTenant.get(tid) || 0) + 1);
+    }
+
+    return (tenants.data || []).map(t => ({
+      tenantId: t.id,
+      name: t.name,
+      planType: t.plan_type,
+      status: t.status,
+      memberCount: membersByTenant.get(t.id) || 0,
+      aiActionsThisWindow: usageByTenant.get(t.id) || 0,
+      submissionCount: submissionsByTenant.get(t.id) || 0,
+    }));
   },
 
   // --- UNIVERSAL RESEARCH ENGINE (migration 13) ---
