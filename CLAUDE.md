@@ -556,15 +556,67 @@ The product was rebranded from "FM Residents Dashboard" to **PrivyDoc
 Workspace** (branch `feature/gcp-cloudrun-branding-cleanup`):
 
 - **`src/config/branding.ts`** is the single source of truth for user-facing
-  product naming. Two profiles: B2C independent doctor ("PrivyDoc Medical
-  Workspace", served when the hostname is `doc.privydoc.com.ng` / a `doc.*`
-  privydoc.com.ng subdomain) and B2B institutional ("PrivyDoc Workspace — UCH
-  Family Medicine", the default everywhere else including localhost).
-  `getActiveBrand()` drives the Navbar brand block, footer, and `document.title`.
-  Brand selection is cosmetic only — NOT a tenant/auth boundary.
+  product naming. `getActiveBrand()` drives the Navbar brand block and
+  `document.title`; `getFooterBrand(session)` is a narrower, session-aware
+  variant used only by the footer and (as of 2026-08-14, see below) the
+  Navbar's org-label subtitle. Brand selection is cosmetic only — NOT a
+  tenant/auth boundary.
 - Branding here is PRODUCT naming only; ROLE vocabulary ("Resident", "Chief
   Resident"...) stays with the tenant terminology system in
-  `src/lib/terminology.tsx` and was deliberately not renamed.
+  `src/lib/terminology.tsx` and was deliberately not renamed — **except**
+  `ResidentLoginView`'s portal heading, which now reads through
+  `useTerminology()`'s `member` key (see below) rather than being hardcoded,
+  so a tenant override of "Resident" → "Doctor" takes effect there too.
+
+**2026-08-14 UX-review fixes** (`workspc.pdf` walkthrough — small, low-risk
+items only; see "Backlog: institution-first / self-serve org flow" below for
+the larger asks from the same review that were deliberately NOT done here):
+- **Domain split retired.** The B2C `doc.privydoc.com.ng` subdomain and its
+  hostname-based brand branching are gone — `getActiveBrand()` now always
+  returns the B2B/institutional profile (`resolveBrandForHostname` and the
+  `B2C_HOSTNAME`/`B2B_HOSTNAME` constants were deleted). The org-vs-individual
+  choice lives entirely at `/login` (`AuthLandingView`), which no longer
+  pre-highlights either option since there's no hostname signal to base that
+  on anymore. If `doc.privydoc.com.ng` DNS/hosting still exists, it now just
+  serves the same single B2B-branded app as `workspace.privydoc.com.ng` — no
+  separate deploy target was set up for it.
+- **`ResidentLoginView`'s portal heading** dropped its `brand.key ===
+  'b2c_independent' ? 'Doctor Portal' : 'Resident Portal'` branch (dead now
+  that the brand key is always institutional) in favor of
+  `` `${t('member', 'Resident')} Portal` `` — same tenant-terminology pattern
+  `ChiefLoginView` already used for its admin label.
+- **Navbar org-label subtitle** (under "PrivyDoc Workspace") no longer shows
+  before anyone is signed in — review annotation: "the institutional label
+  only appears after login to an institution." It now mirrors
+  `getFooterBrand`'s session-aware logic inline (institutional session →
+  `B2B_UCH_BRAND.orgLabel`; unlinked individual-doctor session →
+  `B2C_INDEPENDENT_BRAND.orgLabel`; no session → hidden entirely), computed
+  from the same `currentResident`/`isChiefAuthenticated`/`currentDoctor`
+  props Navbar already receives. `getFooterBrand` itself is unchanged.
+- **Copy fixes in `ResidentLoginView`**: submit button "Access My Form" →
+  "Access My Workspace" (the monthly form is one module of the workspace,
+  not the whole account); footer link "Are you the Chief Resident? Admin
+  Portal →" → "Organizational Admin Portal →" (dropped the Chief-Resident
+  framing and the tenant-terminology admin word per the review's explicit
+  wording).
+
+**Backlog: institution-first / self-serve org flow** (scoped, not built —
+flagging per this file's own anti-scope-creep policy, since it implies new
+schema/RLS and role-model decisions): the same review asks for (1) a
+login flow that asks "select your institution" first (pre-populated with the
+seeded tenant, e.g. "UCH Family Medicine") before name+code entry, with a
+parallel "not affiliated / individual" path whose accounts get *limited*
+tools (e.g. roster-form filling only, no full dashboard) rather than today's
+all-or-nothing linked/unlinked split; (2) a self-serve "create a new
+organization" flow reachable from the admin-portal link area — no such flow
+exists today, `tenants` rows are only ever seeded/provisioned manually (see
+SaaS Multi-Tenancy section); (3) repointing `/#admin`-style entry points at a
+single "workspace admin panel" that manages organizations, individual users,
+and module config together — today `/chief/login` (per-org Chief admin) and
+`/saas-operator` (cross-tenant Platform Operator Console) are separate,
+differently-scoped surfaces, not one unified panel. None of this was
+implemented in the 2026-08-14 pass; it needs its own scoping conversation
+before touching schema/RLS.
 - **All `/resident/*` routes moved to `/workspace/*`** (and `/resident-form` →
   `/workspace/form`). Old paths silently redirect via `LegacyResidentRedirect`
   in `App.tsx` (query string preserved) — don't remove those redirect routes;
@@ -652,3 +704,20 @@ Deployment below).
 - This app has no automated tests. Manual verification (running `npm run dev`
   and exercising the flow) is the current QA method — be explicit when a
   change hasn't been manually verified.
+
+## Sourcing module content (templates, rubrics, curricula, reference docs)
+
+The multi-module admin/content build-out (Research Engine, Casebook &
+Logbook, and the other dashboard modules — see the 2026-08-14 scoping
+audit referenced from the Branding & Routing section) will need real
+templates, rubrics, curricula, and guideline documents per module, not
+placeholder content. Per the user (Dr. Olanipekun): don't silently
+fabricate or guess at documents that should be authoritative (WACP/NPMCN
+rubrics, institutional guidelines, sample dissertations, etc.) — if a
+needed reference document can't be reliably found/verified online, ask
+the user for it explicitly so they can supply it (they hold a number of
+these already). Once the relevant module's admin-content tooling exists,
+Dr. Olanipekun also wants a way to pre-populate his own guidelines/
+documents directly through it, rather than only via ad hoc seeding —
+build that content-entry path with that self-service use in mind when
+it's reached.
