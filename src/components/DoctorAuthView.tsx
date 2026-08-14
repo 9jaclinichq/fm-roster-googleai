@@ -39,7 +39,17 @@ export const DoctorAuthView: React.FC = () => {
     setConfirmationNotice('');
 
     if (!email || !password) {
-      setError('Please enter your email and password.');
+      setError('Please enter your email and 6-digit PIN.');
+      return;
+    }
+
+    // PIN unification (migration 26): individual and institutional logins
+    // both present as "identify yourself, then a 6-digit PIN" now. Under
+    // the hood this is still a real Supabase Auth password — a 6-digit
+    // numeric string satisfies Supabase's default minimum password length,
+    // so no auth-mechanism change was needed to make the two feel the same.
+    if (!/^\d{6}$/.test(password)) {
+      setError('PIN must be exactly 6 digits.');
       return;
     }
 
@@ -48,12 +58,8 @@ export const DoctorAuthView: React.FC = () => {
         setError('Please enter your full name.');
         return;
       }
-      if (password.length < 8) {
-        setError('Password must be at least 8 characters.');
-        return;
-      }
       if (password !== confirmPassword) {
-        setError('Passwords do not match.');
+        setError('PINs do not match.');
         return;
       }
     }
@@ -93,7 +99,7 @@ export const DoctorAuthView: React.FC = () => {
           </div>
           <h2 className="text-xl font-bold tracking-tight">Individual Doctor {mode === 'register' ? 'Registration' : 'Login'}</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            {mode === 'register' ? 'Create your own PrivyDoc account' : 'Sign in with your email and password'}
+            {mode === 'register' ? 'Create your own PrivyDoc account' : 'Sign in with your email and 6-digit PIN'}
           </p>
         </div>
 
@@ -157,25 +163,31 @@ export const DoctorAuthView: React.FC = () => {
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Password</label>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">6-Digit PIN</label>
             <input
               type="password"
+              maxLength={6}
+              pattern="\d*"
+              inputMode="numeric"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={mode === 'register' ? 'At least 8 characters' : 'Enter your password'}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition"
+              onChange={(e) => setPassword(e.target.value.replace(/\D/g, ''))}
+              placeholder={mode === 'register' ? 'Choose a 6-digit PIN' : 'Enter your 6-digit PIN'}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition placeholder:font-normal placeholder:tracking-normal"
             />
           </div>
 
           {mode === 'register' && (
             <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Confirm Password</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Confirm PIN</label>
               <input
                 type="password"
+                maxLength={6}
+                pattern="\d*"
+                inputMode="numeric"
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Re-enter your password"
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition"
+                onChange={(e) => setConfirmPassword(e.target.value.replace(/\D/g, ''))}
+                placeholder="Re-enter your 6-digit PIN"
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition placeholder:font-normal placeholder:tracking-normal"
               />
             </div>
           )}

@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
-import { WorkforceMember } from '../types';
-import { KeyRound, User, ChevronDown, Sparkles, Check, AlertCircle } from 'lucide-react';
-import { getActiveBrand } from '../config/branding';
+import { WorkforceMember, Tenant } from '../types';
+import { KeyRound, User, ChevronDown, Sparkles, Check, AlertCircle, Building2, Mail } from 'lucide-react';
 import { useTerminology } from '../lib/terminology';
 
 interface ResidentLoginViewProps {
@@ -16,24 +15,48 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
   onNavigateToChief,
   presetResident
 }) => {
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [selectedTenantId, setSelectedTenantId] = useState<string>('');
+  const [isTenantDropdownOpen, setIsTenantDropdownOpen] = useState<boolean>(false);
   const [workforce, setWorkforce] = useState<WorkforceMember[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
   const [accessCode, setAccessCode] = useState<string>('');
+  const [registeredEmail, setRegisteredEmail] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
-  const brand = getActiveBrand();
   const { t } = useTerminology();
-  // B2C independent doctors aren't "residents" in a training program, so the
-  // portal label follows the active brand profile — see src/config/branding.ts.
-  const portalLabel = brand.key === 'b2c_independent' ? 'Doctor Portal' : 'Resident Portal';
+  // Portal label reads through the tenant terminology system (same pattern
+  // as ChiefLoginView's admin label) instead of a hardcoded brand check, so
+  // a tenant that overrides `member` to "Doctor" gets that label here too.
+  const portalLabel = `${t('member', 'Resident')} Portal`;
+
+  // Organization picker (migration 26): loads the active-tenant list once,
+  // then defaults to the first one so single-tenant deployments (today's
+  // reality — only UCH Family Medicine is seeded) don't force an extra
+  // click, while still being ready for a second organization to appear.
+  useEffect(() => {
+    async function loadTenants() {
+      try {
+        const data = await databaseService.getTenants();
+        const active = data.filter((tn) => tn.status === 'active');
+        setTenants(active);
+        if (active.length > 0) setSelectedTenantId(active[0].id);
+      } catch (err) {
+        console.warn('Error loading organizations:', err);
+        setError('Failed to fetch organization list from server.');
+      }
+    }
+    loadTenants();
+  }, []);
 
   useEffect(() => {
+    if (!selectedTenantId) return;
     async function loadWorkforce() {
       setIsLoading(true);
       try {
-        const data = await databaseService.getWorkforce();
+        const data = await databaseService.getWorkforce(selectedTenantId);
         setWorkforce(data.filter((w) => w.active));
       } catch (err) {
         console.warn('Error loading workforce:', err);
@@ -43,7 +66,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
       }
     }
     loadWorkforce();
-  }, []);
+  }, [selectedTenantId]);
 
   // Update selection if pre-selected from DevHelper (code is left blank —
   // resident codes are no longer readable by the client, see DevHelper.tsx)
@@ -73,6 +96,11 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
       return;
     }
 
+    if (!registeredEmail.trim()) {
+      setError('Please enter the email registered with your organization.');
+      return;
+    }
+
     setIsLoggingIn(true);
     try {
       const selectedResident = workforce.find((w) => w.id === selectedId);
@@ -83,7 +111,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
       }
 
       // Verified server-side — the resident_code column is never sent to the client.
-      const verified = await databaseService.verifyResidentLogin(selectedResident.id, accessCode);
+      const verified = await databaseService.verifyResidentLogin(selectedResident.id, accessCode, registeredEmail.trim());
 
       if (verified) {
         onLoginSuccess({
@@ -92,7 +120,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
           category: verified.category,
         });
       } else {
-        setError('Incorrect 6-digit Access Code. Please check and try again.');
+        setError('Incorrect access code or registered email. Please check and try again.');
       }
     } catch (err) {
       console.warn(err);
@@ -123,6 +151,54 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
             <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3.5 flex items-start space-x-2 text-xs sm:text-sm animate-shake">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {/* Organization picker (migration 26) — only shown once there's
+              more than one active organization to choose between; with
+              today's single-tenant reality it would otherwise just be a
+              disabled dropdown nobody needs to touch. */}
+          {tenants.length > 1 && (
+            <div className="space-y-1.5 relative">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                Select Your Organization
+              </label>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsTenantDropdownOpen(!isTenantDropdownOpen)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-left text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition cursor-pointer"
+                >
+                  <span className="flex items-center space-x-2 truncate">
+                    <Building2 size={16} className="text-slate-400 shrink-0" />
+                    <span className="truncate">
+                      {tenants.find((tn) => tn.id === selectedTenantId)?.name || 'Choose your organization...'}
+                    </span>
+                  </span>
+                  <ChevronDown size={16} className="text-slate-400 shrink-0 ml-1" />
+                </button>
+
+                {isTenantDropdownOpen && (
+                  <div className="absolute z-50 mt-1.5 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto divide-y divide-slate-100">
+                    {tenants.map((tn) => (
+                      <button
+                        key={tn.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedTenantId(tn.id);
+                          setSelectedId('');
+                          setIsTenantDropdownOpen(false);
+                          setError('');
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-slate-50 text-sm font-medium text-slate-700 flex items-center justify-between transition cursor-pointer"
+                      >
+                        <span className="font-bold text-slate-800">{tn.name}</span>
+                        {selectedTenantId === tn.id && <Check size={14} className="text-blue-600 shrink-0 font-bold" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -204,13 +280,36 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
             </p>
           </div>
 
+          {/* Registered Email (migration 26) */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+              Registered Email
+            </label>
+            <div className="relative">
+              <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="email"
+                value={registeredEmail}
+                onChange={(e) => {
+                  setRegisteredEmail(e.target.value);
+                  setError('');
+                }}
+                placeholder="Enter the email registered with your organization"
+                className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition placeholder:font-normal placeholder:text-slate-400"
+              />
+            </div>
+            <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
+              A one-time check against your organization's records — no password is created or stored here.
+            </p>
+          </div>
+
           {/* Submit Button */}
           <button
             type="submit"
             disabled={isLoggingIn || isLoading}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500 text-white rounded-xl text-sm font-bold shadow-sm transition transform active:scale-[0.98] cursor-pointer"
           >
-            {isLoggingIn ? 'Verifying access...' : 'Access My Form'}
+            {isLoggingIn ? 'Verifying access...' : 'Access My Workspace'}
           </button>
         </form>
 
@@ -220,7 +319,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
             onClick={onNavigateToChief}
             className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
           >
-            Are you the {t('admin', 'Chief Resident')}? Admin Portal &rarr;
+            Organizational Admin Portal &rarr;
           </button>
         </div>
       </div>
