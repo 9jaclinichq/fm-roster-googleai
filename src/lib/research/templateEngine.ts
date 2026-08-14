@@ -33,7 +33,11 @@ export async function loadAvailableTemplates(tenantId: string, workforceId: stri
 
 export async function forkTemplate(
   sourceTemplateId: string,
-  workforceId: string,
+  // Nullable since migration 27's Template Manager: a Chief authoring a
+  // department-wide template has no workforce_id of their own to attribute
+  // it to (the Chief role isn't a workforce row — see CLAUDE.md's Role
+  // Model) — created_by_workforce_id is nullable precisely for this case.
+  workforceId: string | null,
   options: TemplateForkOptions
 ): Promise<ResearchTemplate> {
   const source = await databaseService.getResearchTemplate(sourceTemplateId);

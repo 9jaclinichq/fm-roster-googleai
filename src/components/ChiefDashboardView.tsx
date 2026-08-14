@@ -18,6 +18,11 @@ const MultiRosterManagerView = lazy(() =>
 const TenantCustomizationView = lazy(() =>
   import('./TenantCustomizationView').then(m => ({ default: m.TenantCustomizationView }))
 );
+// Lazy-loaded: org-admin Research/Casebook template CRUD (migration 27) —
+// same "most Chiefs won't open this every session" reasoning.
+const TemplateManagerView = lazy(() =>
+  import('./TemplateManagerView').then(m => ({ default: m.TemplateManagerView }))
+);
 import { Collection, WorkforceMember, SubmissionWithWorkforce, Category, Submission, Announcement, AnnouncementCategory, DelegatedRole, SubadminRoleId } from '../types';
 import {
   Users,
@@ -80,7 +85,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'settings'>('submissions');
+  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'settings'>('submissions');
 
   // Role delegation state
   const [delegatedRoles, setDelegatedRoles] = useState<DelegatedRole[]>([]);
@@ -880,6 +885,16 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           Customization
         </button>
         <button
+          onClick={() => setActiveTab('templates')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'templates'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Templates
+        </button>
+        <button
           onClick={() => setActiveTab('settings')}
           className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === 'settings'
@@ -1560,6 +1575,13 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         {activeTab === 'customization' && (
           <Suspense fallback={<LoadingShell />}>
             <TenantCustomizationView tenantId={tenantId ?? DEFAULT_TENANT_ID} />
+          </Suspense>
+        )}
+
+        {/* TAB 8b: TEMPLATE MANAGER (migration 27) */}
+        {activeTab === 'templates' && adminCode && (
+          <Suspense fallback={<LoadingShell />}>
+            <TemplateManagerView tenantId={tenantId ?? DEFAULT_TENANT_ID} adminCode={adminCode} />
           </Suspense>
         )}
 

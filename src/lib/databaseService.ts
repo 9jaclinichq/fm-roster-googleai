@@ -2174,6 +2174,27 @@ export const databaseService = {
     return data;
   },
 
+  // Migration 27 — the only genuinely missing CRUD piece for
+  // research_templates (create/edit already work via templateEngine.ts's
+  // forkTemplate/editTemplate, which reuse createResearchTemplate/
+  // updateResearchTemplate above under this table's existing permissive
+  // RLS). No DELETE policy ever existed for this table, so it's routed
+  // through a SECURITY DEFINER RPC instead, gated the same tenant-boundary
+  // way as every other Chief-privileged write in this app.
+  async chiefDeleteResearchTemplate(adminCode: string, templateId: string): Promise<void> {
+    checkSupabase();
+
+    const { error } = await supabase!.rpc('chief_delete_research_template', {
+      p_admin_code: adminCode,
+      p_template_id: templateId,
+    });
+
+    if (error) {
+      console.warn('Error deleting research template:', error);
+      throw error;
+    }
+  },
+
   // --- RESEARCH WORKSPACES ---
   async getResearchWorkspacesForWorkforce(workforceId: string): Promise<ResearchWorkspace[]> {
     checkSupabase();
@@ -2426,6 +2447,81 @@ export const databaseService = {
       throw error;
     }
     return data;
+  },
+
+  // Migration 27 — casebook_templates had no create/update/delete path at
+  // all before this (only reads existed), and its old INSERT/UPDATE RLS
+  // was permissive enough to let anyone write to global (tenant_id NULL)
+  // rows too. Routed through SECURITY DEFINER RPCs, same pattern as every
+  // other Chief-privileged write in this app.
+  async chiefCreateCasebookTemplate(
+    adminCode: string,
+    entry: {
+      name: string;
+      framework_type: CasebookFrameworkType;
+      thematic_distribution?: Record<string, unknown>;
+      scoring_rubric?: Record<string, unknown>;
+      formatting_rules?: Record<string, unknown>;
+    }
+  ): Promise<CasebookTemplate> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_create_casebook_template', {
+      p_admin_code: adminCode,
+      p_name: entry.name,
+      p_framework_type: entry.framework_type,
+      p_thematic_distribution: entry.thematic_distribution ?? {},
+      p_scoring_rubric: entry.scoring_rubric ?? {},
+      p_formatting_rules: entry.formatting_rules ?? {},
+    });
+
+    if (error) {
+      console.warn('Error creating casebook template:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async chiefUpdateCasebookTemplate(
+    adminCode: string,
+    templateId: string,
+    entry: {
+      name: string;
+      thematic_distribution: Record<string, unknown>;
+      scoring_rubric: Record<string, unknown>;
+      formatting_rules: Record<string, unknown>;
+    }
+  ): Promise<CasebookTemplate> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_update_casebook_template', {
+      p_admin_code: adminCode,
+      p_template_id: templateId,
+      p_name: entry.name,
+      p_thematic_distribution: entry.thematic_distribution,
+      p_scoring_rubric: entry.scoring_rubric,
+      p_formatting_rules: entry.formatting_rules,
+    });
+
+    if (error) {
+      console.warn('Error updating casebook template:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async chiefDeleteCasebookTemplate(adminCode: string, templateId: string): Promise<void> {
+    checkSupabase();
+
+    const { error } = await supabase!.rpc('chief_delete_casebook_template', {
+      p_admin_code: adminCode,
+      p_template_id: templateId,
+    });
+
+    if (error) {
+      console.warn('Error deleting casebook template:', error);
+      throw error;
+    }
   },
 
   // --- CASEBOOK WORKSPACES ---
