@@ -9,11 +9,11 @@
 // means a forged client can't decide what gets charged. The client only
 // receives a redirect URL.
 //
-// ⚠️ PRICING PLACEHOLDER: PLAN_AMOUNT_NGN below is the value actually
-// charged and was NOT specified in the task brief — ₦5,000/month awaits a
-// real business decision (mirrored display-only in src/config/tiers.ts).
-// PAYSTACK_SECRET_KEY on this project is a LIVE key — a completed checkout
-// moves real money.
+// PRICING: PLAN_AMOUNT_NGN below is the value actually charged —
+// ₦12,000/month, confirmed by the user (Dr. Olanipekun) on 2026-08-14, no
+// longer a placeholder (mirrored display-only in src/config/tiers.ts, keep
+// both in sync when this changes again). PAYSTACK_SECRET_KEY on this
+// project is a LIVE key — a completed checkout moves real money.
 //
 // Deploy:  npx supabase@2.112.0 functions deploy payment-checkout --project-ref <ref> --no-verify-jwt --use-api
 // Secrets: PAYSTACK_SECRET_KEY (set), FLUTTERWAVE_SECRET_KEY (set).
@@ -27,7 +27,7 @@ const CORS_HEADERS = {
 };
 
 const PLAN = 'pro_unlimited';
-const PLAN_AMOUNT_NGN = 5000; // placeholder — see header
+const PLAN_AMOUNT_NGN = 12000; // authoritative — see header
 
 // Where the provider sends the payer after checkout. Cosmetic only — the
 // webhook is the source of truth for activation.

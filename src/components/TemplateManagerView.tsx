@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { forkTemplate } from '../lib/research/templateEngine';
 import { ResearchTemplate, CasebookTemplate, CasebookFrameworkType, VivaVignette } from '../types';
-import { BookOpen, ClipboardList, Plus, Trash2, RefreshCw, GitFork, X, Globe, Building2, Mic } from 'lucide-react';
+import { BookOpen, ClipboardList, Plus, Trash2, RefreshCw, GitFork, X, Globe, Building2, Mic, Lock } from 'lucide-react';
 
 // Migration 27 — lets a Chief create/edit/delete their own organization's
 // Research Engine and Casebook templates, instead of only ever using the
@@ -18,6 +18,18 @@ import { BookOpen, ClipboardList, Plus, Trash2, RefreshCw, GitFork, X, Globe, Bu
 interface TemplateManagerViewProps {
   tenantId: string;
   adminCode: string;
+}
+
+// Supabase RPC errors surface as PostgrestError-shaped objects (a `message`
+// string, but not `instanceof Error`), not thrown Error instances — this
+// covers both so the plan-gate rejection message from migration 29's RPCs
+// (and any other RPC failure) reaches the user instead of a generic string.
+function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object' && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
+    return (err as { message: string }).message;
+  }
+  return fallback;
 }
 
 const CASEBOOK_FRAMEWORKS: { value: CasebookFrameworkType; label: string }[] = [
@@ -66,17 +78,28 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
   const [vvPrompts, setVvPrompts] = useState('');
   const [isSavingViva, setIsSavingViva] = useState(false);
 
+  // Phase 5 — org-custom content creation (casebook templates, viva
+  // vignettes, research template forks) requires a paid tenant plan.
+  // Chiefs have no workforce_id of their own, so this is gated on the
+  // ORGANIZATION's plan_type, not the per-resident user_subscriptions Pro
+  // gate used elsewhere in this app. See migration 29's header for the
+  // full rationale, including the deliberately-flagged gap that there is
+  // no self-serve tenant-plan upgrade checkout yet.
+  const [isFreeTier, setIsFreeTier] = useState(false);
+
   const load = async () => {
     setIsLoading(true);
     try {
-      const [rt, ct, vv] = await Promise.all([
+      const [rt, ct, vv, tenant] = await Promise.all([
         databaseService.getResearchTemplates(),
         databaseService.getCasebookTemplates(),
         databaseService.getVivaVignettes(),
+        databaseService.getTenant(tenantId),
       ]);
       setResearchTemplates(rt);
       setCasebookTemplates(ct);
       setVivaVignettes(vv);
+      setIsFreeTier((tenant?.plan_type ?? 'free_seeded') === 'free_seeded');
     } catch (err) {
       console.warn(err);
       setStatusMessage('Failed to load templates.');
@@ -95,6 +118,10 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
   const vivaOwn = vivaVignettes.filter(v => v.tenant_id === tenantId);
 
   const openResearchFork = (sourceId: string) => {
+    if (isFreeTier) {
+      setStatusMessage('Creating custom research templates requires a paid plan. Contact the platform to upgrade your organization.');
+      return;
+    }
     const src = researchTemplates.find(t => t.id === sourceId);
     setResearchForkSourceId(sourceId);
     setResearchForkName(src ? `${src.name} (Org Custom)` : '');
@@ -103,6 +130,13 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
 
   const handleForkResearch = async () => {
     if (!researchForkSourceId || !researchForkName.trim()) return;
+    // Client-side only — research_templates has no gating RPC (see
+    // migration 29's header). Weaker than the server-enforced casebook/viva
+    // gates below; flagged, not hidden.
+    if (isFreeTier) {
+      setStatusMessage('Creating custom research templates requires a paid plan. Contact the platform to upgrade your organization.');
+      return;
+    }
     setIsForkingResearch(true);
     try {
       // workforceId: null — the Chief authoring this isn't a workforce
@@ -118,7 +152,7 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
       await load();
     } catch (err) {
       console.warn(err);
-      setStatusMessage('Failed to create research template.');
+      setStatusMessage(errorMessage(err, 'Failed to create research template.'));
     } finally {
       setIsForkingResearch(false);
     }
@@ -136,6 +170,10 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
   };
 
   const openCreateCasebook = () => {
+    if (isFreeTier) {
+      setStatusMessage('Creating custom casebook templates requires a paid plan. Contact the platform to upgrade your organization.');
+      return;
+    }
     setEditingCasebookId(null);
     setCbName('');
     setCbFramework('GENERIC_10');
@@ -195,7 +233,7 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
       await load();
     } catch (err) {
       console.warn(err);
-      setStatusMessage('Failed to save casebook template.');
+      setStatusMessage(errorMessage(err, 'Failed to save casebook template.'));
     } finally {
       setIsSavingCasebook(false);
     }
@@ -213,6 +251,10 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
   };
 
   const openCreateViva = () => {
+    if (isFreeTier) {
+      setStatusMessage('Creating custom viva vignettes requires a paid plan. Contact the platform to upgrade your organization.');
+      return;
+    }
     setEditingVivaId(null);
     setVvTitle('');
     setVvCategory('');
@@ -254,7 +296,7 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
       await load();
     } catch (err) {
       console.warn(err);
-      setStatusMessage('Failed to save viva vignette.');
+      setStatusMessage(errorMessage(err, 'Failed to save viva vignette.'));
     } finally {
       setIsSavingViva(false);
     }
@@ -284,6 +326,15 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
           defaults are always read-only here and can be forked into your own editable copy.
         </p>
       </div>
+
+      {isFreeTier && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 text-sm flex items-center gap-2">
+          <Lock size={15} className="shrink-0" />
+          Your organization is on the Free plan. Creating custom Research/Casebook templates and Viva Vignettes
+          requires the Pro plan (₦12,000/month) — contact the platform to upgrade. Global defaults and your
+          organization's existing custom content remain fully usable.
+        </div>
+      )}
 
       {statusMessage && <div className="bg-blue-50 border border-blue-200 text-blue-800 rounded-xl p-3 text-sm">{statusMessage}</div>}
 
@@ -322,8 +373,9 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
               <button
                 onClick={() => openResearchFork(t.id)}
                 className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-slate-700 border border-slate-200 hover:bg-slate-50 px-2 py-1 rounded-lg cursor-pointer"
+                title={isFreeTier ? 'Requires the Pro plan' : undefined}
               >
-                <GitFork size={12} /> Fork for My Org
+                {isFreeTier ? <Lock size={12} /> : <GitFork size={12} />} Fork for My Org
               </button>
             </div>
           ))}
@@ -337,8 +389,9 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
           <button
             onClick={openCreateCasebook}
             className="flex items-center gap-1 text-xs font-bold bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer"
+            title={isFreeTier ? 'Requires the Pro plan' : undefined}
           >
-            <Plus size={14} /> New Template
+            {isFreeTier ? <Lock size={14} /> : <Plus size={14} />} New Template
           </button>
         </div>
         <div className="space-y-2 mb-3">
@@ -383,8 +436,9 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
           <button
             onClick={openCreateViva}
             className="flex items-center gap-1 text-xs font-bold bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer"
+            title={isFreeTier ? 'Requires the Pro plan' : undefined}
           >
-            <Plus size={14} /> New Vignette
+            {isFreeTier ? <Lock size={14} /> : <Plus size={14} />} New Vignette
           </button>
         </div>
         <p className="text-xs text-slate-500 mb-3">

@@ -528,10 +528,11 @@ AI Copilot actions:
 
 - **`src/config/tiers.ts`**: Free = 50 AI actions per rolling 14 days
   (Research + Casebook action types only — the original academic-copilot
-  types are deliberately ungated); Pro/Unlimited = no cap. ⚠️ The Pro price
-  (₦5,000/mo) is a PLACEHOLDER nobody has signed off — the charged amount
-  lives in `payment-checkout/index.ts` (authoritative), mirrored
-  display-only in tiers.ts.
+  types are deliberately ungated); Pro/Unlimited = no cap. Pro price is
+  **₦12,000/month**, confirmed by the user (Dr. Olanipekun) on 2026-08-14 —
+  no longer the earlier ₦5,000 placeholder. The charged amount lives in
+  `payment-checkout/index.ts` (authoritative, `PLAN_AMOUNT_NGN`), mirrored
+  display-only in `tiers.ts` — keep both in sync if this changes again.
 - **`useWorkspaceQuota`** (`src/lib/billing/`): client-side per-member gate
   counting `ai_action_logs`; fails OPEN on read errors. The tenant-level
   `check_and_increment_tenant_ai_quota` RPC inside the copilot Edge
@@ -563,18 +564,51 @@ AI Copilot actions:
   sorted by AI actions descending so the operator can spot free-tier-heavy
   tenants (upsell candidates) or paying tenants gone quiet. No schema change —
   joins `tenants`/`tenant_ai_usage`/`workforce`/`submissions` client-side.
-- **Per-module pricing/feature-flag granularity is a deliberately deferred
-  gap, not an oversight.** Today `module_flags` is a single tenant-wide
-  on/off (3 modules only) and `plan_type`/`priceNgnPerMonth` are one flat
-  price per tenant — there is no way for Module A to be Free-tier and
-  Module B to require Pro for the same tenant. Building that needs a real
-  schema decision (a `module_pricing` table or column), a rewrite of
-  `check_and_increment_tenant_ai_quota`/`tenant_ai_usage` to add a
-  feature/module dimension instead of one flat per-tenant counter, a
-  matching rewrite of `useWorkspaceQuota`/`WORKSPACE_TIERS` from two flat
-  tiers to a matrix, and — since `PLAN_AMOUNT_NGN` is real-money billing —
-  explicit user sign-off before touching it. Flagged here rather than
-  force-fit; revisit once a real tenant asks for split pricing.
+- **Per-module pricing was scoped and explicitly rejected in favor of one
+  flat Pro price (Phase 5, 2026-08-14).** The user chose "one flat Pro
+  price for everything" over per-module pricing when asked directly —
+  `WORKSPACE_TIERS` stays a two-tier (`free`/`pro_unlimited`) flat
+  structure, not a per-module matrix. What Phase 5 *did* add: two more
+  paid-gated surfaces beyond the original AI Copilot quota — creating/
+  editing an organization's own Template Manager content (custom Casebook
+  templates; Research template forking) and Viva Vignette bank entries.
+  See migration 29 and the new paragraph below for the mechanism.
+- **Migration 29 — org-custom-content creation gated behind
+  `tenants.plan_type`, a SEPARATE gate from the AI Copilot quota above.**
+  `chief_create_casebook_template`, `chief_update_casebook_template`,
+  `chief_create_viva_vignette`, `chief_update_viva_vignette` all now
+  `RAISE EXCEPTION` when the calling tenant's `plan_type = 'free_seeded'`.
+  This is deliberately NOT the per-resident `user_subscriptions` gate used
+  by the AI Copilot quota — a Chief has no `workforce_id` of their own (see
+  Role Model above), so there's no per-resident row to check for a
+  Chief-authored action; the only coherent gate is the organization's own
+  plan. Delete/reset RPCs stay ungated (downgrading shouldn't lock a Chief
+  out of cleaning up their own org's content). Research template forking
+  has no RPC to attach a server-side check to (`research_templates` stays
+  under its original permissive-RLS trust model, migration 13) — its gate
+  in `TemplateManagerView.tsx`'s `handleForkResearch` is client-side only,
+  flagged as weaker than the RPC-enforced casebook/viva gates, not hidden.
+  `TemplateManagerView.tsx` fetches the tenant's `plan_type` via
+  `databaseService.getTenant()` on load, shows an amber "Free plan" banner
+  and lock icons on the three create entry points when gated, and surfaces
+  the real RPC rejection message (via a `PostgrestError`-aware
+  `errorMessage()` helper) instead of a generic "Failed to save..." string.
+  ⚠️ **Flagged gap, not silently solved**: there is still no self-serve
+  "upgrade my organization's plan" checkout — `tenants.plan_type` changes
+  only via the Platform Operator Console's `updateTenantPlan` (operator-only
+  action). A Chief hitting this gate sees a message telling them to contact
+  the platform, not a checkout button. A real self-serve tenant-plan
+  checkout (extending `payment-checkout`/`payment-webhook` to handle
+  tenant-keyed subscriptions instead of only workforce-keyed ones) is a
+  separate, larger task, not attempted in this pass. **Manually verified**:
+  applied migration 29 live; browser-verified as the real UCH Chief on the
+  live `free_seeded` tenant — banner + lock icons rendered, clicking a
+  locked "Fork for My Org" button correctly blocked client-side with no
+  modal opening and the right message; temporarily promoted the tenant to
+  `tier_1` via direct DB update, reloaded, confirmed the banner/locks
+  disappeared, created a real Viva Vignette end-to-end through the live RPC,
+  deleted it, then reverted the tenant back to `free_seeded` — no test data
+  left behind.
 - **NOT yet done** (needs the user / dashboards): confirm the webhook URL
   (`https://gdumksfffewpdqqwvcdo.supabase.co/functions/v1/payment-webhook`)
   is registered in BOTH provider dashboards (the user has configured the

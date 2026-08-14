@@ -10,12 +10,12 @@
 // client-side, blocks the UI when the free allowance is spent, and offers
 // the Paystack/Flutterwave upgrade checkout instead of a hard error.
 //
-// ⚠️ PRICING PLACEHOLDER: the Pro price below (and its server-side twin in
-// supabase/functions/payment-checkout/index.ts, which is the value actually
-// charged) was NOT specified in the task brief — ₦5,000/month is a
-// placeholder awaiting a real business decision. The client value here is
-// display-only; the Edge Function's constant is authoritative, so a forged
-// client can't change what Paystack/Flutterwave charge.
+// PRICING: ₦12,000/month, confirmed by the user (Dr. Olanipekun) on
+// 2026-08-14 — no longer a placeholder (the earlier ₦5,000 figure was).
+// The value below is display-only; the authoritative charged amount is
+// the server-side twin constant in supabase/functions/payment-checkout/
+// index.ts, so a forged client can't change what Paystack/Flutterwave
+// actually charge — keep both in sync when this changes again.
 
 export type WorkspaceTierId = 'free' | 'pro_unlimited';
 
@@ -73,6 +73,6 @@ export const WORKSPACE_TIERS: Record<WorkspaceTierId, WorkspaceTier> = {
     aiActionsPerWindow: null,
     priorityQueueing: true,
     customLogbookExports: true,
-    priceNgnPerMonth: 5000,
+    priceNgnPerMonth: 12000,
   },
 };
