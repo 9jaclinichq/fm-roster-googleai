@@ -245,6 +245,19 @@ export interface VivaSimulation {
   created_at: string;
 }
 
+// Migration 28 — practice viva scenarios. tenant_id NULL = global/seeded,
+// available to every tenant; tenant_id set = that org's own vignette,
+// editable only by that org's Chief (see chief_*_viva_vignette RPCs).
+export interface VivaVignette {
+  id: string;
+  tenant_id: string | null;
+  title: string;
+  category: string;
+  scenario: string;
+  prompts: string[];
+  created_at: string;
+}
+
 export type ReviewTargetType = 'dissertation_milestone' | 'case_report';
 export type ReviewStatus = 'approved' | 'revisions_requested';
 export type SubadminRoleId = Exclude<RoleId, 'super_admin' | 'resident'>;

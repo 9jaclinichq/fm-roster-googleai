@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { VivaSimulation, ScoringBreakdown } from '../types';
+import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
+import { VivaSimulation, VivaVignette, ScoringBreakdown } from '../types';
 import {
   Mic,
   Clock,
@@ -13,77 +13,8 @@ import {
 } from 'lucide-react';
 
 interface OralExamSimulatorViewProps {
-  resident: { id: string; name: string; category: string };
+  resident: { id: string; name: string; category: string; tenant_id?: string };
 }
-
-interface Vignette {
-  title: string;
-  category: string;
-  scenario: string;
-  prompts: string[];
-}
-
-// Illustrative practice vignettes for self-rehearsal — NOT official WACP
-// past questions, and not clinically authoritative content. Deliberately
-// kept to brief scenario framing + generic examiner-style prompts across
-// the four scored domains, rather than detailed management guidance.
-const VIGNETTES: Vignette[] = [
-  {
-    title: 'Poorly Controlled Hypertension',
-    category: 'Chronic Disease Management',
-    scenario: 'A 58-year-old presents to your clinic with blood pressure readings consistently above target despite being on two antihypertensive agents.',
-    prompts: [
-      'What is your differential for resistant hypertension in this patient?',
-      'Outline your approach to reviewing and adjusting this patient\'s management plan.',
-      'What safety-netting would you put in place before their next review?',
-      'How would you explain the treatment plan and check the patient\'s understanding?',
-    ],
-  },
-  {
-    title: 'Antenatal Patient with Gestational Diabetes',
-    category: 'Obstetric Care',
-    scenario: 'A patient at 26 weeks gestation is newly diagnosed with gestational diabetes on routine screening.',
-    prompts: [
-      'What is your immediate diagnostic reasoning and next steps?',
-      'Describe your management and referral plan for this patient.',
-      'What red flags would prompt urgent escalation?',
-      'How would you counsel the patient and family on the diagnosis?',
-    ],
-  },
-  {
-    title: 'Febrile Child with Rash',
-    category: 'Paediatric Case',
-    scenario: 'A 4-year-old is brought in with a 3-day history of fever and a new rash noticed this morning.',
-    prompts: [
-      'What differentials are you considering, and what history would you prioritise?',
-      'What is your initial management plan pending further assessment?',
-      'What features would make you concerned about a serious underlying cause?',
-      'How would you communicate your assessment and plan to the caregiver?',
-    ],
-  },
-  {
-    title: 'Elderly Patient with Polypharmacy',
-    category: 'Geriatrics',
-    scenario: 'A 76-year-old on 8 regular medications presents with increasing falls over the past month.',
-    prompts: [
-      'What is your reasoning for the likely contributors to this presentation?',
-      'How would you approach medication review and deprescribing here?',
-      'What safety measures would you prioritise for this patient?',
-      'How would you involve the patient and family in decision-making?',
-    ],
-  },
-  {
-    title: 'Acute Breathlessness in Adult',
-    category: 'Emergency / Acute Presentation',
-    scenario: 'A 45-year-old presents acutely with sudden-onset breathlessness and pleuritic chest pain.',
-    prompts: [
-      'Talk through your differential diagnosis and initial assessment priorities.',
-      'What is your immediate management plan in a primary care/emergency setting?',
-      'What are the key safety considerations you must not miss?',
-      'How would you communicate urgency to the patient while keeping them calm?',
-    ],
-  },
-];
 
 const DOMAINS: { key: keyof ScoringBreakdown; label: string }[] = [
   { key: 'diagnostic_reasoning', label: 'Diagnostic Reasoning' },
@@ -96,7 +27,7 @@ type Phase = 'select' | 'practicing' | 'scoring';
 
 export const OralExamSimulatorView: React.FC<OralExamSimulatorViewProps> = ({ resident }) => {
   const [phase, setPhase] = useState<Phase>('select');
-  const [activeVignette, setActiveVignette] = useState<Vignette | null>(null);
+  const [activeVignette, setActiveVignette] = useState<VivaVignette | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -107,6 +38,11 @@ export const OralExamSimulatorView: React.FC<OralExamSimulatorViewProps> = ({ re
   const [history, setHistory] = useState<VivaSimulation[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
 
+  // Migration 28 — vignettes are no longer hardcoded; global (tenant_id
+  // NULL) plus this resident's own org's vignettes.
+  const [vignettes, setVignettes] = useState<VivaVignette[]>([]);
+  const [isLoadingVignettes, setIsLoadingVignettes] = useState<boolean>(true);
+
   useEffect(() => {
     databaseService.getVivaSimulations(resident.id)
       .then(setHistory)
@@ -114,7 +50,15 @@ export const OralExamSimulatorView: React.FC<OralExamSimulatorViewProps> = ({ re
       .finally(() => setIsLoadingHistory(false));
   }, [resident.id]);
 
-  const startVignette = (vignette: Vignette) => {
+  useEffect(() => {
+    const tenantId = resident.tenant_id ?? DEFAULT_TENANT_ID;
+    databaseService.getVivaVignettes()
+      .then(all => setVignettes(all.filter(v => v.tenant_id === null || v.tenant_id === tenantId)))
+      .catch(err => console.warn('Failed to load viva vignettes:', err))
+      .finally(() => setIsLoadingVignettes(false));
+  }, [resident.tenant_id]);
+
+  const startVignette = (vignette: VivaVignette) => {
     setActiveVignette(vignette);
     setElapsedSeconds(0);
     setPhase('practicing');
@@ -275,10 +219,17 @@ export const OralExamSimulatorView: React.FC<OralExamSimulatorViewProps> = ({ re
         </p>
       </div>
 
+      {isLoadingVignettes ? (
+        <div className="text-center py-8">
+          <RefreshCw size={20} className="text-slate-400 animate-spin mx-auto" />
+        </div>
+      ) : vignettes.length === 0 ? (
+        <p className="text-xs text-slate-400 text-center py-8">No practice vignettes available yet.</p>
+      ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {VIGNETTES.map(v => (
+        {vignettes.map(v => (
           <button
-            key={v.title}
+            key={v.id}
             onClick={() => startVignette(v)}
             className="text-left bg-white border border-slate-200 hover:border-slate-300 rounded-2xl shadow-sm p-4 transition cursor-pointer space-y-2"
           >
@@ -294,6 +245,7 @@ export const OralExamSimulatorView: React.FC<OralExamSimulatorViewProps> = ({ re
           </button>
         ))}
       </div>
+      )}
 
       {/* History */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-3">

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { forkTemplate } from '../lib/research/templateEngine';
-import { ResearchTemplate, CasebookTemplate, CasebookFrameworkType } from '../types';
-import { BookOpen, ClipboardList, Plus, Trash2, RefreshCw, GitFork, X, Globe, Building2 } from 'lucide-react';
+import { ResearchTemplate, CasebookTemplate, CasebookFrameworkType, VivaVignette } from '../types';
+import { BookOpen, ClipboardList, Plus, Trash2, RefreshCw, GitFork, X, Globe, Building2, Mic } from 'lucide-react';
 
 // Migration 27 — lets a Chief create/edit/delete their own organization's
 // Research Engine and Casebook templates, instead of only ever using the
@@ -10,6 +10,10 @@ import { BookOpen, ClipboardList, Plus, Trash2, RefreshCw, GitFork, X, Globe, Bu
 // individual resident's personal fork. Integrated into ChiefDashboardView
 // as a "Templates" tab, sibling to "customization" (same lazy-import +
 // tab-button pattern as TenantCustomizationView).
+//
+// Migration 28 (Phase 4) adds a third section here — org-admin CRUD for
+// the Viva Simulator's practice vignette bank, same global/own split and
+// SECURITY-DEFINER-RPC pattern as the Casebook Templates section below.
 
 interface TemplateManagerViewProps {
   tenantId: string;
@@ -50,15 +54,29 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
   const [cbFormatting, setCbFormatting] = useState('{}');
   const [isSavingCasebook, setIsSavingCasebook] = useState(false);
 
+  // Viva Vignettes create/edit (migration 28) — same create-and-edit-share-
+  // one-form shape as Casebook Templates above; prompts are edited as one
+  // examiner question per line rather than JSON, since it's a plain string list.
+  const [vivaVignettes, setVivaVignettes] = useState<VivaVignette[]>([]);
+  const [showVivaModal, setShowVivaModal] = useState(false);
+  const [editingVivaId, setEditingVivaId] = useState<string | null>(null);
+  const [vvTitle, setVvTitle] = useState('');
+  const [vvCategory, setVvCategory] = useState('');
+  const [vvScenario, setVvScenario] = useState('');
+  const [vvPrompts, setVvPrompts] = useState('');
+  const [isSavingViva, setIsSavingViva] = useState(false);
+
   const load = async () => {
     setIsLoading(true);
     try {
-      const [rt, ct] = await Promise.all([
+      const [rt, ct, vv] = await Promise.all([
         databaseService.getResearchTemplates(),
         databaseService.getCasebookTemplates(),
+        databaseService.getVivaVignettes(),
       ]);
       setResearchTemplates(rt);
       setCasebookTemplates(ct);
+      setVivaVignettes(vv);
     } catch (err) {
       console.warn(err);
       setStatusMessage('Failed to load templates.');
@@ -73,6 +91,8 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
   const researchOwn = researchTemplates.filter(t => t.tenant_id === tenantId);
   const casebookGlobal = casebookTemplates.filter(t => t.tenant_id === null);
   const casebookOwn = casebookTemplates.filter(t => t.tenant_id === tenantId);
+  const vivaGlobal = vivaVignettes.filter(v => v.tenant_id === null);
+  const vivaOwn = vivaVignettes.filter(v => v.tenant_id === tenantId);
 
   const openResearchFork = (sourceId: string) => {
     const src = researchTemplates.find(t => t.id === sourceId);
@@ -192,6 +212,65 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
     }
   };
 
+  const openCreateViva = () => {
+    setEditingVivaId(null);
+    setVvTitle('');
+    setVvCategory('');
+    setVvScenario('');
+    setVvPrompts('');
+    setShowVivaModal(true);
+  };
+
+  const openEditViva = (v: VivaVignette) => {
+    setEditingVivaId(v.id);
+    setVvTitle(v.title);
+    setVvCategory(v.category);
+    setVvScenario(v.scenario);
+    setVvPrompts(v.prompts.join('\n'));
+    setShowVivaModal(true);
+  };
+
+  const handleSaveViva = async () => {
+    if (!vvTitle.trim() || !vvCategory.trim() || !vvScenario.trim()) {
+      setStatusMessage('Title, category, and scenario are all required.');
+      return;
+    }
+    const prompts = vvPrompts.split('\n').map(p => p.trim()).filter(Boolean);
+    if (prompts.length === 0) {
+      setStatusMessage('Add at least one examiner prompt (one per line).');
+      return;
+    }
+    setIsSavingViva(true);
+    try {
+      const entry = { title: vvTitle.trim(), category: vvCategory.trim(), scenario: vvScenario.trim(), prompts };
+      if (editingVivaId) {
+        await databaseService.chiefUpdateVivaVignette(adminCode, editingVivaId, entry);
+        setStatusMessage('Viva vignette updated.');
+      } else {
+        await databaseService.chiefCreateVivaVignette(adminCode, entry);
+        setStatusMessage('Viva vignette created for your organization.');
+      }
+      setShowVivaModal(false);
+      await load();
+    } catch (err) {
+      console.warn(err);
+      setStatusMessage('Failed to save viva vignette.');
+    } finally {
+      setIsSavingViva(false);
+    }
+  };
+
+  const handleDeleteViva = async (id: string) => {
+    try {
+      await databaseService.chiefDeleteVivaVignette(adminCode, id);
+      setStatusMessage('Viva vignette removed.');
+      await load();
+    } catch (err) {
+      console.warn(err);
+      setStatusMessage('Failed to remove viva vignette.');
+    }
+  };
+
   if (isLoading) {
     return <div className="flex items-center justify-center py-16 text-slate-400"><RefreshCw className="animate-spin mr-2" size={18} /> Loading templates...</div>;
   }
@@ -297,6 +376,56 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
         </div>
       </div>
 
+      {/* Viva Vignettes (migration 28) */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold text-slate-800 flex items-center gap-2"><Mic size={16} /> Viva Vignettes</h3>
+          <button
+            onClick={openCreateViva}
+            className="flex items-center gap-1 text-xs font-bold bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer"
+          >
+            <Plus size={14} /> New Vignette
+          </button>
+        </div>
+        <p className="text-xs text-slate-500 mb-3">
+          Practice scenarios for the Mock Viva Oral Exam Simulator. The 5 global vignettes are illustrative,
+          not specialty-specific — add your own to match your program's case mix.
+        </p>
+        <div className="space-y-2 mb-3">
+          {vivaOwn.length === 0 && <p className="text-xs text-slate-400">Your organization has no custom vignettes yet.</p>}
+          {vivaOwn.map(v => (
+            <div key={v.id} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Building2 size={13} className="text-blue-500 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{v.title}</p>
+                  <p className="text-[10px] text-slate-500">{v.category} &bull; {v.prompts.length} prompts</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button onClick={() => openEditViva(v)} className="text-[10px] font-bold text-slate-700 border border-slate-200 hover:bg-white px-2 py-1 rounded-lg cursor-pointer">Edit</button>
+                <button
+                  onClick={() => handleDeleteViva(v.id)}
+                  className="flex items-center gap-1 text-[10px] font-bold text-rose-600 hover:text-rose-700 px-2 py-1 rounded-lg hover:bg-rose-50 cursor-pointer"
+                >
+                  <Trash2 size={12} /> Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Global Defaults (read-only)</p>
+          {vivaGlobal.map(v => (
+            <div key={v.id} className="flex items-center gap-2 px-3 py-2 border border-slate-100 rounded-lg">
+              <Globe size={13} className="text-slate-400 shrink-0" />
+              <p className="text-sm font-medium text-slate-700">{v.title}</p>
+              <span className="text-[10px] text-slate-400">({v.category})</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Research fork modal */}
       {showResearchForkModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setShowResearchForkModal(false)}>
@@ -358,6 +487,41 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
               className="w-full text-xs font-bold bg-slate-900 text-white px-3 py-2 rounded-lg hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
             >
               {isSavingCasebook ? 'Saving...' : editingCasebookId ? 'Save Changes' : 'Create Template'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Viva vignette create/edit modal */}
+      {showVivaModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setShowVivaModal(false)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-lg space-y-3 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-slate-900 text-sm">{editingVivaId ? 'Edit Viva Vignette' : 'New Viva Vignette'}</h4>
+              <button onClick={() => setShowVivaModal(false)} className="text-slate-400 hover:text-slate-700 cursor-pointer"><X size={16} /></button>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Title</label>
+              <input value={vvTitle} onChange={e => setVvTitle(e.target.value)} placeholder="e.g. Neonatal Jaundice" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Category</label>
+              <input value={vvCategory} onChange={e => setVvCategory(e.target.value)} placeholder="e.g. Paediatric Case" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Scenario</label>
+              <textarea value={vvScenario} onChange={e => setVvScenario(e.target.value)} rows={3} placeholder="Brief clinical scenario framing..." className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Examiner Prompts (one per line)</label>
+              <textarea value={vvPrompts} onChange={e => setVvPrompts(e.target.value)} rows={4} placeholder={'What is your differential diagnosis?\nOutline your management plan.'} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <button
+              onClick={handleSaveViva}
+              disabled={isSavingViva}
+              className="w-full text-xs font-bold bg-slate-900 text-white px-3 py-2 rounded-lg hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
+            >
+              {isSavingViva ? 'Saving...' : editingVivaId ? 'Save Changes' : 'Create Vignette'}
             </button>
           </div>
         </div>

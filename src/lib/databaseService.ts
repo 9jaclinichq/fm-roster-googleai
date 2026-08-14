@@ -20,6 +20,7 @@ import {
   CaseReport,
   ExamReadiness,
   VivaSimulation,
+  VivaVignette,
   ScoringBreakdown,
   ConsultantReview,
   ReviewTargetType,
@@ -1035,6 +1036,84 @@ export const databaseService = {
       throw error;
     }
     return data || [];
+  },
+
+  // --- VIVA VIGNETTE BANK (migration 28) ---
+  // Reads are permissive (global + every tenant's vignettes, filtered
+  // client-side by the caller — same pattern as getResearchTemplates());
+  // writes go through SECURITY DEFINER RPCs since this table has no
+  // INSERT/UPDATE/DELETE RLS policy at all (see migration 28's header).
+  async getVivaVignettes(): Promise<VivaVignette[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('viva_vignettes')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching viva vignettes:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async chiefCreateVivaVignette(
+    adminCode: string,
+    entry: { title: string; category: string; scenario: string; prompts: string[] }
+  ): Promise<VivaVignette> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_create_viva_vignette', {
+      p_admin_code: adminCode,
+      p_title: entry.title,
+      p_category: entry.category,
+      p_scenario: entry.scenario,
+      p_prompts: entry.prompts,
+    });
+
+    if (error) {
+      console.warn('Error creating viva vignette:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async chiefUpdateVivaVignette(
+    adminCode: string,
+    vignetteId: string,
+    entry: { title: string; category: string; scenario: string; prompts: string[] }
+  ): Promise<VivaVignette> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_update_viva_vignette', {
+      p_admin_code: adminCode,
+      p_vignette_id: vignetteId,
+      p_title: entry.title,
+      p_category: entry.category,
+      p_scenario: entry.scenario,
+      p_prompts: entry.prompts,
+    });
+
+    if (error) {
+      console.warn('Error updating viva vignette:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async chiefDeleteVivaVignette(adminCode: string, vignetteId: string): Promise<void> {
+    checkSupabase();
+
+    const { error } = await supabase!.rpc('chief_delete_viva_vignette', {
+      p_admin_code: adminCode,
+      p_vignette_id: vignetteId,
+    });
+
+    if (error) {
+      console.warn('Error deleting viva vignette:', error);
+      throw error;
+    }
   },
 
   // --- SUBADMIN ROLE DELEGATION (Chief-only, admin-code gated) ---
