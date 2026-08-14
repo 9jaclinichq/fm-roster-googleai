@@ -5,7 +5,7 @@ import { KeyRound, User, ChevronDown, Sparkles, Check, AlertCircle, Building2, M
 import { useTerminology } from '../lib/terminology';
 
 interface ResidentLoginViewProps {
-  onLoginSuccess: (resident: { id: string; name: string; category: string }) => void;
+  onLoginSuccess: (resident: { id: string; name: string; category: string; tenant_id?: string }) => void;
   onNavigateToChief: () => void;
   presetResident?: WorkforceMember | null;
 }
@@ -118,6 +118,10 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
           id: verified.id,
           name: verified.full_name,
           category: verified.category,
+          // verify_resident_login's RETURNS TABLE doesn't include tenant_id
+          // (migration 26) — take it from the already-fetched workforce
+          // list row instead (same row, just verified).
+          tenant_id: selectedResident.tenant_id,
         });
       } else {
         setError('Incorrect access code or registered email. Please check and try again.');

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
+import { databaseService } from '../lib/databaseService';
 import { WORKSPACE_TIERS, AI_QUOTA_WINDOW_DAYS, DEFAULT_PAYMENT_PROVIDER } from '../config/tiers';
 import { PaymentProvider } from '../types';
 import { X, Sparkles, CreditCard, RefreshCw, ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
@@ -17,6 +17,12 @@ interface UpgradeCheckoutModalProps {
   open: boolean;
   onClose: () => void;
   workforceId: string;
+  // The member's real tenant — was previously hardcoded to DEFAULT_TENANT_ID
+  // here, which would misattribute a non-UCH tenant's subscription/revenue
+  // to UCH (user_subscriptions.tenant_id) now that self-serve orgs exist
+  // (migration 24). Callers resolve the real tenant from their own owner/
+  // session context — see ResearchWorkspaceView/CasebookWorkspaceView.
+  tenantId: string;
   used: number;
   limit: number | null;
   /** Called when the member says payment is done — parent should refresh quota. */
@@ -27,6 +33,7 @@ export const UpgradeCheckoutModal: React.FC<UpgradeCheckoutModalProps> = ({
   open,
   onClose,
   workforceId,
+  tenantId,
   used,
   limit,
   onPaymentCompleted,
@@ -49,7 +56,7 @@ export const UpgradeCheckoutModal: React.FC<UpgradeCheckoutModalProps> = ({
     setError('');
     setBusyProvider(provider);
     try {
-      const result = await databaseService.initiatePaymentCheckout(provider, workforceId, DEFAULT_TENANT_ID, email.trim());
+      const result = await databaseService.initiatePaymentCheckout(provider, workforceId, tenantId, email.trim());
       window.open(result.checkout_url, '_blank', 'noopener');
       setCheckoutOpened(true);
     } catch (err) {

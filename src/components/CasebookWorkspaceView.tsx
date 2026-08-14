@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
+import { databaseService } from '../lib/databaseService';
 import { casebookCopilot, CasebookCopilotSource } from '../lib/ai/casebookCopilot';
 import { useWorkspaceQuota } from '../lib/billing/useWorkspaceQuota';
 import { UpgradeCheckoutModal } from './UpgradeCheckoutModal';
@@ -30,6 +30,11 @@ interface WorkspaceOwner {
   id: string;
   name: string;
   kind: 'workforce' | 'doctor';
+  // See ResearchWorkspaceView's identical field for the full rationale —
+  // a real per-owner tenant, not a hardcoded DEFAULT_TENANT_ID, so
+  // workspaces/AI subscription billing aren't misattributed to UCH for a
+  // non-UCH tenant's resident.
+  tenantId: string;
 }
 
 interface CasebookWorkspaceViewProps {
@@ -163,7 +168,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ ow
     try {
       const matchingTemplate = templates.find(t => t.framework_type === newFramework);
       const workspace = await databaseService.createCasebookWorkspace({
-        tenant_id: owner.kind === 'workforce' ? DEFAULT_TENANT_ID : null,
+        tenant_id: owner.kind === 'workforce' ? owner.tenantId : null,
         workforce_id: owner.kind === 'workforce' ? owner.id : null,
         doctor_id: owner.kind === 'doctor' ? owner.id : null,
         title: newTitle.trim(),
@@ -283,7 +288,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ ow
       setParsedSource(result.source);
 
       await databaseService.createAdminLogbookParsingQueueEntry({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: owner.tenantId,
         uploaded_by_workforce_id: owner.id,
         file_url: fileUrl,
         raw_text_content: logbookRawText || null,
@@ -301,7 +306,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ ow
     if (owner.kind !== 'workforce') return;
     try {
       const saved = await databaseService.upsertClinicalLogbookEntry({
-        tenant_id: DEFAULT_TENANT_ID,
+        tenant_id: owner.tenantId,
         workforce_id: owner.id,
         station_name: stationName,
         procedure_or_competency: procedure,
@@ -793,6 +798,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ ow
         open={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
         workforceId={owner.id}
+        tenantId={owner.tenantId}
         used={quota.used}
         limit={quota.limit}
         onPaymentCompleted={async () => {

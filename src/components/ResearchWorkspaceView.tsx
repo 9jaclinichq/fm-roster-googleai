@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
+import { databaseService } from '../lib/databaseService';
 import { loadAvailableTemplates, forkTemplate, editTemplate, TemplateEditPayload } from '../lib/research/templateEngine';
 import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../lib/research/rubricEngine';
 import { researchCopilot, DraftAuditResult, LiteratureMatrixResult, TableShellsResult, ResearchCopilotSource } from '../lib/ai/researchCopilot';
@@ -30,6 +30,13 @@ interface WorkspaceOwner {
   id: string;
   name: string;
   kind: 'workforce' | 'doctor';
+  // The owner's real tenant for a 'workforce' owner (resolved at login —
+  // see App.tsx's ResidentSession) — using DEFAULT_TENANT_ID unconditionally
+  // here would misattribute a non-UCH tenant's workspaces/AI subscription
+  // billing to UCH now that self-serve orgs exist (migration 24).
+  // Meaningless for a 'doctor' owner (no tenant), always DEFAULT_TENANT_ID
+  // there since personal workspaces have tenant_id NULL anyway.
+  tenantId: string;
 }
 
 interface ResearchWorkspaceViewProps {
@@ -150,7 +157,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ ow
       owner.kind === 'workforce'
         ? databaseService.getResearchWorkspacesForWorkforce(owner.id)
         : databaseService.getResearchWorkspacesForDoctor(owner.id),
-      loadAvailableTemplates(DEFAULT_TENANT_ID, owner.id),
+      loadAvailableTemplates(owner.tenantId, owner.id),
     ])
       .then(([ws, tpl]) => {
         setWorkspaces(ws);
@@ -190,7 +197,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ ow
     setIsCreatingWorkspace(true);
     try {
       const workspace = await databaseService.createResearchWorkspace({
-        tenant_id: owner.kind === 'workforce' ? DEFAULT_TENANT_ID : null,
+        tenant_id: owner.kind === 'workforce' ? owner.tenantId : null,
         workforce_id: owner.kind === 'workforce' ? owner.id : null,
         doctor_id: owner.kind === 'doctor' ? owner.id : null,
         title: newTitle.trim(),
@@ -262,7 +269,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ ow
       const forked = await forkTemplate(forkSourceId, owner.id, {
         scope: forkScope,
         newName: forkName.trim(),
-        tenantId: DEFAULT_TENANT_ID,
+        tenantId: owner.tenantId,
       });
       setTemplates(prev => [...prev, forked]);
       setForkSourceId(null);
@@ -977,6 +984,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ ow
         open={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
         workforceId={owner.id}
+        tenantId={owner.tenantId}
         used={quota.used}
         limit={quota.limit}
         onPaymentCompleted={async () => {

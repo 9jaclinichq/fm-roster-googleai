@@ -11,7 +11,7 @@ import { DoctorAuthView } from './components/DoctorAuthView';
 import { DoctorHomeView } from './components/DoctorHomeView';
 import { AdminPortalChooserView } from './components/AdminPortalChooserView';
 import { CreateOrganizationView } from './components/CreateOrganizationView';
-import { databaseService } from './lib/databaseService';
+import { databaseService, DEFAULT_TENANT_ID } from './lib/databaseService';
 import { TerminologyProvider } from './lib/terminology';
 import { getActiveBrand, getFooterBrand } from './config/branding';
 import { WorkforceMember } from './types';
@@ -90,6 +90,13 @@ interface ResidentSession {
   // "consultant" login, a subadmin is just a resident whose workforce_id
   // holds one of these roles.
   subadminRoles: string[];
+  // Added for billing/workspace-creation tenant correctness — without this,
+  // a resident from a non-UCH tenant (self-serve orgs, migration 24) would
+  // have their AI subscription and Research/Casebook workspaces silently
+  // attributed to UCH via a hardcoded DEFAULT_TENANT_ID fallback. Optional
+  // (not present on sessions restored from localStorage written before this
+  // field existed) — every consumer falls back to DEFAULT_TENANT_ID.
+  tenant_id?: string;
 }
 
 // Individual doctor identity (migration 18) — real Supabase Auth, separate
@@ -227,7 +234,7 @@ function MainAppContent() {
     return 'resident-login';
   };
 
-  const handleResidentLogin = (resident: { id: string; name: string; category: string }) => {
+  const handleResidentLogin = (resident: { id: string; name: string; category: string; tenant_id?: string }) => {
     const session: ResidentSession = { ...resident, subadminRoles: [] };
     setCurrentResident(session);
     localStorage.setItem('fm_session_resident', JSON.stringify(session));
@@ -513,7 +520,7 @@ function MainAppContent() {
             path="/workspace/research"
             element={
               currentResident ? (
-                <ResearchWorkspaceView owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce' }} />
+                <ResearchWorkspaceView owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce', tenantId: currentResident.tenant_id ?? DEFAULT_TENANT_ID }} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )
@@ -531,7 +538,7 @@ function MainAppContent() {
             element={
               currentResident ? (
                 <CasebookWorkspaceView
-                  owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce' }}
+                  owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce', tenantId: currentResident.tenant_id ?? DEFAULT_TENANT_ID }}
                   canManageLogbooks={currentResident.subadminRoles.length > 0}
                 />
               ) : (
@@ -552,7 +559,7 @@ function MainAppContent() {
               currentResident ? (
                 <Navigate to="/workspace/research" replace />
               ) : currentDoctor ? (
-                <ResearchWorkspaceView owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor' }} />
+                <ResearchWorkspaceView owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor', tenantId: DEFAULT_TENANT_ID }} />
               ) : (
                 <Navigate to="/login" replace />
               )
@@ -565,7 +572,7 @@ function MainAppContent() {
                 <Navigate to="/workspace/casebook-logbook" replace />
               ) : currentDoctor ? (
                 <CasebookWorkspaceView
-                  owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor' }}
+                  owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor', tenantId: DEFAULT_TENANT_ID }}
                   canManageLogbooks={false}
                 />
               ) : (
