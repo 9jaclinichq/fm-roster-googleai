@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { databaseService } from '../lib/databaseService';
+import React, { useState, useEffect, useMemo } from 'react';
+import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
 import { academicCopilot, AcademicCopilotSource } from '../lib/ai/academicCopilot';
 import { CaseReport, CaseReportStatus } from '../types';
 import { ClipboardList, RefreshCw, FileText, UploadCloud, X, AlertTriangle, CheckCircle2, Clock, Sparkles, Link2, Copy, Check } from 'lucide-react';
 
 interface CasebookBuilderViewProps {
-  resident: { id: string; name: string; category: string };
+  resident: { id: string; name: string; category: string; tenant_id?: string };
 }
 
 const STATUS_BADGE: Record<CaseReportStatus, { label: string; className: string; icon: React.ReactNode }> = {
@@ -14,12 +14,22 @@ const STATUS_BADGE: Record<CaseReportStatus, { label: string; className: string;
   approved: { label: 'Approved', className: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: <CheckCircle2 size={11} /> },
 };
 
-const CASE_NUMBERS = Array.from({ length: 15 }, (_, i) => i + 1);
+// case_reports.case_number has a DB-level CHECK (case_number BETWEEN 1 AND
+// 15) — migration 04 — so a tenant's case_reports_required_count is
+// clamped to that range here rather than trusted outright. Raising the
+// ceiling above 15 needs a migration widening that CHECK; out of scope for
+// this wiring fix, flagged as a follow-up (see TenantCustomizationView's
+// module_flags comment).
+const MAX_CASE_REPORTS = 15;
 
 export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ resident }) => {
   const [reports, setReports] = useState<CaseReport[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeCaseNumber, setActiveCaseNumber] = useState<number | null>(null);
+  // Defaults to 15 (the historical fixed count) until the tenant's
+  // module_flags.case_reports_required_count loads — see the effect below.
+  const [requiredCaseCount, setRequiredCaseCount] = useState<number>(MAX_CASE_REPORTS);
+  const caseNumbers = useMemo(() => Array.from({ length: requiredCaseCount }, (_, i) => i + 1), [requiredCaseCount]);
 
   // Edit form
   const [patientInitials, setPatientInitials] = useState<string>('');
@@ -50,6 +60,16 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
   };
 
   useEffect(load, [resident.id]);
+
+  useEffect(() => {
+    databaseService.getTenant(resident.tenant_id ?? DEFAULT_TENANT_ID)
+      .then(tenant => {
+        const raw = Number(tenant?.module_flags?.case_reports_required_count ?? MAX_CASE_REPORTS);
+        const clamped = Number.isFinite(raw) ? Math.min(MAX_CASE_REPORTS, Math.max(1, raw)) : MAX_CASE_REPORTS;
+        setRequiredCaseCount(clamped);
+      })
+      .catch(err => console.warn('Failed to load tenant case-report count, defaulting to 15:', err));
+  }, [resident.tenant_id]);
 
   const activeReport = reports.find(r => r.case_number === activeCaseNumber) || null;
   const isReadOnly = activeReport ? activeReport.status !== 'draft' : false;
@@ -169,11 +189,11 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
           <ClipboardList className="text-slate-500" size={18} />
           <div>
             <h2 className="font-bold text-slate-900 text-lg tracking-tight">Casebook Builder</h2>
-            <p className="text-xs text-slate-500">15 compulsory case management reports</p>
+            <p className="text-xs text-slate-500">{requiredCaseCount} compulsory case management reports</p>
           </div>
         </div>
         <span className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-full">
-          {completedCount} / 15 started
+          {completedCount} / {requiredCaseCount} started
         </span>
       </div>
 
@@ -184,7 +204,7 @@ export const CasebookBuilderView: React.FC<CasebookBuilderViewProps> = ({ reside
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {CASE_NUMBERS.map(num => {
+          {caseNumbers.map(num => {
             const report = reports.find(r => r.case_number === num);
             const status = report?.status || 'draft';
             const badge = STATUS_BADGE[status];

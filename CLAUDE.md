@@ -737,6 +737,47 @@ Deployment below).
   and exercising the flow) is the current QA method — be explicit when a
   change hasn't been manually verified.
 
+## Module admin-content build-out progress (2026-08-14, ongoing)
+
+Phased effort extending org-admin (and app-operator) content control across
+the dashboard modules, following the 2026-08-14 scoping audit's recommended
+sequencing. Each phase is scoped/researched before building — see the
+per-phase notes elsewhere in this file (Casebook & Logbook Engine section
+for the Template Manager, Billing section for operator analytics/AI-rigor)
+for the ones already shipped. This section tracks the smaller module-by-
+module wiring pass:
+
+- **Casebook Builder (old 15-slot MVP) — SHIPPED**: `TenantCustomizationView`
+  already let a Chief set `module_flags.case_reports_required_count`, but
+  `CasebookBuilderView.tsx` never read it (hardcoded `Array.from({length:
+  15}, ...)`) — now wired through, clamped to 1-15 client-side since
+  `case_reports.case_number` has a DB-level `CHECK (case_number BETWEEN 1
+  AND 15)` (migration 04). Raising the ceiling above 15 needs a migration
+  widening that CHECK — not attempted, flagged as a follow-up if a program
+  ever needs more than 15 cases.
+- **Exam Readiness — DELIBERATELY SKIPPED, not an oversight**: audited and
+  found NOT to be a real gap. Its four pillars (dissertation/ethics,
+  15-casebook, roster compliance, Evidemy+logbook+fees+forms) mirror the
+  actual WACP/NPMCN eligibility structure set by the certifying college —
+  fixed by external regulation, not something a program would want to
+  relabel or reorder per-tenant. `exam_readiness`'s schema (fixed named
+  columns, migration 05) already reflects this; building a flexible
+  per-tenant checklist model here would be schema churn for a requirement
+  nobody has. If a future need for genuinely tenant-custom checklist items
+  emerges, revisit — don't assume this was simply missed.
+- **Viva Simulator — SCOPED, NOT BUILT (its own future phase)**: real gap.
+  `OralExamSimulatorView.tsx`'s 5 practice vignettes are hardcoded in the
+  component (`VIGNETTES` array), identical for every tenant regardless of
+  specialty mix, and explicitly labeled non-authoritative practice content.
+  `viva_simulations` (migration 05) only stores session *scores*, not
+  question-bank content — there's no existing flag/table to wire through
+  like the Casebook Builder fix above. A real slice needs a new
+  tenant-scoped `viva_vignettes` table, SECURITY DEFINER CRUD RPCs mirroring
+  the Template Manager's `casebook_templates` pattern, an admin editor tab,
+  and switching the component from the static array to a live fetch —
+  comparable in size to the whole Template Manager phase, not a small
+  wiring fix. Not started.
+
 ## Sourcing module content (templates, rubrics, curricula, reference docs)
 
 The multi-module admin/content build-out (Research Engine, Casebook &
