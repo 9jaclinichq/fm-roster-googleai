@@ -1,6 +1,6 @@
 import React from 'react';
 import { databaseService } from '../lib/databaseService';
-import { getActiveBrand } from '../config/branding';
+import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
 import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope } from 'lucide-react';
 
 interface NavbarProps {
@@ -77,6 +77,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentView
 }) => {
   const brand = getActiveBrand();
+  // Org label only appears once someone is actually signed into an
+  // institution or as an individual doctor — review annotation: "the
+  // institutional label only appears after login to an institution."
+  // Before that, there's no session to attribute it to, so it's hidden
+  // rather than showing a guessed/default org name.
+  const orgLabel = currentResident || isChiefAuthenticated
+    ? B2B_UCH_BRAND.orgLabel
+    : currentDoctor
+    ? B2C_INDEPENDENT_BRAND.orgLabel
+    : null;
   // Pre-auth login screens (Resident/Chief) already carry their own
   // portal-switch link in the login card footer — showing the same action
   // again up here is redundant, and the LIVE DB/PREVIEW ENGINE badge is
@@ -97,7 +107,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
             <div>
               <h1 className="font-bold text-slate-900 tracking-tight text-base sm:text-lg leading-tight">PrivyDoc <span className="text-blue-600 font-semibold">Workspace</span></h1>
-              <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">{brand.orgLabel}</p>
+              {orgLabel && (
+                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">{orgLabel}</p>
+              )}
             </div>
           </div>
 

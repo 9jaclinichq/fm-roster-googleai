@@ -7,13 +7,12 @@ import { getActiveBrand } from '../config/branding';
 // supports — see supabase/migrations/18_individual_doctor_identity.sql:
 //   - Institutional: existing plaintext-code Resident/Chief flow, unchanged.
 //   - Individual doctor: new self-service email+password flow.
-// The B2C/B2B domain only pre-highlights a default; both paths are always
-// manually reachable — domain is a cosmetic hint, never an auth boundary
-// (see src/config/branding.ts's own header comment).
+// Since the doc.*/workspace.* domain split was retired, this is now the
+// ONLY place that split is decided — no hostname-based pre-highlighting,
+// both paths are presented neutrally (see src/config/branding.ts).
 export const AuthLandingView: React.FC = () => {
   const navigate = useNavigate();
   const brand = getActiveBrand();
-  const individualIsDefault = brand.key === 'b2c_independent';
 
   return (
     <div className="max-w-md mx-auto my-12 px-4">
@@ -29,11 +28,7 @@ export const AuthLandingView: React.FC = () => {
           <button
             type="button"
             onClick={() => navigate('/workspace/login')}
-            className={`w-full flex items-center justify-between px-5 py-4 rounded-xl border text-left transition cursor-pointer ${
-              !individualIsDefault
-                ? 'border-blue-500 bg-blue-50/60 ring-1 ring-blue-100'
-                : 'border-slate-200 hover:bg-slate-50'
-            }`}
+            className="w-full flex items-center justify-between px-5 py-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition cursor-pointer"
           >
             <span className="flex items-center space-x-3">
               <Building2 size={18} className="text-blue-600 shrink-0" />
@@ -48,11 +43,7 @@ export const AuthLandingView: React.FC = () => {
           <button
             type="button"
             onClick={() => navigate('/doctor/login')}
-            className={`w-full flex items-center justify-between px-5 py-4 rounded-xl border text-left transition cursor-pointer ${
-              individualIsDefault
-                ? 'border-blue-500 bg-blue-50/60 ring-1 ring-blue-100'
-                : 'border-slate-200 hover:bg-slate-50'
-            }`}
+            className="w-full flex items-center justify-between px-5 py-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition cursor-pointer"
           >
             <span className="flex items-center space-x-3">
               <Stethoscope size={18} className="text-blue-600 shrink-0" />
