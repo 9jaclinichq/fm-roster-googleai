@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { KnowledgePack, KnowledgePackCategory, KnowledgePackItem } from '../types';
+import { databaseService } from '../../../lib/databaseService';
+import { KnowledgePack, KnowledgePackCategory, KnowledgePackItem } from '../../../types';
 import {
   Library,
   Plus,

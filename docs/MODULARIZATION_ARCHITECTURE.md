@@ -278,6 +278,25 @@ order, each phase independently shippable and manually browser-verified before t
    `consultant-review` → `form` → `research` → `casebook-logbook` → `auth` → `org-admin` last
    (largest, most tab-coupled — `ChiefDashboardView.tsx`'s 2,062 lines need to actually be split
    into the `dashboard/` sub-panels listed above, not just relocated as one file).
+   **`announcements`/`doctors`/`billing`/`knowledge-packs`/`exam-readiness`/`viva-simulator`/
+   `roster-engine` DONE (2026-08-15)**, verified together as one batch since each is a small,
+   independent, mostly self-contained move (single or double-file, no shared internal
+   cross-imports between them): `AnnouncementBoardView.tsx` → `modules/announcements/components/`;
+   `DoctorHomeView.tsx`/`CreateOrganizationView.tsx` → `modules/doctors/components/`;
+   `UpgradeCheckoutModal.tsx` → `modules/billing/components/` + `useWorkspaceQuota.ts` →
+   `modules/billing/lib/` (old now-empty `src/lib/billing/` removed); `KnowledgeLibraryView.tsx`/
+   `KnowledgePackManagerView.tsx` → `modules/knowledge-packs/components/`;
+   `ExamReadinessView.tsx` → `modules/exam-readiness/components/`; `OralExamSimulatorView.tsx` →
+   `modules/viva-simulator/components/`; `uchRosterParser.ts` → `modules/roster-engine/lib/` (old
+   now-empty `src/lib/roster/` removed — this module has no `components/`,
+   `MultiRosterManagerView.tsx` belongs to `org-admin/dashboard/`, not here, per the module map
+   above). Every importer updated across `App.tsx`, `ChiefDashboardView.tsx`,
+   `MultiRosterManagerView.tsx`, `CasebookWorkspaceView.tsx`, `ResearchWorkspaceView.tsx`, plus
+   each moved file's own internal imports. `tsc --noEmit` and `npm run build` both clean (identical
+   bundle shape to before). Live-verified in a real browser: resident routes (Announcements,
+   Library, Exam Readiness, Viva Simulator all render with real data) and Chief routes (Knowledge
+   Packs and Multi-Roster Manager tabs both load, the latter confirming the relocated roster
+   parser's import resolves), no console errors.
 4. **`databaseService.ts` split**, module-by-module, following the same order — each module's
    service slice extracted only after that module's components have already moved, so the diff per
    step stays reviewable.

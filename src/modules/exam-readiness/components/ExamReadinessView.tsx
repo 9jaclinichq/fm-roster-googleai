@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { Dissertation, DissertationMilestone, CaseReport, ExamReadiness, Collection, Submission } from '../types';
+import { databaseService } from '../../../lib/databaseService';
+import { Dissertation, DissertationMilestone, CaseReport, ExamReadiness, Collection, Submission } from '../../../types';
 import {
   Gauge,
   AlertTriangle,

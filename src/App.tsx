@@ -5,12 +5,12 @@ import { DevHelper } from './modules/shared/ui/DevHelper';
 import { LoadingShell } from './modules/shared/ui/LoadingShell';
 import { ResidentLoginView } from './components/ResidentLoginView';
 import { ResidentFormView } from './components/ResidentFormView';
-import { AnnouncementBoardView } from './components/AnnouncementBoardView';
+import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
 import { AuthLandingView } from './components/AuthLandingView';
 import { DoctorAuthView } from './components/DoctorAuthView';
-import { DoctorHomeView } from './components/DoctorHomeView';
+import { DoctorHomeView } from './modules/doctors/components/DoctorHomeView';
 import { AdminPortalChooserView } from './components/AdminPortalChooserView';
-import { CreateOrganizationView } from './components/CreateOrganizationView';
+import { CreateOrganizationView } from './modules/doctors/components/CreateOrganizationView';
 import { databaseService, DEFAULT_TENANT_ID } from './lib/databaseService';
 import { TerminologyProvider } from './modules/shared/terminology';
 import { getActiveBrand, getFooterBrand } from './modules/shared/config/branding';
@@ -35,16 +35,16 @@ const DissertationAssistantView = lazy(() =>
   import('./components/DissertationAssistantView').then(m => ({ default: m.DissertationAssistantView }))
 );
 const KnowledgeLibraryView = lazy(() =>
-  import('./components/KnowledgeLibraryView').then(m => ({ default: m.KnowledgeLibraryView }))
+  import('./modules/knowledge-packs/components/KnowledgeLibraryView').then(m => ({ default: m.KnowledgeLibraryView }))
 );
 const CasebookBuilderView = lazy(() =>
   import('./components/CasebookBuilderView').then(m => ({ default: m.CasebookBuilderView }))
 );
 const ExamReadinessView = lazy(() =>
-  import('./components/ExamReadinessView').then(m => ({ default: m.ExamReadinessView }))
+  import('./modules/exam-readiness/components/ExamReadinessView').then(m => ({ default: m.ExamReadinessView }))
 );
 const OralExamSimulatorView = lazy(() =>
-  import('./components/OralExamSimulatorView').then(m => ({ default: m.OralExamSimulatorView }))
+  import('./modules/viva-simulator/components/OralExamSimulatorView').then(m => ({ default: m.OralExamSimulatorView }))
 );
 const ConsultantReviewView = lazy(() =>
   import('./components/ConsultantReviewView').then(m => ({ default: m.ConsultantReviewView }))

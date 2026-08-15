@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { KnowledgePack, KnowledgePackCategory } from '../types';
+import { databaseService } from '../../../lib/databaseService';
+import { KnowledgePack, KnowledgePackCategory } from '../../../types';
 import { Library, Search, Download, RefreshCw, FileText, BookOpen, ClipboardCheck, FileQuestion } from 'lucide-react';
 
 const CATEGORIES: { value: KnowledgePackCategory; label: string; icon: React.ReactNode }[] = [

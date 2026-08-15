@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { Announcement, AnnouncementCategory } from '../types';
+import { databaseService } from '../../../lib/databaseService';
+import { Announcement, AnnouncementCategory } from '../../../types';
 import { Pin, Search, Megaphone, RefreshCw, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface AnnouncementBoardViewProps {

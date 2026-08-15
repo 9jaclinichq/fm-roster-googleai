@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
-import { VivaSimulation, VivaVignette, ScoringBreakdown } from '../types';
+import { databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
+import { VivaSimulation, VivaVignette, ScoringBreakdown } from '../../../types';
 import {
   Mic,
   Clock,

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { casebookCopilot, CasebookCopilotSource } from '../lib/ai/casebookCopilot';
-import { useWorkspaceQuota } from '../lib/billing/useWorkspaceQuota';
-import { UpgradeCheckoutModal } from './UpgradeCheckoutModal';
+import { useWorkspaceQuota } from '../modules/billing/lib/useWorkspaceQuota';
+import { UpgradeCheckoutModal } from '../modules/billing/components/UpgradeCheckoutModal';
 import {
   createGenogramTemplate, addGenogramNode, updateGenogramNode,
   calculateFamilyApgar, FAMILY_APGAR_INTERPRETATION_LABELS,

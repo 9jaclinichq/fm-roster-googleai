@@ -1,4 +1,4 @@
-import { supabase, DEFAULT_TENANT_ID } from '../databaseService';
+import { supabase, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
 import {
   RosterTypeId,
   RosterParseResult,
@@ -12,7 +12,7 @@ import {
   SatelliteGrid,
   SatellitePosting,
   WorkforceMember,
-} from '../../types';
+} from '../../../types';
 
 // Structures raw UCH Family Medicine roster documents (pasted text, or
 // text extracted from an uploaded file) into the grid shapes used by

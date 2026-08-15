@@ -5,7 +5,7 @@ import { LoadingShell } from '../modules/shared/ui/LoadingShell';
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
 // only needed when the Chief actually opens the Knowledge Packs tab.
 const KnowledgePackManagerView = lazy(() =>
-  import('./KnowledgePackManagerView').then(m => ({ default: m.KnowledgePackManagerView }))
+  import('../modules/knowledge-packs/components/KnowledgePackManagerView').then(m => ({ default: m.KnowledgePackManagerView }))
 );
 // Lazy-loaded: the Multi-Roster Manager pulls in the roster parser + a
 // large drag-and-drop grid UI, only needed when this tab is opened.

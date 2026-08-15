@@ -5,7 +5,7 @@
 // 50-actions-per-14-days limit server-side inside every copilot Edge
 // Function, and remains the authoritative backstop — a curl straight at a
 // function URL still hits it. The per-WORKFORCE-member gating configured
-// here (consumed by src/lib/billing/useWorkspaceQuota.ts) is the
+// here (consumed by src/modules/billing/lib/useWorkspaceQuota.ts) is the
 // user-facing layer on top: it counts the member's own ai_action_logs rows
 // client-side, blocks the UI when the free allowance is spent, and offers
 // the Paystack/Flutterwave upgrade checkout instead of a hard error.

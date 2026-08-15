@@ -3,8 +3,8 @@ import { databaseService } from '../lib/databaseService';
 import { loadAvailableTemplates, forkTemplate, editTemplate, TemplateEditPayload } from '../lib/research/templateEngine';
 import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../lib/research/rubricEngine';
 import { researchCopilot, DraftAuditResult, LiteratureMatrixResult, TableShellsResult, ResearchCopilotSource } from '../lib/ai/researchCopilot';
-import { useWorkspaceQuota } from '../lib/billing/useWorkspaceQuota';
-import { UpgradeCheckoutModal } from './UpgradeCheckoutModal';
+import { useWorkspaceQuota } from '../modules/billing/lib/useWorkspaceQuota';
+import { UpgradeCheckoutModal } from '../modules/billing/components/UpgradeCheckoutModal';
 import {
   ResearchWorkspace,
   ResearchTemplate,

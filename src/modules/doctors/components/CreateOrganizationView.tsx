@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, AlertCircle, CheckCircle2, KeyRound } from 'lucide-react';
-import { databaseService } from '../lib/databaseService';
+import { databaseService } from '../../../lib/databaseService';
 
 interface CreateOrganizationViewProps {
   // Hands the freshly-generated admin code back to App.tsx, which prefills

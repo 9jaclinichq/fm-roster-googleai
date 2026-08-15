@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { databaseService } from '../databaseService';
-import { UserSubscription } from '../../types';
+import { databaseService } from '../../../lib/databaseService';
+import { UserSubscription } from '../../../types';
 import {
   AI_QUOTA_ACTION_TYPES,
   AI_QUOTA_WINDOW_DAYS,
   WORKSPACE_TIERS,
   WorkspaceTier,
-} from '../../modules/shared/config/tiers';
+} from '../../shared/config/tiers';
 
 // Client-side AI Copilot quota state for one workforce member: counts the
 // member's Research/Casebook AI actions (ai_action_logs) over the rolling

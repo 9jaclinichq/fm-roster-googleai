@@ -6,7 +6,7 @@ import {
   parseEmergencyRoster,
   parseSupervisionRoster,
   parseSatelliteRoster,
-} from '../lib/roster/uchRosterParser';
+} from '../modules/roster-engine/lib/uchRosterParser';
 import {
   WorkforceMember,
   Collection,
