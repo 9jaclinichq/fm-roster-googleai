@@ -7,6 +7,7 @@ import { ResidentLoginView } from './modules/auth/components/ResidentLoginView';
 import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
 import { AuthLandingView } from './modules/auth/components/AuthLandingView';
+import { TenantSelectorView } from './modules/auth/components/TenantSelectorView';
 import { DoctorAuthView } from './modules/auth/components/DoctorAuthView';
 import { DoctorHomeView } from './modules/doctors/components/DoctorHomeView';
 import { AdminPortalChooserView } from './modules/auth/components/AdminPortalChooserView';
@@ -412,6 +413,19 @@ function MainAppContent() {
               ) : (
                 <Navigate to="/login" replace />
               )
+            }
+          />
+
+          {/* Tenant-first institution selector — the new first step of the
+              org-member login path (see AuthLandingView's header comment
+              and CLAUDE.md's "Backlog: institution-first / self-serve org
+              flow"). Lists active tenants + the individual-doctor path at
+              the same top level; picking a tenant carries its id forward
+              via route state into /workspace/login below. */}
+          <Route
+            path="/workspace/select-org"
+            element={
+              currentResident ? <Navigate to="/workspace/form" replace /> : <TenantSelectorView />
             }
           />
 
