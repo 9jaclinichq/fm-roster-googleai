@@ -513,13 +513,12 @@ and the full guest-review round trip (generate link → open as guest →
 submit feedback → confirm it landed in the resident's view). All test data
 created during that walkthrough was cleaned up afterward.
 
-**Not yet built** (flagged, not silently skipped): Flutterwave integration
-code, live charge/subscription billing and webhooks, full terminology
-retrofit across existing components (`TerminologyProvider`/`useTerminology`
-in `src/lib/terminology.tsx` are real and applied only to the components
-built in migration 11 — `SaaSOperatorConsoleView`, `TenantCustomizationView`,
-`GuestReviewView` — not the rest of the app), and `tenant_ai_adaptation_rules`
-actually being read/applied by the Edge Functions when constructing prompts.
+**Not yet built** (flagged, not silently skipped): `tenant_ai_adaptation_rules`
+actually being read/applied by the Edge Functions when constructing prompts
+(wired for `casebook-copilot` only, per the AI/Edge Functions section above).
+Flutterwave integration, live charge/subscription billing and webhooks, and
+the terminology retrofit are all now built — see the Billing section and
+`src/lib/terminology.tsx`'s own header for current coverage.
 
 ## Billing, Tiers & AI Copilot Feature Gating (migration 17)
 
@@ -689,10 +688,29 @@ Workspace** (branch `feature/gcp-cloudrun-branding-cleanup`):
   tenant/auth boundary.
 - Branding here is PRODUCT naming only; ROLE vocabulary ("Resident", "Chief
   Resident"...) stays with the tenant terminology system in
-  `src/lib/terminology.tsx` and was deliberately not renamed — **except**
-  `ResidentLoginView`'s portal heading, which now reads through
-  `useTerminology()`'s `member` key (see below) rather than being hardcoded,
-  so a tenant override of "Resident" → "Doctor" takes effect there too.
+  `src/lib/terminology.tsx`. **Terminology retrofit (2026-08-15)**: two
+  real gaps closed in the same pass — (1) `TerminologyProvider` was
+  previously mounted once at `App()`'s root with no `tenantId`, so it was
+  permanently pinned to `DEFAULT_TENANT_ID` (UCH) regardless of who was
+  actually logged in; a Chief/resident on a non-UCH tenant (self-serve orgs,
+  migration 24) would have silently seen UCH's vocabulary. Fixed by moving
+  the provider inside `MainAppContent` and computing the active tenant from
+  the real session (`currentResident.tenant_id`, or the Chief's
+  `fm_chief_tenant_id`). (2) `useTerminology()` now covers every user-facing
+  role-word label across the main login flow (`AuthLandingView`,
+  `ResidentLoginView`, `ChiefLoginView`), `Navbar`, the Chief dashboard's
+  headers/tabs/table/CSV export/toasts (`ChiefDashboardView`), the roster
+  HITL editor (`MultiRosterManagerView`), and the review flow
+  (`ConsultantReviewView`, `GuestReviewView`) — not just the 3 components
+  migration 11 originally wired it into. **Deliberately still hardcoded**:
+  `DevHelper.tsx` (dev-only, never rendered in production) and internal
+  identifiers/comments/variable names (`currentResident`, `ResidentSession`,
+  etc.) — renaming those has no user-facing effect. **Manually verified**:
+  `tsc --noEmit` clean; temporarily set a real `terminology_overrides` value
+  on the live UCH tenant (`member`→"Trainee", `admin`→"Program Director") and
+  confirmed every retrofitted surface picked it up in a real browser session
+  (login chooser, Chief portal heading, dashboard header/tabs/table, Navbar
+  chip), then reverted — no test data left behind.
 
 **2026-08-14 UX-review fixes** (`workspc.pdf` walkthrough — small, low-risk
 items only; see "Backlog: institution-first / self-serve org flow" below for

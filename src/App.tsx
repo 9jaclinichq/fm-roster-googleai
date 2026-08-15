@@ -133,6 +133,22 @@ function MainAppContent() {
     hasIndividualDoctorSession: !!currentDoctor,
   });
 
+  // The tenant whose terminology_overrides should be active for this
+  // session — previously TerminologyProvider was mounted once at the App()
+  // root with no tenantId, so it was permanently pinned to DEFAULT_TENANT_ID
+  // (UCH) regardless of who was actually logged in. Now that per-tenant
+  // Chief admin codes and self-serve org creation are real (migrations
+  // 23/24), a Chief or resident on a non-UCH tenant would otherwise see
+  // UCH's vocabulary instead of their own org's. A doctor session with no
+  // linked workforce row has no tenant of its own (individual doctors are
+  // tenant-agnostic — see ResidentSession.tenant_id's own comment), so it
+  // falls through to the default like every other tenant-less path in
+  // this file (e.g. the doctor-owner ResearchWorkspaceView calls below).
+  const activeTenantId =
+    currentResident?.tenant_id ||
+    (isChiefAuthenticated ? localStorage.getItem('fm_chief_tenant_id') : null) ||
+    DEFAULT_TENANT_ID;
+
   // DevHelper Preset triggers
   const [presetResident, setPresetResident] = useState<WorkforceMember | null>(null);
   const [presetAdminCode, setPresetAdminCode] = useState<string>('');
@@ -305,6 +321,7 @@ function MainAppContent() {
   };
 
   return (
+    <TerminologyProvider tenantId={activeTenantId}>
     <div id="fm-app" className="min-h-screen flex flex-col bg-slate-50">
       {/* Navigation Header */}
       <Navbar
@@ -662,15 +679,14 @@ function MainAppContent() {
         </div>
       </footer>
     </div>
+    </TerminologyProvider>
   );
 }
 
 export default function App() {
   return (
     <Router>
-      <TerminologyProvider>
-        <MainAppContent />
-      </TerminologyProvider>
+      <MainAppContent />
     </Router>
   );
 }

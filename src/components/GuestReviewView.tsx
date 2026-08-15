@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { databaseService } from '../lib/databaseService';
 import { GuestReviewInvitePublic, DissertationMilestoneWithContext, CaseReportWithWorkforce } from '../types';
 import { ShieldCheck, RefreshCw, AlertTriangle, Camera, CheckCircle2, XCircle, FileText, Sparkles } from 'lucide-react';
+import { useTerminology } from '../lib/terminology';
 
 // Public route (/guest-review/:token) — NOT gated by any login. Reachable
 // by anyone holding the token (an unguessable UUID shared as a link), same
@@ -11,6 +12,7 @@ import { ShieldCheck, RefreshCw, AlertTriangle, Camera, CheckCircle2, XCircle, F
 // policy: access is only through the RPCs this view calls.
 export const GuestReviewView: React.FC = () => {
   const { token } = useParams<{ token: string }>();
+  const { t } = useTerminology();
 
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -172,7 +174,7 @@ export const GuestReviewView: React.FC = () => {
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-3">
         <h3 className="font-bold text-slate-800">{title}</h3>
-        <p className="text-xs text-slate-500">{residentName || 'Unknown resident'}</p>
+        <p className="text-xs text-slate-500">{residentName || `Unknown ${t('member', 'resident').toLowerCase()}`}</p>
         {documentUrl ? (
           <a href={documentUrl} target="_blank" rel="noreferrer" className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-800 hover:underline bg-slate-50 p-2.5 rounded-lg border border-slate-200 w-max">
             <FileText size={13} className="text-slate-400" />

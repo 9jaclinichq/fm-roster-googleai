@@ -1,6 +1,7 @@
 import React from 'react';
 import { databaseService } from '../lib/databaseService';
 import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
+import { useTerminology } from '../lib/terminology';
 import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope } from 'lucide-react';
 
 interface NavbarProps {
@@ -77,6 +78,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentView
 }) => {
   const brand = getActiveBrand();
+  const { t } = useTerminology();
   // Org label only appears once someone is actually signed into an
   // institution or as an individual doctor — review annotation: "the
   // institutional label only appears after login to an institution."
@@ -149,7 +151,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             {isChiefAuthenticated && currentView.startsWith('chief') && (
               <div className="flex items-center space-x-2">
                 <div className="hidden md:block text-right">
-                  <div className="text-xs font-bold text-slate-800 font-sans">Chief Resident</div>
+                  <div className="text-xs font-bold text-slate-800 font-sans">{t('admin', 'Chief Resident')}</div>
                   <div className="text-[9px] text-blue-600 uppercase tracking-wider font-bold">Admin Panel</div>
                 </div>
                 <button
@@ -189,7 +191,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     className="flex items-center space-x-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm transition cursor-pointer"
                   >
                     <Users size={13} />
-                    <span>Resident Portal</span>
+                    <span>{t('member', 'Resident')} Portal</span>
                   </button>
                 ) : (
                   <button
@@ -197,7 +199,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     className="flex items-center space-x-1.5 px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md text-xs font-semibold shadow-sm transition cursor-pointer"
                   >
                     <Shield size={13} className="text-slate-500" />
-                    <span>Chief Portal</span>
+                    <span>{t('admin', 'Chief Resident')} Portal</span>
                   </button>
                 )}
               </div>

@@ -29,6 +29,7 @@ import {
   Sparkles,
   User,
 } from 'lucide-react';
+import { useTerminology } from '../lib/terminology';
 
 const EMPTY_GOP: GopClinicGrid = { slots: [], unparsed_notes: [] };
 const EMPTY_EMERGENCY: EmergencyCallGrid = { shifts: [], unparsed_notes: [] };
@@ -52,6 +53,7 @@ interface MultiRosterManagerViewProps {
 }
 
 export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ tenantId }) => {
+  const { t } = useTerminology();
   const [isLoading, setIsLoading] = useState(true);
   const [collection, setCollection] = useState<Collection | null>(null);
   const [workforce, setWorkforce] = useState<WorkforceMember[]>([]);
@@ -364,8 +366,8 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
 
       {/* Step 1: Resident Floor Check */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-5 space-y-3">
-        <h4 className="font-bold text-slate-800 text-xs sm:text-sm">Step 1 — Resident Floor Check</h4>
-        <p className="text-[10px] text-slate-400">Only on-floor residents are draggable into the grids below. Toggle who's currently on GOP floor vs. an outside rotation.</p>
+        <h4 className="font-bold text-slate-800 text-xs sm:text-sm">Step 1 — {t('member', 'Resident')} Floor Check</h4>
+        <p className="text-[10px] text-slate-400">Only on-floor {t('members', 'residents').toLowerCase()} are draggable into the grids below. Toggle who's currently on GOP floor vs. an outside rotation.</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {workforce.map(w => (
             <button
@@ -445,9 +447,9 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
               touch (select a chip, then tap a slot below to assign them,
               since native drag-and-drop doesn't fire on phones/tablets). */}
           <div className="lg:col-span-1 space-y-2">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Assign Residents</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Assign {t('members', 'Residents')}</span>
             <p className="text-[9px] text-slate-400 leading-relaxed">
-              Drag a resident into a slot on desktop, or on a touch device tap a resident then tap a slot to assign them.
+              Drag a {t('member', 'resident').toLowerCase()} into a slot on desktop, or on a touch device tap a {t('member', 'resident').toLowerCase()} then tap a slot to assign them.
             </p>
             <div className="space-y-1.5 max-h-96 overflow-y-auto">
               {onFloorResidents.map(w => {
@@ -472,10 +474,10 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                   </button>
                 );
               })}
-              {onFloorResidents.length === 0 && <p className="text-[10px] text-slate-400">No on-floor residents.</p>}
+              {onFloorResidents.length === 0 && <p className="text-[10px] text-slate-400">No on-floor {t('members', 'residents').toLowerCase()}.</p>}
             </div>
             {notOnFloorResidents.length > 0 && (
-              <p className="text-[9px] text-slate-400">{notOnFloorResidents.length} resident(s) on outside rotation, not shown here.</p>
+              <p className="text-[9px] text-slate-400">{notOnFloorResidents.length} {t('member', 'resident').toLowerCase()}(s) on outside rotation, not shown here.</p>
             )}
           </div>
 
@@ -532,7 +534,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                         </span>
                       ))}
                       {(!slot.residents || slot.residents.length === 0) && (
-                        <span className="text-[9px] text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>
+                        <span className="text-[9px] text-slate-300 italic">{selectedResidentId ? 'tap to assign' : `drag or tap a ${t('member', 'resident').toLowerCase()}, then tap here`}</span>
                       )}
                     </div>
                   </div>
@@ -581,7 +583,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                         </span>
                       ))}
                       {shift.on_call.length === 0 && (
-                        <span className="text-[9px] text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>
+                        <span className="text-[9px] text-slate-300 italic">{selectedResidentId ? 'tap to assign' : `drag or tap a ${t('member', 'resident').toLowerCase()}, then tap here`}</span>
                       )}
                     </div>
                   </div>
@@ -611,7 +613,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                         }`}
                       >
                         <span className="text-[9px] text-slate-400 block">1st On Duty</span>
-                        {duty.first_on_duty || <span className="text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>}
+                        {duty.first_on_duty || <span className="text-slate-300 italic">{selectedResidentId ? 'tap to assign' : `drag or tap a ${t('member', 'resident').toLowerCase()}, then tap here`}</span>}
                       </div>
                       <div
                         onDragOver={e => e.preventDefault()}
@@ -622,7 +624,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                         }`}
                       >
                         <span className="text-[9px] text-slate-400 block">2nd On Duty</span>
-                        {duty.second_on_duty || <span className="text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>}
+                        {duty.second_on_duty || <span className="text-slate-300 italic">{selectedResidentId ? 'tap to assign' : `drag or tap a ${t('member', 'resident').toLowerCase()}, then tap here`}</span>}
                       </div>
                     </div>
                   </div>
@@ -665,7 +667,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                         </span>
                       ))}
                       {posting.assigned.length === 0 && (
-                        <span className="text-[9px] text-slate-300 italic">{selectedResidentId ? 'tap to assign' : 'drag or tap a resident, then tap here'}</span>
+                        <span className="text-[9px] text-slate-300 italic">{selectedResidentId ? 'tap to assign' : `drag or tap a ${t('member', 'resident').toLowerCase()}, then tap here`}</span>
                       )}
                     </div>
                   </div>

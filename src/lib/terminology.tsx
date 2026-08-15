@@ -6,14 +6,26 @@ import { databaseService, DEFAULT_TENANT_ID } from './databaseService';
 // without a code-level rename — see migration 11's header for why a full
 // find-and-replace rename was rejected in favor of this.
 //
-// SCOPE: this provider and hook are real and functional, but only applied
-// to the NEW components built in this pass (SaaSOperatorConsoleView,
-// TenantCustomizationView, GuestReviewView) as a demonstration. Retrofitting
-// every existing component (ChiefDashboardView, ResidentFormView, Navbar,
-// etc.) to read through useTerminology() instead of hardcoded strings is a
-// separate, larger follow-up task — deliberately not attempted here to
-// avoid a huge, error-prone mechanical diff across dozens of files for a
-// single-tenant app that has no tenant-switching login yet to exercise it.
+// SCOPE (updated 2026-08-15 — this note was stale): TerminologyProvider is
+// now mounted with the ACTUAL active session's tenantId (see App.tsx's
+// activeTenantId, computed from currentResident.tenant_id / the Chief's
+// fm_chief_tenant_id) rather than being pinned to DEFAULT_TENANT_ID
+// regardless of who's logged in — that was a real bug once per-tenant Chief
+// codes and self-serve org creation became real (migrations 23/24), fixed
+// alongside this retrofit pass. useTerminology() now covers every
+// user-facing "Resident"/"Chief Resident" label in the main login flow
+// (AuthLandingView, ResidentLoginView, ChiefLoginView), the primary nav
+// (Navbar), the Chief dashboard's headers/tabs/table/CSV export/toasts
+// (ChiefDashboardView), the roster HITL editor (MultiRosterManagerView),
+// and the co-resident/consultant review flow (ConsultantReviewView,
+// GuestReviewView). NOT covered, deliberately: DevHelper.tsx (dev-only,
+// never rendered in production — see App.tsx's import.meta.env.DEV guard)
+// and internal identifiers/comments/variable names throughout the codebase
+// (e.g. `currentResident`, `ResidentSession`) — renaming those has no
+// user-facing effect and would just be code churn. Live-verified end-to-end
+// by temporarily setting a real terminology_overrides value on the UCH
+// tenant and confirming every retrofitted surface picked it up, then
+// reverting — see this pass's commit for the exact verification.
 
 export const TERMINOLOGY_DEFAULTS: Record<string, string> = {
   org_name: 'Family Medicine, UCH Ibadan',
@@ -45,10 +57,9 @@ export function useTerminology() {
   return useContext(TerminologyContext);
 }
 
-// No tenant-switching login flow exists yet (see note above), so this
-// always loads the single seeded tenant's overrides. Once real per-tenant
-// login exists, tenantId should come from session state instead of the
-// hardcoded default.
+// tenantId is now passed by App.tsx's MainAppContent from the actual active
+// session (see the header note above) — the DEFAULT_TENANT_ID fallback
+// below only fires pre-login or for a tenant-less individual-doctor session.
 export const TerminologyProvider: React.FC<{ children: React.ReactNode; tenantId?: string }> = ({
   children,
   tenantId = DEFAULT_TENANT_ID,

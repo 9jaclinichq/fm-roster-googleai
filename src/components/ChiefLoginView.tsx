@@ -95,7 +95,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
               />
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-              Input the Department administrative code to access management grids, reset resident codes, export reports, and adjust deadlines.
+              Input the Department administrative code to access management grids, reset {t('member', 'resident').toLowerCase()} codes, export reports, and adjust deadlines.
             </p>
           </div>
 
@@ -122,7 +122,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
             onClick={onNavigateToResident}
             className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
           >
-            Go back to Resident Dashboard &rarr;
+            Go back to {t('member', 'Resident')} Dashboard &rarr;
           </button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { DissertationMilestoneWithContext, CaseReportWithWorkforce, ReviewTargetType } from '../types';
+import { useTerminology } from '../lib/terminology';
 import {
   ShieldCheck,
   RefreshCw,
@@ -31,6 +32,7 @@ interface ReviewTarget {
 }
 
 export const ConsultantReviewView: React.FC<ConsultantReviewViewProps> = ({ reviewer, canApprove }) => {
+  const { t } = useTerminology();
   const [activeTab, setActiveTab] = useState<'dissertations' | 'casebook'>('dissertations');
   const [milestones, setMilestones] = useState<DissertationMilestoneWithContext[]>([]);
   const [caseReports, setCaseReports] = useState<CaseReportWithWorkforce[]>([]);
@@ -140,14 +142,14 @@ export const ConsultantReviewView: React.FC<ConsultantReviewViewProps> = ({ revi
                 <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
                   {m.stage}
                 </span>
-                <h3 className="font-bold text-slate-900 text-sm">{m.dissertations?.workforce?.full_name || 'Unknown resident'}</h3>
+                <h3 className="font-bold text-slate-900 text-sm">{m.dissertations?.workforce?.full_name || `Unknown ${t('member', 'resident').toLowerCase()}`}</h3>
                 <p className="text-xs text-slate-500 truncate">{m.dissertations?.title}</p>
                 <button
                   onClick={() => openReview({
                     type: 'dissertation_milestone',
                     id: m.id,
                     title: `${m.stage} — ${m.dissertations?.title || ''}`,
-                    residentName: m.dissertations?.workforce?.full_name || 'Unknown resident',
+                    residentName: m.dissertations?.workforce?.full_name || `Unknown ${t('member', 'resident').toLowerCase()}`,
                     documentUrl: m.document_url,
                   })}
                   className="w-full mt-2 py-2 bg-slate-950 hover:bg-slate-900 text-white font-bold rounded-xl text-xs shadow-sm transition cursor-pointer"
@@ -170,14 +172,14 @@ export const ConsultantReviewView: React.FC<ConsultantReviewViewProps> = ({ revi
               <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
                 Case {c.case_number}
               </span>
-              <h3 className="font-bold text-slate-900 text-sm">{c.workforce?.full_name || 'Unknown resident'}</h3>
+              <h3 className="font-bold text-slate-900 text-sm">{c.workforce?.full_name || `Unknown ${t('member', 'resident').toLowerCase()}`}</h3>
               <p className="text-xs text-slate-500 truncate">{c.diagnosis || 'No diagnosis recorded'}</p>
               <button
                 onClick={() => openReview({
                   type: 'case_report',
                   id: c.id,
                   title: `Case ${c.case_number} — ${c.diagnosis || 'Untitled'}`,
-                  residentName: c.workforce?.full_name || 'Unknown resident',
+                  residentName: c.workforce?.full_name || `Unknown ${t('member', 'resident').toLowerCase()}`,
                   documentUrl: c.document_url,
                 })}
                 className="w-full mt-2 py-2 bg-slate-950 hover:bg-slate-900 text-white font-bold rounded-xl text-xs shadow-sm transition cursor-pointer"
@@ -247,7 +249,7 @@ export const ConsultantReviewView: React.FC<ConsultantReviewViewProps> = ({ revi
                   rows={4}
                   value={feedbackNotes}
                   onChange={(e) => setFeedbackNotes(e.target.value)}
-                  placeholder="Write feedback for the resident..."
+                  placeholder={`Write feedback for the ${t('member', 'resident').toLowerCase()}...`}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-1 focus:ring-slate-950"
                 />
               </div>

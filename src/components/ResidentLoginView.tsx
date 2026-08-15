@@ -60,7 +60,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
         setWorkforce(data.filter((w) => w.active));
       } catch (err) {
         console.warn('Error loading workforce:', err);
-        setError('Failed to fetch resident names from server.');
+        setError(`Failed to fetch ${t('member', 'resident').toLowerCase()} names from server.`);
       } finally {
         setIsLoading(false);
       }
@@ -92,7 +92,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
     }
 
     if (accessCode.length !== 6 || !/^\d+$/.test(accessCode)) {
-      setError('Resident Access Code must be exactly 6 numeric digits.');
+      setError(`${t('member', 'Resident')} Access Code must be exactly 6 numeric digits.`);
       return;
     }
 
@@ -105,7 +105,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
     try {
       const selectedResident = workforce.find((w) => w.id === selectedId);
       if (!selectedResident) {
-        setError('Selected resident is invalid or no longer active.');
+        setError(`Selected ${t('member', 'resident').toLowerCase()} is invalid or no longer active.`);
         setIsLoggingIn(false);
         return;
       }
@@ -128,7 +128,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
       }
     } catch (err) {
       console.warn(err);
-      setError('Authentication failed. Please contact your Chief Resident.');
+      setError(`Authentication failed. Please contact your ${t('admin', 'Chief Resident')}.`);
     } finally {
       setIsLoggingIn(false);
     }
@@ -280,7 +280,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
               />
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-              Enter your unique 6-digit resident code. No usernames or passwords required.
+              Enter your unique 6-digit {t('member', 'resident').toLowerCase()} code. No usernames or passwords required.
             </p>
           </div>
 

@@ -24,6 +24,7 @@ const TemplateManagerView = lazy(() =>
   import('./TemplateManagerView').then(m => ({ default: m.TemplateManagerView }))
 );
 import { Collection, WorkforceMember, SubmissionWithWorkforce, Category, Submission, Announcement, AnnouncementCategory, DelegatedRole, SubadminRoleId } from '../types';
+import { useTerminology } from '../lib/terminology';
 import {
   Users,
   Clock,
@@ -78,6 +79,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   // Resolved once at login (App.tsx's handleChiefLogin, migration 23) — the
   // tenant this Chief's admin code belongs to.
   const [tenantId] = useState<string | null>(() => localStorage.getItem('fm_chief_tenant_id'));
+  const { t } = useTerminology();
 
   const [collection, setCollection] = useState<Collection | null>(null);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -233,7 +235,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
     if (!collection) return;
     
     const headers = [
-      'Resident Name', 
+      `${t('member', 'Resident')} Name`,
       'Category', 
       'Current Rotation', 
       'Expected Next Rotation', 
@@ -395,7 +397,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
       const newCode = await databaseService.resetResidentAccessCode(adminCode, memberId);
       setResidentCodes(prev => ({ ...prev, [memberId]: newCode }));
       const member = workforce.find(w => w.id === memberId);
-      triggerSuccess(`Access code for "${member?.full_name || 'resident'}" reset to ${newCode}.`);
+      triggerSuccess(`Access code for "${member?.full_name || t('member', 'resident').toLowerCase()}" reset to ${newCode}.`);
     } catch (err) {
       console.warn(err);
     }
@@ -718,9 +720,9 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         <div>
           <span className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">Administrative Session</span>
           <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center space-x-2">
-            <span>Chief Resident Board</span>
+            <span>{t('admin', 'Chief Resident')} Board</span>
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5">Manage Family Medicine resident monthly postings and leave requests</p>
+          <p className="text-xs text-slate-500 mt-0.5">Manage Family Medicine {t('member', 'resident').toLowerCase()} monthly postings and leave requests</p>
         </div>
 
         <button
@@ -792,7 +794,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
         {/* KPI: Pending */}
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
-          <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Pending Residents</span>
+          <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Pending {t('members', 'Residents')}</span>
           <div className="mt-2 flex items-baseline space-x-1.5">
             <span className={`font-extrabold text-3xl ${pendingCount > 0 ? 'text-amber-600' : 'text-slate-900'}`}>
               {pendingCount}
@@ -812,7 +814,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
-          Resident Submissions ({submissions.length})
+          {t('member', 'Resident')} Submissions ({submissions.length})
         </button>
         <button
           onClick={() => setActiveTab('pending')}
@@ -822,7 +824,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
-          Pending Residents ({pendingResidents.length})
+          Pending {t('members', 'Residents')} ({pendingResidents.length})
         </button>
         <button
           onClick={() => setActiveTab('workforce')}
@@ -914,7 +916,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 flex-wrap pb-4 border-b border-slate-100">
               <div className="flex items-center space-x-2">
                 <FileText className="text-slate-400" size={18} />
-                <h3 className="font-bold text-slate-800 text-sm md:text-base">Resident Responses</h3>
+                <h3 className="font-bold text-slate-800 text-sm md:text-base">{t('member', 'Resident')} Responses</h3>
               </div>
               {submissions.length > 0 && (
                 <button
@@ -934,7 +936,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                 <Search size={14} className="text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="Search by resident or rotation..."
+                  placeholder={`Search by ${t('member', 'resident').toLowerCase()} or rotation...`}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 bg-slate-50 hover:bg-slate-100/50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
@@ -976,7 +978,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase border-b border-slate-200 tracking-wider">
-                    <th className="px-4 py-3">Resident</th>
+                    <th className="px-4 py-3">{t('member', 'Resident')}</th>
                     <th className="px-4 py-3">Category</th>
                     <th className="px-4 py-3">Current Rotation</th>
                     <th className="px-4 py-3">Next Rotation</th>
@@ -1025,7 +1027,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                           <button
                             onClick={() => openEditSubmission(sub)}
                             className="inline-flex items-center justify-center p-1.5 hover:bg-slate-100 text-slate-600 hover:text-slate-950 rounded-lg transition cursor-pointer"
-                            title="Edit resident's submission details"
+                            title={`Edit ${t('member', 'resident').toLowerCase()}'s submission details`}
                           >
                             <Edit size={14} />
                           </button>
@@ -1044,14 +1046,14 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-6 space-y-4">
             <div className="pb-3 border-b border-slate-100">
               <h3 className="font-bold text-slate-800 text-sm md:text-base">Pending Submissions</h3>
-              <p className="text-xs text-slate-500">Active residents who have not yet submitted their information for the current collection.</p>
+              <p className="text-xs text-slate-500">Active {t('members', 'residents').toLowerCase()} who have not yet submitted their information for the current collection.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {pendingResidents.length === 0 ? (
                 <div className="md:col-span-3 text-center py-8 text-slate-400 bg-slate-50 rounded-xl border border-slate-200">
                   <UserCheck size={32} className="text-emerald-500 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-700">All active residents have submitted!</p>
+                  <p className="text-sm font-semibold text-slate-700">All active {t('members', 'residents').toLowerCase()} have submitted!</p>
                   <p className="text-xs text-slate-400 mt-0.5">100% collection compliance reached.</p>
                 </div>
               ) : (
@@ -1276,7 +1278,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-4">
                   <div className="pb-2 border-b border-slate-100 flex items-center space-x-2">
                     <UserPlus size={16} className="text-slate-500" />
-                    <h4 className="font-bold text-slate-800 text-xs sm:text-sm">Add New Resident</h4>
+                    <h4 className="font-bold text-slate-800 text-xs sm:text-sm">Add New {t('member', 'Resident')}</h4>
                   </div>
 
                   {newMemberError && (
@@ -1839,7 +1841,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
               {/* Notes */}
               <div className="border-t border-slate-100 pt-4">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Additional Resident Notes</span>
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Additional {t('member', 'Resident')} Notes</span>
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-slate-800 leading-relaxed font-medium mt-1">
                   {selectedSubmission.notes || <span className="text-slate-400 italic">No notes provided.</span>}
                 </div>
@@ -1875,7 +1877,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
             <div className="bg-slate-950 px-6 py-4 text-white flex justify-between items-center shrink-0">
               <div>
                 <h3 className="font-bold text-base sm:text-lg">Edit Submission</h3>
-                <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Resident: {editingSubmission.workforce.full_name}</p>
+                <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">{t('member', 'Resident')}: {editingSubmission.workforce.full_name}</p>
               </div>
               <button
                 onClick={() => setEditingSubmission(null)}
