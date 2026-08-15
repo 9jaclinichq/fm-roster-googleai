@@ -523,15 +523,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                   >
                     <div className="min-w-0">
                       <div className="text-[10px] font-bold text-slate-500">{slot.date_or_day} — {slot.clinic_type}</div>
-                      {/* TODO(terminology): "Consultants" is a plural of the
-                          `senior_reviewer` concept, which has no plural key
-                          in TERMINOLOGY_DEFAULTS (src/modules/shared/terminology.tsx)
-                          and no established plural-form precedent elsewhere
-                          in the codebase (unlike member/members). Left
-                          hardcoded rather than inventing a new terminology
-                          key/schema field — see
-                          docs/LIVING_SYSTEM_GAP_AUDIT.md's terminology audit. */}
-                      <div className="text-xs text-slate-700 truncate">Consultants: {slot.consultants.join(', ') || '—'}</div>
+                      <div className="text-xs text-slate-700 truncate">{t('senior_reviewers', 'Consultants')}: {slot.consultants.join(', ') || '—'}</div>
                     </div>
                     <div className="flex flex-wrap gap-1 justify-end min-w-[120px]">
                       {(slot.residents || []).map(rid => (

@@ -33,6 +33,7 @@ export const TERMINOLOGY_DEFAULTS: Record<string, string> = {
   members: 'Residents',
   admin: 'Chief Resident',
   senior_reviewer: 'Consultant',
+  senior_reviewers: 'Consultants',
   rotation: 'Rotation',
   dissertation: 'Dissertation',
   case_report: 'Case Report',

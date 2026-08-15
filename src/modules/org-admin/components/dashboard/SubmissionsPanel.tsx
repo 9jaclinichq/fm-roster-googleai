@@ -148,8 +148,8 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
               <tr className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase border-b border-slate-200 tracking-wider">
                 <th className="px-4 py-3">{t('member', 'Resident')}</th>
                 <th className="px-4 py-3">Category</th>
-                <th className="px-4 py-3">Current Rotation</th>
-                <th className="px-4 py-3">Next Rotation</th>
+                <th className="px-4 py-3">Current {t('rotation', 'Rotation')}</th>
+                <th className="px-4 py-3">Next {t('rotation', 'Rotation')}</th>
                 <th className="px-4 py-3">Leave Status</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
@@ -230,11 +230,11 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
             <div className="p-6 sm:p-8 space-y-6 text-xs sm:text-sm">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Current Rotation</span>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Current {t('rotation', 'Rotation')}</span>
                   <div className="font-bold text-slate-900 mt-0.5">{selectedSubmission.current_rotation}</div>
                 </div>
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Expected Next Rotation</span>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Expected Next {t('rotation', 'Rotation')}</span>
                   <div className="font-bold text-slate-900 mt-0.5">{selectedSubmission.next_rotation}</div>
                 </div>
               </div>
@@ -359,7 +359,7 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Current Rotation */}
                 <div className="space-y-1">
-                  <label htmlFor="edit-curr-rot" className="text-xs font-bold text-slate-700 uppercase">Current Rotation</label>
+                  <label htmlFor="edit-curr-rot" className="text-xs font-bold text-slate-700 uppercase">Current {t('rotation', 'Rotation')}</label>
                   <input
                     id="edit-curr-rot"
                     type="text"
@@ -371,7 +371,7 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
 
                 {/* Next Rotation */}
                 <div className="space-y-1">
-                  <label htmlFor="edit-next-rot" className="text-xs font-bold text-slate-700 uppercase">Expected Next Rotation</label>
+                  <label htmlFor="edit-next-rot" className="text-xs font-bold text-slate-700 uppercase">Expected Next {t('rotation', 'Rotation')}</label>
                   <input
                     id="edit-next-rot"
                     type="text"
