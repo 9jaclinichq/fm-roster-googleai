@@ -134,6 +134,31 @@ before treating this as a real access-control boundary.
   anon key both set, ~40/~208 chars). Treat this workspace as pointed at a
   real backend, not a throwaway sandbox — be careful with destructive queries
   even in "just testing" contexts.
+- **Real `auth.uid()`-scoped RLS boundaries do exist for a few tables — don't
+  assume everything is `USING(true)` just because most of the app is.**
+  `doctor_profiles` (migration 18), `research_workspaces`/`casebook_workspaces`
+  (migration 25 — doctor-owned rows, `doctor_id IS NOT NULL`, require
+  `auth.uid() = doctor_id`; institutional rows, `workforce_id IS NOT NULL`,
+  stay `USING(true)` same as everything else), and now their child content
+  tables too (migration 31, 2026-08-15): `research_chapters`,
+  `research_correction_logs` (both join to `research_workspaces`), and
+  `clinical_case_reports` (joins to `casebook_workspaces`) each got a
+  join-based policy mirroring their parent's own institutional-vs-doctor
+  split. **Correction to migration 25's own header**: it named 5 child
+  tables as affected, but `clinical_logbooks`/`admin_logbook_parsing_queue`
+  turned out to be workforce_id-keyed only with no workspace_id or doctor_id
+  path at all (confirmed against both the live schema and
+  `CasebookWorkspaceView.tsx`'s own `owner.kind === 'workforce'` write
+  gates) — a doctor-owned workspace can never produce a row in either, so
+  there was nothing to fix there; only 3 tables actually needed it.
+  **Manually verified** (migration 31): rather than a full browser Supabase
+  Auth signup, simulated PostgREST's own request context directly
+  (`SET ROLE anon|authenticated` + `set_config('request.jwt.claims', ...)`)
+  against real test rows for all 3 tables — confirmed an anonymous/different-
+  doctor request now gets 0 rows and is blocked from inserting, the owning
+  doctor still gets full access, and institutional rows are completely
+  unaffected (still publicly readable, same as every other table) — then
+  cleaned up every test row.
 
 ## What's Missing for Full RBAC / Schema Completeness
 
