@@ -21,8 +21,14 @@
 // AI-backed Edge Function (check_and_increment_tenant_ai_quota, migration
 // 11) via researchRubric.ts's checkResearchAiQuota — research actions
 // don't get a separate budget.
+//
+// AI-RIGOR TUNING (2026-08-15): after the quota check, this also splices in
+// the tenant's operator-authored prompt override, if any, via
+// _shared/tenantAdaptation.ts under the 'research_copilot' feature_key —
+// extending the pattern casebook-copilot originally proved out alone.
 
 import { buildDynamicSystemPrompt, checkResearchAiQuota, ResearchTemplateRubric } from '../_shared/researchRubric.ts';
+import { fetchTenantAdaptationPromptOverride, appendTenantAdaptationOverride } from '../_shared/tenantAdaptation.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -183,6 +189,8 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'No text provided.' }, 400);
   }
 
+  let systemPrompt = template ? buildDynamicSystemPrompt(basePrompt, template) : basePrompt;
+
   if (body.tenant_id) {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -198,10 +206,14 @@ Deno.serve(async (req: Request) => {
           429
         );
       }
+
+      // AI-rigor tuning (tenant_ai_adaptation_rules, migration 11) — see
+      // _shared/tenantAdaptation.ts. Any failure silently keeps the
+      // unmodified prompt rather than failing the request.
+      const extraInstructions = await fetchTenantAdaptationPromptOverride(supabaseUrl, serviceRoleKey, body.tenant_id, 'research_copilot');
+      systemPrompt = appendTenantAdaptationOverride(systemPrompt, extraInstructions);
     }
   }
-
-  const systemPrompt = template ? buildDynamicSystemPrompt(basePrompt, template) : basePrompt;
 
   // Try OpenAI first, then Gemini — either may be unconfigured or
   // transiently failing; if both fail, the client falls back to its own

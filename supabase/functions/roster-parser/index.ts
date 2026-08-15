@@ -31,8 +31,14 @@
 // TENANT AI QUOTA (migration 11): same optional tenant_id + server-side
 // quota check as academic-copilot — see that function's header for the
 // full rationale. Enforced here too, not just client-side.
+//
+// AI-RIGOR TUNING (2026-08-15): after the quota check, this also splices in
+// the tenant's operator-authored prompt override, if any, via
+// _shared/tenantAdaptation.ts under the 'roster_parser' feature_key —
+// extending the pattern casebook-copilot originally proved out alone.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { fetchTenantAdaptationPromptOverride, appendTenantAdaptationOverride } from '../_shared/tenantAdaptation.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -219,7 +225,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const { roster_type, text } = body || ({} as RequestBody);
-  const systemPrompt = roster_type && SYSTEM_PROMPTS[roster_type];
+  let systemPrompt = roster_type && SYSTEM_PROMPTS[roster_type];
   if (!systemPrompt) {
     return jsonResponse({ error: `Unknown roster_type: ${String(roster_type)}` }, 400);
   }
@@ -238,6 +244,16 @@ Deno.serve(async (req: Request) => {
         },
         429
       );
+    }
+
+    // AI-rigor tuning (tenant_ai_adaptation_rules, migration 11) — see
+    // _shared/tenantAdaptation.ts. Any failure silently keeps the
+    // unmodified prompt rather than failing the request.
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (supabaseUrl && serviceRoleKey) {
+      const extraInstructions = await fetchTenantAdaptationPromptOverride(supabaseUrl, serviceRoleKey, body.tenant_id, 'roster_parser');
+      systemPrompt = appendTenantAdaptationOverride(systemPrompt, extraInstructions);
     }
   }
 

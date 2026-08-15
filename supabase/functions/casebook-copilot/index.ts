@@ -21,10 +21,9 @@
 import {
   buildCasebookSystemPrompt,
   checkCasebookAiQuota,
-  fetchTenantAdaptationPromptOverride,
-  appendTenantAdaptationOverride,
   CasebookTemplateRubric,
 } from '../_shared/casebookRubric.ts';
+import { fetchTenantAdaptationPromptOverride, appendTenantAdaptationOverride } from '../_shared/tenantAdaptation.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -207,12 +206,12 @@ Deno.serve(async (req: Request) => {
   // and generate_defense_questions get the dynamic per-template prompt.
   let systemPrompt = template && action !== 'parse_logbook_curriculum' ? buildCasebookSystemPrompt(basePrompt, template) : basePrompt;
 
-  // AI-rigor tuning (tenant_ai_adaptation_rules, migration 11) — wired
-  // into an Edge Function for the first time here as a proof of concept.
-  // Any failure (network, malformed row, no tenant_id) silently keeps the
-  // unmodified prompt rather than failing the whole request.
+  // AI-rigor tuning (tenant_ai_adaptation_rules, migration 11) — see
+  // _shared/tenantAdaptation.ts. Any failure (network, malformed row, no
+  // tenant_id) silently keeps the unmodified prompt rather than failing
+  // the whole request.
   if (body.tenant_id && supabaseUrl && serviceRoleKey) {
-    const extraInstructions = await fetchTenantAdaptationPromptOverride(supabaseUrl, serviceRoleKey, body.tenant_id);
+    const extraInstructions = await fetchTenantAdaptationPromptOverride(supabaseUrl, serviceRoleKey, body.tenant_id, 'casebook_copilot');
     systemPrompt = appendTenantAdaptationOverride(systemPrompt, extraInstructions);
   }
 

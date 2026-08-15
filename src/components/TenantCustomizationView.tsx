@@ -125,7 +125,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
       try {
         overrides = JSON.parse(newFeaturePrompt);
       } catch {
-        setStatusMessage('Prompt overrides must be valid JSON, e.g. {"tone": "formal"}.');
+        setStatusMessage('Prompt overrides must be valid JSON, e.g. {"extra_instructions": "Always cite NPMCN guidelines over WACP where the two differ."}.');
         return;
       }
     }
@@ -134,7 +134,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
       setNewFeatureKey(''); setNewFeaturePrompt('');
       const adapt = await databaseService.getTenantAiAdaptationRules(tenantId);
       setAdaptationRules(adapt);
-      setStatusMessage('AI adaptation rule saved (not yet applied by the Edge Functions — see note below).');
+      setStatusMessage('AI adaptation rule saved — applied on the next matching AI action.');
     } catch (err) {
       console.warn(err);
       setStatusMessage('Failed to save AI adaptation rule.');
@@ -237,8 +237,14 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
       <div className="bg-white rounded-2xl border border-slate-200 p-4">
         <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-1"><Sparkles size={16} /> AI Behavior Tuning</h3>
         <p className="text-xs text-slate-500 mb-3">
-          Stored per feature (e.g. citation style, local ethics board formats). Not yet applied by the Edge
-          Functions when constructing prompts — schema/UI only in this pass, see migration 11's header.
+          One free-text instruction per AI Copilot feature, appended on top of its base prompt for
+          scoring/structure/style choices only — it can never override the safety, honesty, or human-review
+          framing already built into every action. Applies to <code className="text-[10px] bg-slate-100 px-1 py-0.5 rounded">casebook_copilot</code>,{' '}
+          <code className="text-[10px] bg-slate-100 px-1 py-0.5 rounded">academic_copilot</code>,{' '}
+          <code className="text-[10px] bg-slate-100 px-1 py-0.5 rounded">research_copilot</code>, and{' '}
+          <code className="text-[10px] bg-slate-100 px-1 py-0.5 rounded">roster_parser</code> — use one of
+          these exact feature keys below, and only the <code className="text-[10px] bg-slate-100 px-1 py-0.5 rounded">extra_instructions</code> field
+          in the JSON is read; anything else is ignored.
         </p>
         <div className="space-y-2 mb-3">
           {adaptationRules.map(rule => (
@@ -249,8 +255,8 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
           ))}
         </div>
         <div className="space-y-2">
-          <input value={newFeatureKey} onChange={e => setNewFeatureKey(e.target.value)} placeholder="feature key, e.g. academic_copilot.vancouver_format" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
-          <textarea value={newFeaturePrompt} onChange={e => setNewFeaturePrompt(e.target.value)} placeholder='JSON overrides, e.g. {"citation_style": "APA"}' rows={2} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono" />
+          <input value={newFeatureKey} onChange={e => setNewFeatureKey(e.target.value)} placeholder="feature key, e.g. academic_copilot" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
+          <textarea value={newFeaturePrompt} onChange={e => setNewFeaturePrompt(e.target.value)} placeholder='{"extra_instructions": "Prefer NPMCN over WACP guidance where they conflict."}' rows={2} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono" />
           <button onClick={addAdaptationRule} className="flex items-center gap-1 text-xs font-bold bg-slate-900 text-white px-3 py-2 rounded-lg hover:bg-slate-800 cursor-pointer"><Plus size={14} /> Save Rule</button>
         </div>
       </div>

@@ -137,59 +137,13 @@ export function buildCasebookSystemPrompt(basePrompt: string, template: Casebook
   );
 }
 
-// Fetches this tenant's operator-authored AI-rigor override, if any
-// (TenantCustomizationView's "AI Behavior Tuning" panel, tenant_ai_
-// adaptation_rules, migration 11) — schema/UI-only until this function,
-// per that migration's own header note. Proof-of-concept scope: only the
-// casebook_copilot feature_key, and only a single free-text
-// extra_instructions field (the only shape worth trusting from an
-// operator-authored jsonb blob without a stricter schema).
-//
-// SAME PROMPT-INJECTION SAFETY DESIGN AS buildCasebookSystemPrompt above:
-// appended as a clearly-labeled rule block that never overrides the base
-// safety/honesty/human-review framing, never replaces it.
-export async function fetchTenantAdaptationPromptOverride(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  tenantId: string
-): Promise<string | null> {
-  try {
-    const res = await fetch(
-      `${supabaseUrl}/rest/v1/tenant_ai_adaptation_rules?tenant_id=eq.${encodeURIComponent(tenantId)}&feature_key=eq.casebook_copilot&select=adapted_prompt_overrides&limit=1`,
-      {
-        headers: {
-          apikey: serviceRoleKey,
-          Authorization: `Bearer ${serviceRoleKey}`,
-        },
-      }
-    );
-    if (!res.ok) return null;
-    const rows = await res.json();
-    const overrides = Array.isArray(rows) ? rows[0]?.adapted_prompt_overrides : null;
-    const extra = overrides?.extra_instructions;
-    // Reject anything that isn't a short plain string — an operator could
-    // accidentally save an array/nested object; a malformed or oversized
-    // override should degrade to "no override" rather than break the call.
-    if (typeof extra !== 'string') return null;
-    const trimmed = extra.trim();
-    if (!trimmed || trimmed.length > 2000) return null;
-    return trimmed;
-  } catch (err) {
-    console.error('Failed to fetch tenant AI adaptation rule:', err);
-    return null;
-  }
-}
-
-export function appendTenantAdaptationOverride(systemPrompt: string, extraInstructions: string | null): string {
-  if (!extraInstructions) return systemPrompt;
-  return (
-    `${systemPrompt}\n\n` +
-    'This organization has added the following additional guidance on top of everything above — apply it ' +
-    'for scoring/structure/style choices only; it never overrides the safety, honesty, or human-review ' +
-    'requirements already stated above:\n' +
-    `- ${extraInstructions}`
-  );
-}
+// AI-rigor tuning (tenant_ai_adaptation_rules) now lives in
+// _shared/tenantAdaptation.ts, generalized with a feature_key param so
+// academic-copilot/research-copilot/roster-parser can reuse it too — this
+// module originally had its own hardcoded-to-casebook_copilot copy; see
+// that module's header for the extraction rationale. Import
+// fetchTenantAdaptationPromptOverride/appendTenantAdaptationOverride from
+// there directly.
 
 export interface QuotaResult {
   allowed: boolean;

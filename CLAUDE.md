@@ -298,18 +298,28 @@ literally. Reuses the same quota RPC and `AI_API_KEY`/`GEMINI_API_KEY` secrets �
 needed. **Status: deployed and live-verified** — curl-tested all 3 actions directly against the
 deployed function (real OpenAI responses confirmed) and re-verified end-to-end in the browser.
 
-**AI-rigor tuning is now wired here** (2026-08-14, first Edge Function to actually read
-`tenant_ai_adaptation_rules` — schema/UI-only since migration 11 until this). `casebookRubric.ts`'s
-`fetchTenantAdaptationPromptOverride`/`appendTenantAdaptationOverride` fetch the tenant's
-`feature_key = 'casebook_copilot'` row and splice its `adapted_prompt_overrides.extra_instructions`
-(a single trusted free-text field, length-capped, type-checked) onto the system prompt for
-`audit_case`/`generate_defense_questions` — never replacing the base safety/rubric framing, only
-appended on top. Any failure (network, malformed row, no tenant_id) silently falls back to the
-unmodified prompt. Deliberately a proof of concept on this one Edge Function only —
-`academic-copilot`/`research-copilot`/`roster-parser` are NOT wired yet; extending the same pattern
-to them is a follow-up, not attempted in this pass. Live-verified via a direct curl call with a test
-adaptation rule set, confirming the deployed function still returns a valid response with the splice
-active.
+**AI-rigor tuning was first wired here** (2026-08-14, the first Edge Function to actually read
+`tenant_ai_adaptation_rules` — schema/UI-only since migration 11 until this), **and extended to all
+4 AI Copilot Edge Functions on 2026-08-15.** The fetch/splice logic
+(`fetchTenantAdaptationPromptOverride`/`appendTenantAdaptationOverride`) moved out of
+`casebookRubric.ts` into a new `supabase/functions/_shared/tenantAdaptation.ts`, parameterized with
+a `featureKey` argument instead of hardcoding `casebook_copilot` — `casebook-copilot`,
+`academic-copilot`, `research-copilot`, and `roster-parser` each now call it with their own feature
+key (`casebook_copilot` / `academic_copilot` / `research_copilot` / `roster_parser`) right after
+their existing quota check, splicing the tenant's `adapted_prompt_overrides.extra_instructions`
+(still the one trusted free-text field, length-capped, type-checked) onto that action's system
+prompt — never replacing the base safety/rubric framing, only appended on top. Any failure (network,
+malformed row, no tenant_id) silently falls back to the unmodified prompt, same as before.
+`TenantCustomizationView.tsx`'s "AI Behavior Tuning" panel copy/placeholders were also fixed — they
+previously said "not yet applied by the Edge Functions" (stale even for casebook_copilot) and
+suggested an arbitrary JSON shape like `{"citation_style": "APA"}` that the code silently ignored
+(only `.extra_instructions` is ever read); it now names the real 4 feature keys and the real JSON
+shape. **Live-verified**: all 4 functions deployed; for each, set a real `tenant_ai_adaptation_rules`
+row with a distinctive marker string as `extra_instructions` and curled the live function directly —
+the marker appeared verbatim in the real OpenAI response for all 4 (`academic-copilot`,
+`research-copilot`, `roster-parser`, and a `casebook-copilot` regression check since its import path
+changed); all 4 test rows deleted afterward. Browser-verified the updated panel copy renders
+correctly as the real UCH Chief.
 
 ## Casebook & Clinical Logbook Engine (migrations 15-16)
 
@@ -514,8 +524,9 @@ submit feedback → confirm it landed in the resident's view). All test data
 created during that walkthrough was cleaned up afterward.
 
 **Not yet built** (flagged, not silently skipped): `tenant_ai_adaptation_rules`
-actually being read/applied by the Edge Functions when constructing prompts
-(wired for `casebook-copilot` only, per the AI/Edge Functions section above).
+is now wired into all 4 AI Copilot Edge Functions (`casebook-copilot`,
+`academic-copilot`, `research-copilot`, `roster-parser` — see the AI/Edge
+Functions section above), closing what was previously flagged here.
 Flutterwave integration, live charge/subscription billing and webhooks, and
 the terminology retrofit are all now built — see the Billing section and
 `src/lib/terminology.tsx`'s own header for current coverage.
