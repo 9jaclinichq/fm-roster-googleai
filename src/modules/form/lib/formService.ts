@@ -86,3 +86,57 @@ export async function getFormEntries(instanceId: string): Promise<FormEntry[]> {
   }
   return data || [];
 }
+
+// Added for the ResidentFormView.tsx dual-write (submissions -> form_entries,
+// additive/mirroring only — see that file's own comment for the full
+// rationale). Looks up a form_instances row by its exact name rather than by
+// id, since the legacy submissions flow has no stored form_instances.id to
+// reference — it only knows the seeded instance's name
+// ("Monthly Rotation & Leave Schedule Form", migration 35's seed row).
+export async function getFormInstanceByName(tenantId: string, name: string): Promise<FormInstance | null> {
+  checkSupabase();
+
+  const { data, error } = await supabase!
+    .from('form_instances')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('name', name)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('Error fetching form instance by name:', error);
+    throw error;
+  }
+  return data;
+}
+
+// Inserts one form_entries row. Used by the ResidentFormView.tsx dual-write
+// to mirror a real submissions write into the generic Forms scaffold —
+// callers are expected to wrap this in their own try/catch and treat any
+// failure as non-fatal (log + continue), since form_entries is not the
+// source of truth for the live monthly submission flow.
+export async function createFormEntry(
+  instanceId: string,
+  tenantId: string,
+  submittedByWorkforceId: string | null,
+  payload: Record<string, unknown>
+): Promise<FormEntry> {
+  checkSupabase();
+
+  const { data, error } = await supabase!
+    .from('form_entries')
+    .insert({
+      instance_id: instanceId,
+      tenant_id: tenantId,
+      submitted_by_workforce_id: submittedByWorkforceId,
+      payload,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.warn('Error creating form entry:', error);
+    throw error;
+  }
+  return data;
+}

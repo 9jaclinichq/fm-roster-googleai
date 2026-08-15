@@ -1,26 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { databaseService } from '../../../lib/databaseService';
+import { databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
+import { getFormInstanceByName, createFormEntry } from '../lib/formService';
 import { ResidentActivityGraph } from './ResidentActivityGraph';
 import { ComplianceNudgesView } from '../../org-admin/components/ComplianceNudgesView';
 import { Collection, Submission, Rotation } from '../../../types';
-import { 
-  ClipboardList, 
-  Calendar, 
-  FileText, 
-  UploadCloud, 
-  AlertTriangle, 
-  CheckCircle, 
-  Clock, 
-  Lock, 
-  File, 
-  X, 
-  Plus, 
+import {
+  ClipboardList,
+  Calendar,
+  FileText,
+  UploadCloud,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  Lock,
+  File,
+  X,
+  Plus,
   RefreshCw,
   LogOut
 } from 'lucide-react';
 
+// Name of the seeded form_instances row (migration 35) that documents this
+// live monthly submission flow inside the new generic Forms scaffold. Must
+// match migration 35's seed INSERT exactly.
+const MONTHLY_FORM_INSTANCE_NAME = 'Monthly Rotation & Leave Schedule Form';
+
 interface ResidentFormViewProps {
-  resident: { id: string; name: string; category: string };
+  // tenant_id is optional/structural here: currentResident (App.tsx's
+  // ResidentSession) already carries it, this prop type just widens to
+  // accept it for the additive form_entries dual-write below without
+  // touching App.tsx itself (out of scope for this change).
+  resident: { id: string; name: string; category: string; tenant_id?: string };
   onLogout: () => void;
 }
 
@@ -284,7 +294,43 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
       const result = await databaseService.submitRoster(submissionPayload);
       setSubmission(result);
       setSuccessMessage('Information submitted successfully!');
-      
+
+      // Additive dual-write into the generic Forms scaffold (form_entries,
+      // migration 35) — mirrors this submission for the new module, without
+      // touching the submissions table or this flow's own behavior at all.
+      // The `submissions` write above remains the sole source of truth: on
+      // ANY failure here (missing tenant, no seeded instance, network error,
+      // RLS, etc.) we log and move on — never throw, never block the UI, and
+      // never undo/interfere with the real submission that already
+      // succeeded. See src/modules/form/lib/formService.ts's header and
+      // CLAUDE.md's "sits alongside, additive-only" precedent.
+      try {
+        const tenantId = resident.tenant_id ?? DEFAULT_TENANT_ID;
+        const monthlyFormInstance = await getFormInstanceByName(tenantId, MONTHLY_FORM_INSTANCE_NAME);
+        if (monthlyFormInstance) {
+          await createFormEntry(monthlyFormInstance.id, tenantId, resident.id, {
+            collection_id: result.collection_id,
+            current_rotation: result.current_rotation,
+            next_rotation: result.next_rotation,
+            current_rotation_id: result.current_rotation_id ?? null,
+            next_rotation_id: result.next_rotation_id ?? null,
+            taking_leave: result.taking_leave,
+            leave_type: result.leave_type,
+            leave_start: result.leave_start,
+            leave_end: result.leave_end,
+            leave_applied: result.leave_applied,
+            leave_document_urls: result.leave_document_urls,
+            notes: result.notes,
+          });
+        } else {
+          console.warn(
+            `form_entries dual-write skipped: no seeded "${MONTHLY_FORM_INSTANCE_NAME}" form_instances row found for tenant ${tenantId}.`
+          );
+        }
+      } catch (dualWriteErr) {
+        console.warn('form_entries dual-write failed (non-blocking, submissions write already succeeded):', dualWriteErr);
+      }
+
       // Scroll to top to see success message
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
