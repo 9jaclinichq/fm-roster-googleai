@@ -1,6 +1,8 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Hourglass, LogOut, FlaskConical, Stethoscope, ChevronRight } from 'lucide-react';
+import { useTerminology } from '../../shared/terminology';
+import { DoctorIntegrationsPanel } from './DoctorIntegrationsPanel';
 
 interface DoctorHomeViewProps {
   doctor: { id: string; email: string; fullName: string };
@@ -18,8 +20,9 @@ interface DoctorHomeViewProps {
 // features) vs. what's still Chief-link-only.
 export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout }) => {
   const navigate = useNavigate();
+  const { t } = useTerminology();
   return (
-    <div className="max-w-md mx-auto my-12 px-4">
+    <div className="max-w-md mx-auto my-12 px-4 space-y-6">
       <div className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
         <div className="bg-gradient-to-br from-blue-600 to-blue-700 p-6 text-white text-center">
           <div className="mx-auto bg-white/15 text-white w-12 h-12 rounded-xl flex items-center justify-center mb-3 shadow-inner">
@@ -32,7 +35,7 @@ export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout
         <div className="p-6 sm:p-8 space-y-4">
           <div className="space-y-4 text-sm text-slate-600 leading-relaxed">
             <p>
-              You're registered as an independent doctor. Ask your Chief Resident / Administrator to add you
+              You're registered as an independent doctor. Ask your {t('admin', 'Chief Resident')} / Administrator to add you
               to their organization's workforce roster using this email:
             </p>
             <p className="font-mono font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-center break-all">
@@ -92,6 +95,8 @@ export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout
           </button>
         </div>
       </div>
+
+      <DoctorIntegrationsPanel doctorId={doctor.id} />
     </div>
   );
 };
