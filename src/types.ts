@@ -838,6 +838,58 @@ export interface UserSubscription {
   updated_at: string;
 }
 
+// --- Forms module generalization (migration 35) ---
+// Additive scaffold alongside the existing live monthly-form flow
+// (`submissions`/`collections`/ResidentFormView.tsx, untouched by this) —
+// see PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md §7/§10 and migration 35's own
+// header. Not yet wired into any UI beyond FormsBuilderPanel.tsx.
+
+export interface FormFieldDefinition {
+  key: string;
+  label: string;
+  type: 'text' | 'textarea' | 'number' | 'date' | 'boolean' | 'select' | 'file';
+  required?: boolean;
+  options?: string[]; // only meaningful for type: 'select'
+}
+
+export interface FormInstanceSchema {
+  fields: FormFieldDefinition[];
+}
+
+// Mirrors form_instances (migration 35).
+export interface FormInstance {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  schema: FormInstanceSchema;
+  created_by_workforce_id: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+// Mirrors form_entries (migration 35).
+export interface FormEntry {
+  id: string;
+  instance_id: string;
+  tenant_id: string;
+  submitted_by_workforce_id: string | null;
+  payload: Record<string, unknown>;
+  status: string;
+  created_at: string;
+}
+
+// Mirrors form_pipelines (migration 35). pipeline_type is free text
+// (e.g. 'schedule_to_roster') — not a fixed union — see migration 35's
+// header for why.
+export interface FormPipeline {
+  id: string;
+  instance_id: string;
+  pipeline_type: string;
+  config: Record<string, unknown>;
+  created_at: string;
+}
+
 // Returned by the payment-checkout Edge Function.
 export interface PaymentCheckoutResult {
   provider: PaymentProvider;
