@@ -740,7 +740,7 @@ export interface AdminLogbookParsingQueueEntry {
   created_at: string;
 }
 
-// --- Family Medicine Tools (src/lib/clinical/familyTools.ts) ---
+// --- Family Medicine Tools (src/modules/casebook-logbook/lib/familyTools.ts) ---
 
 export interface GenogramNode {
   id: string;

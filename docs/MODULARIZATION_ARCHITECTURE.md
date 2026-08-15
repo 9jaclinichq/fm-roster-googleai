@@ -327,6 +327,17 @@ order, each phase independently shippable and manually browser-verified before t
    Research Engine → "New Research Workspace" modal, whose Template dropdown populated with real
    options (proving the relocated `templateEngine.ts`'s `loadAvailableTemplates()` call still
    resolves), closed without creating test data. No console errors.
+   **`casebook-logbook` DONE (2026-08-15)**: `CasebookWorkspaceView.tsx` (the richer, newer engine)
+   and `CasebookBuilderView.tsx` (the legacy 15-slot MVP, same module per the plan's own "flagged as
+   the older sibling" note) → `modules/casebook-logbook/components/`; `caseRubricEngine.ts`/
+   `familyTools.ts` (from `src/lib/clinical/`, now removed) and `casebookCopilot.ts` (from
+   `src/lib/ai/`) → `modules/casebook-logbook/lib/`. `CasebookBuilderView.tsx`'s cross-module import
+   of `academicCopilot` (still shared with `dissertation`, per that module's own move) updated to
+   the new relative path. `tsc --noEmit` and `npm run build` both clean on the first pass this time
+   (learned from the research module's miss — checked the whole file for a second import block
+   before moving on). Live-verified: resident login → Casebook (legacy Builder renders) →
+   Casebook & Logbook (the newer engine renders, exercising all 3 relocated lib files at once) — no
+   console errors.
 4. **`databaseService.ts` split**, module-by-module, following the same order — each module's
    service slice extracted only after that module's components have already moved, so the diff per
    step stays reviewable.

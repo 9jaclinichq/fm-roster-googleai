@@ -38,7 +38,7 @@ const KnowledgeLibraryView = lazy(() =>
   import('./modules/knowledge-packs/components/KnowledgeLibraryView').then(m => ({ default: m.KnowledgeLibraryView }))
 );
 const CasebookBuilderView = lazy(() =>
-  import('./components/CasebookBuilderView').then(m => ({ default: m.CasebookBuilderView }))
+  import('./modules/casebook-logbook/components/CasebookBuilderView').then(m => ({ default: m.CasebookBuilderView }))
 );
 const ExamReadinessView = lazy(() =>
   import('./modules/exam-readiness/components/ExamReadinessView').then(m => ({ default: m.ExamReadinessView }))
@@ -53,7 +53,7 @@ const ResearchWorkspaceView = lazy(() =>
   import('./modules/research/components/ResearchWorkspaceView').then(m => ({ default: m.ResearchWorkspaceView }))
 );
 const CasebookWorkspaceView = lazy(() =>
-  import('./components/CasebookWorkspaceView').then(m => ({ default: m.CasebookWorkspaceView }))
+  import('./modules/casebook-logbook/components/CasebookWorkspaceView').then(m => ({ default: m.CasebookWorkspaceView }))
 );
 // Public routes added by the SaaS multi-tenancy pass — neither is gated by
 // resident/chief session state. GuestReviewView is reachable by anyone

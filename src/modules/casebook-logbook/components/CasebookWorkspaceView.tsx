@@ -1,22 +1,22 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { casebookCopilot, CasebookCopilotSource } from '../lib/ai/casebookCopilot';
-import { useWorkspaceQuota } from '../modules/billing/lib/useWorkspaceQuota';
-import { UpgradeCheckoutModal } from '../modules/billing/components/UpgradeCheckoutModal';
+import { databaseService } from '../../../lib/databaseService';
+import { casebookCopilot, CasebookCopilotSource } from '../lib/casebookCopilot';
+import { useWorkspaceQuota } from '../../billing/lib/useWorkspaceQuota';
+import { UpgradeCheckoutModal } from '../../billing/components/UpgradeCheckoutModal';
 import {
   createGenogramTemplate, addGenogramNode, updateGenogramNode,
   calculateFamilyApgar, FAMILY_APGAR_INTERPRETATION_LABELS,
   createEcomap, addEcomapConnection, removeEcomapConnection,
   createFamilyCircle, addFamilyCircleMember, removeFamilyCircleMember,
   DUVALL_STAGES, getDuvallStage,
-} from '../lib/clinical/familyTools';
+} from '../lib/familyTools';
 import {
   validateReferenceFormatting, detectFigureStartingSentences, countPccmComponents, summarizeRubricScore,
-} from '../lib/clinical/caseRubricEngine';
+} from '../lib/caseRubricEngine';
 import {
   CasebookWorkspace, CasebookTemplate, CasebookFrameworkType, ClinicalCaseReport, ThematicArea,
   ClinicalLogbook, GenogramData, FamilyApgarInput, EcomapData, FamilyCircleData, DuvallStageNumber,
-} from '../types';
+} from '../../../types';
 import {
   GraduationCap, Plus, X, ClipboardList, Sparkles, Save, RefreshCw, CheckCircle2, AlertTriangle,
   Stethoscope, HeartPulse, Network, UploadCloud, FileText, Trash2, UserPlus, ListChecks,

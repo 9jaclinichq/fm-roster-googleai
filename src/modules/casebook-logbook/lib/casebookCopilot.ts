@@ -1,6 +1,6 @@
-import { databaseService, supabase, DEFAULT_TENANT_ID } from '../databaseService';
-import { CasebookTemplate, ThematicArea } from '../../types';
-import { validateReferenceFormatting, detectFigureStartingSentences } from '../clinical/caseRubricEngine';
+import { databaseService, supabase, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
+import { CasebookTemplate, ThematicArea } from '../../../types';
+import { validateReferenceFormatting, detectFigureStartingSentences } from './caseRubricEngine';
 
 // Client-side provider for the Casebook & Clinical Logbook Engine's AI-
 // assisted actions. Same Edge-Function-first, heuristic-fallback-always

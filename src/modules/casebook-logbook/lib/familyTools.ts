@@ -11,7 +11,7 @@ import {
   FamilyCircleMember,
   DuvallStage,
   DuvallStageNumber,
-} from '../../types';
+} from '../../../types';
 
 // Family Medicine biopsychosocial tools used by the Clinical Case Report
 // editor's "Family Tools Canvas" tab (CasebookWorkspaceView.tsx). Pure,

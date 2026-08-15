@@ -1,4 +1,4 @@
-import { CasebookTemplate, PccmFramework } from '../../types';
+import { CasebookTemplate, PccmFramework } from '../../../types';
 
 // Client-side mirror of supabase/functions/_shared/casebookRubric.ts's
 // validators, for the Real-Time WACP 100-Point Scorecard in
