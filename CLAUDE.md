@@ -650,12 +650,31 @@ AI Copilot actions:
   end-to-end paid transaction has been run (would move real money on the
   live keys), matching this file's existing note on the per-resident
   checkout below.
-- **NOT yet done** (needs the user / dashboards): confirm the webhook URL
-  (`https://gdumksfffewpdqqwvcdo.supabase.co/functions/v1/payment-webhook`)
-  is registered in BOTH provider dashboards (the user has configured the
-  Flutterwave secret-hash side); no end-to-end paid transaction has been
-  tested (live Paystack key — a real test moves real money); no browser
-  walkthrough of the modal flow yet.
+- **Flutterwave webhook is relayed through a DIFFERENT PrivyDoc product's backend, not
+  registered directly (2026-08-15) — this app shares one Flutterwave account/webhook slot with
+  `privydoc_prod`** (a separate, unrelated live telemedicine platform at `app.privydoc.com.ng`,
+  repo at `C:\Users\hp\Projects\privydoc_prod` — see that repo's own `CLAUDE.md`; do not confuse
+  it with this one). Flutterwave only supports a single webhook URL per account, and that slot is
+  already registered to `privydoc_prod`'s own `POST /api/webhooks/flutterwave` (`server.ts`
+  ~line 16656). Rather than fighting over the one slot, `privydoc_prod`'s handler now relays: right
+  after its own signature check (against the SAME shared `FLW_WEBHOOK_HASH` value both apps use —
+  `PD_FLW_Hash_9jaClinic2026`) and before touching its own `payments_log`, it checks whether
+  `tx_ref` starts with `privydoc-pro-` (the exact prefix this app's `payment-checkout` function
+  stamps on every transaction, which `privydoc_prod` never generates itself) and, if so, forwards
+  the untouched payload + `verif-hash` header to this app's `payment-webhook` Edge Function via a
+  plain server-to-server `fetch`, then returns — never writing that event into its own tables.
+  This app's `FLUTTERWAVE_WEBHOOK_HASH` Supabase secret is set to the same shared value so its own
+  independent verification also passes. **Paystack is NOT wired for this app** — the user
+  confirmed Flutterwave-only in practice, so the Paystack webhook/code paths remain live in code
+  (untested end-to-end) but nothing registers a Paystack webhook pointing here. **Manually
+  verified**: `privydoc_prod`'s own verification gate run clean after the relay edit (`npm run
+  lint` / `npm test` — 2884 assertions, 0 failures / `npm run build`, all clean); this app's
+  `payment-webhook` function live-probed directly with the shared hash (correct → 200, wrong →
+  401) after the secret update; test audit row cleaned up afterward. **NOT yet done**: the
+  `privydoc_prod` edit is deliberately left staged/uncommitted for the user to review and commit
+  themselves (per their explicit choice, given it's live healthcare-platform code this session had
+  never touched before) — the relay is NOT actually live until that commit ships; no end-to-end
+  real Flutterwave transaction has been run through the relay post-deploy (would move real money).
 
 ## Branding & Routing (PrivyDoc rebrand)
 
