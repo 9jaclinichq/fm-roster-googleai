@@ -2,19 +2,20 @@
 
 Per `docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md` §7. This is a refresh of the
 registry against what actually exists on disk as of this pass (branch
-`worktree-agent-aff357db5b7760e82`, based on `main`, migrations through
-`38_insights_dedup_index.sql`). This refresh folds in the wave of work that
-landed since the previous registry snapshot: the org-admin module split
-(Phase 3 of `docs/MODULARIZATION_ARCHITECTURE.md` — `ChiefDashboardView` is
-now `src/modules/org-admin/components/ChiefDashboardView.tsx` composing
-panels under its own `dashboard/` folder), the L3 spine's first real pieces
-(`event_log`, `agent_manifests`, `insights` + the first live L1 agent), the
-integrations-layer scaffold, the Forms module generalization scaffold, and
-org-defined groups. Every path below was re-confirmed against the real file
-tree in this pass, not copied forward from the previous snapshot without
-checking — several paths in the previous registry were stale (still citing
-`src/components/...` for faces that have since moved into `src/modules/org-admin/`)
-and are corrected here.
+`worktree-agent-a1fa77173ef5fa8d3`, based on `main`, migrations through
+`43_seed_generic_research_templates.sql`). This refresh folds in the wave of
+work that landed since the previous registry snapshot: the Scored Rubric
+primitive (a new, not-yet-consumed generic scoring engine), the Forms
+module's global-seed ownership shape plus 5 seeded generic form templates,
+4 new generic seed rows split across `research_templates`/`casebook_templates`,
+`CategoryManagerPanel.tsx` going from standalone to actually wired into
+`ChiefDashboardView.tsx`'s "Categories" tab, and a scoping-only pass on a
+possible Scheduling module generalization. Every path below was
+re-confirmed against the real file tree in this pass, not copied forward
+from the previous snapshot without checking — one real gap was found this
+way: `workforce_categories`/`CategoryManagerPanel.tsx` (migration 39) had
+**no registry entry at all** in the previous snapshot despite already
+existing on disk; that's corrected here, not just updated.
 
 Status legend: `stable` = works, matches its current scope; `fixing` = mid-move
 in the modularization pass; `fragmented` = still split across the old
@@ -31,6 +32,26 @@ applied live at some point after its own header was written, contradicting
 that header. This audit is docs-only and has no database access, so this
 contradiction is reported as-is from the migration files rather than resolved
 against the live schema — flag it to whoever applies the pending batch.
+**Migrations 41 and 42 also explicitly say "NOT APPLIED LIVE"** in their own
+headers (both defer to "a human reviews and applies the pending batch
+afterward", same posture as 32–35/37). **Migration 43 states neither** — its
+header describes scope/judgment calls at length but never says whether it's
+been applied; reported as-is, not assumed either way.
+
+**Biggest remaining gap, this pass**: with org-defined groups (36) and
+categories (39) both now real and wired into at least one consuming panel
+each, and the Forms/Research/Casebook seed libraries growing (42/43), the
+single largest structural gap is no longer "no org-defined vocabulary" — it's
+that **Clinical & Professional Writing has no generic instance table at
+all**. Migration 42's own header says this explicitly while declining to
+seed a referral-letter/SOP-template form: `DissertationAssistantView.tsx`,
+`CasebookBuilderView.tsx`, and `CasebookWorkspaceView.tsx` remain three
+separate hardcoded features with no builder+instances model the way Forms
+now has one. Close behind: the new Scored Rubric primitive (migration 41) is
+schema+engine+form with **zero consuming faces** (see M15 below) — a second,
+even newer "built but unwired" gap alongside the pre-existing Scheduling/
+Meetings ones (both still additive-only, no dashboard wiring, no schema at
+all for Meetings — see the new M16/M17 entries below).
 
 ---
 
@@ -142,7 +163,7 @@ consumes: `workforce`, `collections`, `submissions`, `settings`, `user_roles`, `
 emits: none directly (the L1 agent it embeds, F18 `InsightsStrip`, does emit — see below)
 udr fields: none
 gates: Chief session
-status: **substantially de-fragmented since the previous audit** — the Phase 3 org-admin module split landed. `ChiefDashboardView.tsx` is now 1,153 lines (down from ~1,900) and composes 11 sibling panels from `src/modules/org-admin/components/dashboard/`: `SubmissionsPanel`, `PendingResidentsPanel`, `WorkforceRegistryPanel`, `AnnouncementsAdminPanel`, `RoleDelegationPanel`, `CollectionSettingsPanel`, `FormsBuilderPanel`, `IntegrationsPanel` (all directly imported), plus lazy-loaded `MultiRosterManagerView`, `TenantCustomizationView`, `TemplateManagerView`, `TenantUpgradeCheckoutModal`. Still not a pure composition shell (1,153 lines still holds substantial cross-panel state/handlers), so still marked `fixing` rather than fully `stable` — but this is real, confirmed progress, not a re-label. Also now renders **F18 `InsightsStrip`** between the KPI cards and the tab switcher (the living-system spec's Dashboard-module row: "insight strips, module tiles, tenant switcher").
+status: **substantially de-fragmented since the previous audit** — the Phase 3 org-admin module split landed. `ChiefDashboardView.tsx` is now 1,169 lines (down from ~1,900; up slightly from 1,153 at the last snapshot for the `CategoryManagerPanel` wiring below) and composes 9 sibling panels directly imported from `src/modules/org-admin/components/dashboard/`: `SubmissionsPanel`, `PendingResidentsPanel`, `WorkforceRegistryPanel`, `AnnouncementsAdminPanel`, `RoleDelegationPanel`, `CollectionSettingsPanel`, `FormsBuilderPanel`, `IntegrationsPanel`, and **`CategoryManagerPanel`** (new this pass — see the "Categories" tab paragraph in S4 below; the previous registry snapshot never actually carried an entry for it at all despite it already existing on disk — see this file's intro note), plus 4 lazy-loaded: `MultiRosterManagerView`, `TenantCustomizationView`, `TemplateManagerView`, and **`KnowledgePackManagerView`** (also lazy-loaded here; missing from the previous snapshot's list even though it already existed on disk). **Correction**: the previous snapshot's list also named `TenantUpgradeCheckoutModal` as one of this component's lazy imports — re-checked directly this pass and that's not accurate: `ChiefDashboardView.tsx` does not import it at all; it's opened one level down, from inside `TemplateManagerView.tsx` (see F13). Still not a pure composition shell (1,169 lines still holds substantial cross-panel state/handlers), so still marked `fixing` rather than fully `stable` — but this is real, confirmed progress, not a re-label. Also now renders **F18 `InsightsStrip`** between the KPI cards and the tab switcher (the living-system spec's Dashboard-module row: "insight strips, module tiles, tenant switcher").
 
 ### F10 Org-Admin: Multi-Roster Manager (HITL roster editor)
 layer: L5
@@ -307,6 +328,8 @@ udr fields: `udr.ts`'s `instances[]` now includes `casebook_workspace` rows (see
 gates: AI Copilot actions require doctor review before save (client-side, no formal gate record)
 status: stable, unchanged in this pass — still two separate hardcoded flows (`CasebookBuilderView`/`case_reports` vs. `CasebookWorkspaceView`/`clinical_case_reports`), deliberately kept independent per CLAUDE.md's own "SCOPE DECISION."
 
+**`casebook_templates` gains 1 new global seed row this pass (migration 43, schema only — not confirmed applied live, see intro note)**: "Generic Case-Based Portfolio (Specialty-Agnostic)" (`framework_type = 'CUSTOM_CLINICAL'`), bundling a case-mix planner into `thematic_distribution`, a generic 8-domain scoring rubric, and a generic case-write-up-structure + case-selection-guide pair folded into `formatting_rules` — deliberately reusing existing jsonb columns rather than adding a new table, per migration 43's own header (Judgment Call 4). This is content-only (no schema/app-code change) and sits alongside the 4 WACP/NPMCN rows migration 15 already seeded, taking the total to 5 seeded `casebook_templates` rows once applied.
+
 ### M5 Consultant / Co-Resident Review
 layer: L4
 face: doctor
@@ -379,6 +402,8 @@ udr fields: `udr.ts`'s `instances[]` includes `research_workspace` rows for both
 gates: none
 status: stable, unchanged in this pass — still the module closest to the spec's target shape.
 
+**`research_templates` gains 3 new global seed rows this pass (migration 43, schema only — not confirmed applied live, see intro note)**: "Generic Audit / Quality Improvement (QI) Project Track" (the only one of the 3 with a real `dissertation_rubric`, riding the same fixed `ch1_intro`..`ch5_discussion` chapter slots every staged template uses), "Generic Publication / Journal Manuscript Track", and "Generic Research Grant Proposal Track" (both single-stage, proposal-rubric-only, mirroring the existing lighter ICMJE/STROBE/CONSORT/PRISMA/CARE rows). All 3 use `organization_or_body = 'Custom_Doctor'` — migration 43's own header flags this as a judgment call (the CHECK-constrained enum has no QI/publication/grant-specific value, and widening it for 3 rows was judged not worth the schema churn) rather than an oversight. Takes the seeded total from 9 (migration 13) to 12 once applied.
+
 ### M11 Roster Engine
 layer: L4
 face: org-admin
@@ -406,14 +431,16 @@ status: stable, unchanged in this pass.
 ### M13 Forms & Pipelines (generalization scaffold)
 layer: L4
 face: org-admin
-path: builder — `src/modules/org-admin/components/dashboard/FormsBuilderPanel.tsx`; data access — `src/modules/form/lib/formService.ts`; schema — `supabase/migrations/35_forms_pipelines.sql`
+path: builder — `src/modules/org-admin/components/dashboard/FormsBuilderPanel.tsx`; data access — `src/modules/form/lib/formService.ts`; schema — `supabase/migrations/35_forms_pipelines.sql`, extended by `supabase/migrations/40_doctor_personal_forms.sql` and `supabase/migrations/42_form_instances_global_seed_and_content.sql`
 owner engine: babsbrain-2
-tenant scope: org
+tenant scope: org, individual (doctor-owned, migration 40), and now **global/seed** (migration 42 — see below)
 consumes: `form_instances`, `form_entries`, `form_pipelines`
 emits: none (no event emission wired here yet)
 udr fields: none (not read by `udr.ts`)
 gates: none
 status: stub — **new since the previous snapshot**, directly addresses the living-system spec's own backlog line (§10: "Forms module currently equals one monthly schedule form; generalise into builder + instances + pipelines"). Schema is deliberately minimal (no conditional logic/sections/validation rules — `form_instances.schema` is a flat field-definition list; `form_pipelines.pipeline_type` is free text, not an enum, to avoid the CHECK-constraint churn `ai_action_logs.action_type` already hit twice). `FormsBuilderPanel.tsx` is first-slice only: create + list `form_instances`, no update/delete, no UI for `form_pipelines` at all. `formService.ts`'s `getFormEntries` exists but is not called by the panel yet. The one live consumer of this scaffold is M8's dual-write (a producer, not this panel) — nothing in this module's own UI surfaces `form_entries` back to a Chief yet, so "builder" and "data" exist but there is no working "instances you can actually use" loop end to end.
+
+**Migration 42 (schema only — not applied live, see intro note) adds a third `form_instances` ownership shape**: `tenant_id IS NULL AND doctor_id IS NULL` — a genuinely global, unowned row, alongside the existing tenant-owned and doctor-owned (migration 40) shapes, via a widened owner CHECK constraint and matching SELECT/INSERT/UPDATE RLS clauses. A new `is_system_default boolean` column marks seeded rows, mirroring `org_groups`/`workforce_categories`' own convention. Seeds **5 global generic form templates** per the living-system spec §8.2's "Forms & pipelines" list, verbatim: Leave/Absence Request, Incident/Audit Report, Feedback Form, Membership/Credential Renewal, Generic Intake/Checklist Form — each a flat `FormFieldDefinition[]` schema, `is_system_default = true`. Migration 42's own header explicitly declines to seed a referral-letter or SOP/protocol-template form on the grounds that a long-form document template doesn't fit `form_instances`' flat-field shape — flagged there as the reason "Clinical & Professional Writing" still has no generic instance table (see this file's intro "biggest remaining gap" note). **Not yet wired into any UI**: `FormsBuilderPanel.tsx` was not modified by migration 42 and still only lists/creates tenant-owned instances — nothing in the panel queries for or surfaces the 5 global seed rows yet, so today they exist in the schema (once applied) but are not reachable from any face.
 
 ### M14 Integrations Layer
 layer: L4
@@ -426,6 +453,26 @@ emits: none
 udr fields: none
 gates: none
 status: stub — **new since the previous snapshot**, directly addresses spec §7's "External and native tool integrations" section. 8 catalog rows seeded (statistical analyser, literature search, literature/evidence matrix, reference manager, writing space, calendar/video, e-signature, payment processor) — 3 native (already-live features re-represented as catalog entries: statistical analyser, literature/evidence matrix, writing space), 4 external stubs with no real OAuth/API flow (`auth_type: 'oauth'`, `kind: 'external'`), and Flutterwave as the one already-live platform-managed row (`auth_type: 'platform_managed'`). Both panels are **read-only**: they list the catalog and show a connected/not-connected badge — `IntegrationsPanel` infers connection purely from `auth_type === 'platform_managed'` (doesn't call `getConnectionsForTenant` at all); `DoctorIntegrationsPanel` does call `getConnectionsForDoctor` and treats a `status: 'connected'` row as connected, but nothing anywhere writes such a row, so in practice both panels always show every non-platform-managed integration as disconnected. No connect/disconnect mutation flow exists for any of the 7 non-native rows — flagged in both panels' own code comments as future per-provider work, not hidden.
+
+### M15 Scored Rubric Primitive
+layer: L4 (per its own migration header: "a generic primitive inside Forms & pipelines (L4)")
+face: shared (no consuming face wired in yet — see status)
+path: schema — `supabase/migrations/41_scored_rubric_primitive.sql`; engine — `src/modules/shared/lib/scoredRubricEngine.ts` (321 lines: `listRubricTemplates`, `getRubricTemplate`, `createRubricInstance`, `getRubricInstance`, `submitRubricScores`, `confirmRubricInstance`); rendering UI — `src/modules/shared/ui/RubricInstanceForm.tsx` (235 lines, standalone `React.FC`)
+owner engine: none declared yet (no `agent_manifests` row references this primitive)
+tenant scope: org, individual, and global (3-way ownership: `rubric_templates.tenant_id`/`.doctor_id` can independently be NULL or set — deliberately NOT the migration 25/31/40 doctor-owned-XOR-institutional CHECK, since a global template needs both columns NULL, a state that CHECK shape cannot express)
+consumes: `rubric_templates`, `rubric_sections`, `rubric_items`, `rubric_instances`
+emits: none
+udr fields: none
+gates: none — RLS is fully permissive on all 4 tables (including `rubric_instances`), same trust model as the rest of this schema, per the migration's own explicit instruction not to invent a new boundary here
+status: **stub — confirmed by direct repo-wide search this pass, flagging explicitly per this task's own instruction rather than marking `stable`.** `rubric_templates`/`rubric_sections`/`rubric_items`/`rubric_instances` and the `compute_rubric_totals(p_instance_id)` SQL/PLPGSQL RPC (server-side aggregation: sums each section's scored items against `max_points`, checks `pass_threshold`, flags any zero-scored item in an `all_items_required` section, derives a fixed 3-value `recommendation` band) all exist and are internally complete. But `RubricInstanceForm.tsx` — the only rendering UI for this primitive — is imported by **nothing**: a repo-wide grep for `RubricInstanceForm` outside its own file turns up exactly one hit, a comment in `scoredRubricEngine.ts`, not an actual import. No face (Chief dashboard, doctor workspace, or otherwise) opens this form, and no seed rubric content exists in `rubric_templates` — migration 41's own header explicitly declines to seed real rubric content, deferring to Dr. Olanipekun supplying authoritative WACP/OSCE/credentialing documents per CLAUDE.md's "Sourcing module content" policy. Migration 41 also carries its own "NOT APPLIED LIVE" header (see intro note) — so today this is schema-plus-library code with zero live rows and zero consumers, the newest addition to this registry's "built but unwired" gap list (see intro "biggest remaining gap" note).
+
+### M16 Scheduling
+layer: L4
+status: **scoped, not yet built.** `docs/SCHEDULING_MODULE_SCOPING.md` (new this pass) maps the living-system spec's §7/§8.2 "Scheduling" capability (duty roster, on-call, clinic sessions, branch coverage, equipment/room booking) against the app's actual existing roster features — `raw_roster_uploads`/`combined_master_rosters`/`roster_types` (migration 10, see M11 Roster Engine above) — and concludes those are a real, actively-used AI-assisted HITL document-parsing pipeline for 5 UCH-specific formats, structurally unlike Forms' "one hardcoded flat-field form" starting point, so a straight lift into a generic `form_instances`-style model would misrepresent what it actually does. The document proposes a target shape and migration paths but **deliberately writes no schema, no migration, and no application code** — confirmed on disk: no `44_scheduling_module.sql` or any migration past 43 exists, and no `src/modules/scheduling/` directory exists. Migration 42's own header independently reached the same "needs its own scoping pass first" conclusion in passing before this document did the actual pass. Nothing to register as a face/organ/spine component yet — this entry exists so the registry doesn't silently omit a capability the spec names, per this file's own §7 format.
+
+### M17 Meetings & Actions
+layer: L4
+status: **gap — not built, and not found in this pass.** The living-system spec (§7) names Meetings & Actions as one of its 10 target capability modules. No `meetings`-related migration exists in `supabase/migrations/` (confirmed: highest migration on disk this pass is `43_seed_generic_research_templates.sql`, no `45_*` file), and no `src/modules/meetings/` directory exists on disk. A sibling worktree was flagged as possibly landing this module around the same time as this pass's work, but nothing under that name has merged to this branch as of this refresh — not registered as built, and not invented here. Re-check on the next registry refresh once/if it lands.
 
 ---
 
@@ -470,8 +517,10 @@ status: **real since this wave — no longer absent, but with one specifically-c
 ### S4 Tenant Config Service
 layer: L3
 face: shared
-path: partially — `databaseService.getTenant()`/`getTenants()` + the `tenants` table's `module_flags`/`terminology_overrides`/`call_duty_rules` columns; **now also `org_groups` (migration 36)** for the delegatable-role-vocabulary slice specifically
+path: partially — `databaseService.getTenant()`/`getTenants()` + the `tenants` table's `module_flags`/`terminology_overrides`/`call_duty_rules` columns; **now also `org_groups` (migration 36)** for the delegatable-role-vocabulary slice, **and `workforce_categories` (migration 39)** for the workforce-grade-vocabulary slice
 status: fragmented, **one real sub-gap narrowed this wave**. Config still exists as ad hoc columns/tables read directly by whichever face needs them (F12 `TenantCustomizationView`, `terminology.tsx`, each Edge Function's `tenantAdaptation.ts`), not a single service with its own contract — that part is unchanged. What's new: the spec's own rule 10 ("groups are org-defined vocabulary, not a fixed hierarchy") was previously violated by a genuinely global, hardcoded 4-row `roles` table duplicated in three frontend places plus a hardcoded RPC IN-list (per migration 36's own header, confirmed by reading `App.tsx` before that migration was written). Migration 36 adds tenant-scoped `org_groups` (seeded per-tenant with the 4 previous defaults as editable-but-not-deletable rows, `grants_review_approval boolean` as the one real permission bit in use today), three Chief-only SECURITY DEFINER RPCs (`chief_create_org_group`/`chief_update_org_group`/`chief_delete_org_group`), and rewires `chief_assign_user_role` to take an `org_group_id` instead of a hardcoded role-id string. Wired into `RoleDelegationPanel.tsx` (composed into F9). Migration 36 also fixes a latent bug found in the same investigation: `user_roles`' RLS was `TO authenticated` only, but this app has no Supabase Auth session for the plaintext-code flow, so `getDelegatedRoles()` had been returning zero rows unconditionally since migration 01 — widened to the app's established permissive posture.
+
+**`workforce_categories` (migration 39) — CRUD panel now wired in, confirmed this pass.** Same pattern as `org_groups` one migration later: tenant-scoped table seeded per-tenant with the 3 legacy `Category` union values (Registrar/Senior Registrar/Medical Officer) as editable-but-not-deletable `is_system_default` rows, three Chief-only SECURITY DEFINER RPCs (`chief_create_workforce_category`/`chief_update_workforce_category`/`chief_delete_workforce_category`), and a new nullable `workforce.category_id` FK added alongside the existing free-text `workforce.category` column rather than replacing it. `CategoryManagerPanel.tsx` (`src/modules/org-admin/components/dashboard/CategoryManagerPanel.tsx`, 220 lines) is that CRUD panel — **it was standalone/not composed into any dashboard at the previous registry snapshot; it is now directly imported into `ChiefDashboardView.tsx` (F9, see above) as the "Categories" tab.** The rewire this unblocks is still a followup, exactly as flagged in CLAUDE.md's own note on migration 36-40: `WorkforceRegistryPanel.tsx` (confirmed directly, line ~92/116) still reads and edits `member.category`, the old free-text column, not `category_id` — same gap `org_groups` had before `RoleDelegationPanel`/`App.tsx`'s `canApprove` checks were rewired onto it, just not yet closed for categories. CSV export and role-delegation forms were not independently re-checked this pass but are very likely on the same old column given `WorkforceRegistryPanel.tsx`'s own state.
 
 ### S5 Integrations Layer
 layer: L3
