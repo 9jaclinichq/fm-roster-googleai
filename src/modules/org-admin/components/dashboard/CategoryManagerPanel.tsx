@@ -15,13 +15,10 @@ interface CategoryManagerPanelProps {
 // RoleDelegationPanel.tsx's "Create a Custom Group" sub-form visual style,
 // simplified since there's no delegation list here — just category CRUD.
 //
-// NOT WIRED INTO A DASHBOARD TAB YET. Deliberately standalone, same
-// precedent as FormsBuilderPanel.tsx / IntegrationsPanel.tsx landing ahead
-// of their own dashboard-tab wiring — see those components' own commit
-// history. ChiefDashboardView.tsx / App.tsx are untouched by this pass;
-// wiring this panel into a tab, and rewiring the existing workforce
-// registry / CSV export / role-delegation forms to read `category_id`
-// instead of (or alongside) the free-text `category` column, is a followup.
+// Wired into ChiefDashboardView.tsx's "Categories" tab. Rewiring the
+// existing workforce registry / CSV export / role-delegation forms to read
+// `category_id` instead of (or alongside) the free-text `category` column
+// is still a followup — this panel only manages the vocabulary itself.
 export const CategoryManagerPanel: React.FC<CategoryManagerPanelProps> = ({ tenantId, adminCode }) => {
   const [categories, setCategories] = useState<WorkforceCategory[]>([]);
   const [isLoading, setIsLoading] = useState(true);

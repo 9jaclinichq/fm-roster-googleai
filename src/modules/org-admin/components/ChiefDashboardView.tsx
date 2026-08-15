@@ -10,6 +10,7 @@ import { CollectionSettingsPanel } from './dashboard/CollectionSettingsPanel';
 import { InsightsStrip } from '../../shared/ui/InsightsStrip';
 import { FormsBuilderPanel } from './dashboard/FormsBuilderPanel';
 import { IntegrationsPanel } from './dashboard/IntegrationsPanel';
+import { CategoryManagerPanel } from './dashboard/CategoryManagerPanel';
 
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
 // only needed when the Chief actually opens the Knowledge Packs tab.
@@ -57,7 +58,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'settings'>('submissions');
+  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'categories' | 'settings'>('submissions');
 
   // Role delegation state (migration 36 — org-defined groups, replacing the
   // previously hardcoded 4-value subadmin role list)
@@ -943,6 +944,16 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           Integrations
         </button>
         <button
+          onClick={() => setActiveTab('categories')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'categories'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Categories
+        </button>
+        <button
           onClick={() => setActiveTab('settings')}
           className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === 'settings'
@@ -1124,6 +1135,11 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         {/* TAB 9b: INTEGRATIONS (migration 33 — living-system integrations layer) */}
         {activeTab === 'integrations' && (
           <IntegrationsPanel />
+        )}
+
+        {/* TAB 9c: CATEGORIES (migration 39 — org-defined workforce categories) */}
+        {activeTab === 'categories' && adminCode && (
+          <CategoryManagerPanel tenantId={tenantId ?? DEFAULT_TENANT_ID} adminCode={adminCode} />
         )}
 
         {/* TAB 10: SETTINGS & COLLECTIONS */}
