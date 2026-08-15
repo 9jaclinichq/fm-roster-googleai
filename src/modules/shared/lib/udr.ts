@@ -16,8 +16,15 @@
 //
 // SCOPE NOTES (what this does and doesn't cover, so gaps are visible rather
 // than silently missing):
-//   - `insights[]` is always `[]` — no insight-generation engine exists yet
-//     anywhere in this app; that's future rung-2+ agent work.
+//   - `insights[]` reads the real `insights` table (migration 37) — the
+//     first real agent, Submission Chaser (src/modules/shared/lib/
+//     submissionChaserAgent.ts), started writing real rows there once it was
+//     wired into InsightsStrip.tsx. This function does NOT run that agent
+//     itself (still a pure read, no writes) — it only surfaces whatever
+//     insights already exist for this workforce member. Scoped by
+//     `workforce_id`, matching how insights are actually keyed today;
+//     unlinked doctors (no workforce row) always get `insights: []`, since
+//     nothing in this app raises insights against a bare doctor_id yet.
 //   - `entries[]` covers `submissions` (monthly roster entries) and
 //     `case_reports` (the original 15-slot Casebook Builder MVP) plus
 //     `dissertation_milestones` — the three genuinely flat "one entry per
@@ -117,9 +124,17 @@ export interface UdrBilling {
   activeSubscription: UserSubscription | null;
 }
 
-// Always `[]` in this pass — no insight-generation engine exists yet. Typed
-// as `unknown[]` rather than invented per this file's own header note.
-export type UdrInsight = unknown;
+// Mirrors the real `insights` table (migration 37) — trimmed to the fields
+// a UDR consumer actually needs (no tenant_id/subject_ref/cooldown_until,
+// those are agent/dedup-internal, not part of this record's public shape).
+export interface UdrInsight {
+  id: string;
+  agentKey: string;
+  rung: number;
+  text: string;
+  action: Record<string, unknown>;
+  createdAt: string;
+}
 
 export interface UnifiedDoctorRecord {
   identity: UdrIdentity;
@@ -282,6 +297,33 @@ async function fetchExamReadiness(client: SupabaseClient, workforceId: string): 
   return (data as ExamReadiness | null) ?? null;
 }
 
+interface InsightRow {
+  id: string;
+  agent_key: string;
+  rung: number;
+  text: string;
+  action: Record<string, unknown> | null;
+  created_at: string;
+}
+
+async function fetchInsights(client: SupabaseClient, workforceId: string): Promise<UdrInsight[]> {
+  const { data, error } = await client
+    .from('insights')
+    .select('id, agent_key, rung, text, action, created_at')
+    .eq('workforce_id', workforceId)
+    .is('dismissed_at', null)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return ((data as InsightRow[] | null) ?? []).map((row) => ({
+    id: row.id,
+    agentKey: row.agent_key,
+    rung: row.rung,
+    text: row.text,
+    action: row.action ?? {},
+    createdAt: row.created_at,
+  }));
+}
+
 async function fetchActiveSubscription(client: SupabaseClient, workforceId: string): Promise<UserSubscription | null> {
   const { data, error } = await client
     .from('user_subscriptions')
@@ -354,6 +396,7 @@ export async function getUnifiedDoctorRecord(
   let examReadiness: ExamReadiness | null = null;
   let caseReportsCount = 0;
   let activeSubscription: UserSubscription | null = null;
+  let insights: UdrInsight[] = [];
 
   if (workforceRow) {
     const [submissions, caseReports] = await Promise.all([
@@ -398,6 +441,7 @@ export async function getUnifiedDoctorRecord(
 
     examReadiness = await fetchExamReadiness(supabaseClient, workforceRow.id);
     activeSubscription = await fetchActiveSubscription(supabaseClient, workforceRow.id);
+    insights = await fetchInsights(supabaseClient, workforceRow.id);
   }
 
   entries.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -415,6 +459,6 @@ export async function getUnifiedDoctorRecord(
     billing: {
       activeSubscription,
     },
-    insights: [],
+    insights,
   };
 }
