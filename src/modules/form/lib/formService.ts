@@ -110,6 +110,59 @@ export async function getFormInstanceByName(tenantId: string, name: string): Pro
   return data;
 }
 
+// Doctor-owned personal Forms instances (migration 40) — extends the
+// established doctor-ownership pattern (migration 25's
+// research_workspaces/casebook_workspaces, migration 31's child-table join
+// policies) to the Forms module, per
+// PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md §7's "tenant scope: individual"
+// customisation line. Mirrors listFormInstances/createFormInstance above
+// but keyed by doctor_id instead of tenant_id — see migration 40's header
+// for the schema/RLS rationale. No doctor-scoped equivalent of
+// getFormEntries/createFormEntry is added here: this task's scope is
+// create + list only (same first-slice scope FormsBuilderPanel.tsx shipped
+// with for the org side), not an entry-submission flow.
+export async function listFormInstancesForDoctor(doctorId: string): Promise<FormInstance[]> {
+  checkSupabase();
+
+  const { data, error } = await supabase!
+    .from('form_instances')
+    .select('*')
+    .eq('doctor_id', doctorId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.warn('Error fetching doctor form instances:', error);
+    throw error;
+  }
+  return data || [];
+}
+
+export async function createFormInstanceForDoctor(
+  doctorId: string,
+  name: string,
+  schema: FormInstanceSchema
+): Promise<FormInstance> {
+  checkSupabase();
+
+  const { data, error } = await supabase!
+    .from('form_instances')
+    .insert({
+      doctor_id: doctorId,
+      tenant_id: null,
+      name,
+      schema,
+      created_by_workforce_id: null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.warn('Error creating doctor form instance:', error);
+    throw error;
+  }
+  return data;
+}
+
 // Inserts one form_entries row. Used by the ResidentFormView.tsx dual-write
 // to mirror a real submissions write into the generic Forms scaffold —
 // callers are expected to wrap this in their own try/catch and treat any

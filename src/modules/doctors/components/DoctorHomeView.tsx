@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Hourglass, LogOut, FlaskConical, Stethoscope, ChevronRight } from 'lucide-react';
 import { useTerminology } from '../../shared/terminology';
 import { DoctorIntegrationsPanel } from './DoctorIntegrationsPanel';
+import { DoctorFormsBuilderPanel } from './DoctorFormsBuilderPanel';
 
 interface DoctorHomeViewProps {
   doctor: { id: string; email: string; fullName: string };
@@ -14,10 +15,14 @@ interface DoctorHomeViewProps {
 // migration 25 this was a bare waiting-room screen with zero features
 // (per the review annotation it was built from: "only if a chief has added
 // you to an organization will you have organizational features"). Migration
-// 25 gives an unaffiliated doctor two personal, non-institutional tools
-// instead — see ResearchWorkspaceView/CasebookWorkspaceView's owner.kind
-// gating for exactly what's available (no AI Copilot, no tenant/logbook
-// features) vs. what's still Chief-link-only.
+// 25 gave an unaffiliated doctor two personal, non-institutional tools
+// (Research, Casebook) — see ResearchWorkspaceView/CasebookWorkspaceView's
+// owner.kind gating for exactly what's available (no AI Copilot, no
+// tenant/logbook features) vs. what's still Chief-link-only. Migration 40
+// adds a third: a personal Forms builder (DoctorFormsBuilderPanel below),
+// per PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md §7's "Individual customisation
+// ... personal forms" line — same no-AI-Copilot limitation, no quota model
+// exists for bare doctors yet.
 export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout }) => {
   const navigate = useNavigate();
   const { t } = useTerminology();
@@ -95,6 +100,8 @@ export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout
           </button>
         </div>
       </div>
+
+      <DoctorFormsBuilderPanel doctorId={doctor.id} />
 
       <DoctorIntegrationsPanel doctorId={doctor.id} />
     </div>
