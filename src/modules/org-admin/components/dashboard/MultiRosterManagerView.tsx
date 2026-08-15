@@ -40,8 +40,13 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 
 type GridTab = 'gop' | 'emergency' | 'supervision' | 'satellite';
 
-const INGESTION_TYPES: { id: RosterTypeId; label: string }[] = [
-  { id: 'consultant_gop', label: 'Consultant GOP Roster' },
+// A function rather than a plain module-level constant because the
+// 'consultant_gop' entry's label embeds the tenant-aware `senior_reviewer`
+// term (was a hardcoded "Consultant" — see
+// docs/LIVING_SYSTEM_GAP_AUDIT.md's terminology audit) and `t()` is only
+// available from useTerminology() inside the component.
+const getIngestionTypes = (t: (key: string, fallback?: string) => string): { id: RosterTypeId; label: string }[] => [
+  { id: 'consultant_gop', label: `${t('senior_reviewer', 'Consultant')} GOP Roster` },
   { id: 'combined_gop', label: 'Combined GOP Duty Roster' },
   { id: 'accident_emergency', label: 'A&E Emergency Call Roster' },
   { id: 'afternoon_supervision', label: 'Afternoon/Saturday Supervision' },
@@ -54,6 +59,7 @@ interface MultiRosterManagerViewProps {
 
 export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ tenantId }) => {
   const { t } = useTerminology();
+  const INGESTION_TYPES = getIngestionTypes(t);
   const [isLoading, setIsLoading] = useState(true);
   const [collection, setCollection] = useState<Collection | null>(null);
   const [workforce, setWorkforce] = useState<WorkforceMember[]>([]);
@@ -378,7 +384,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
               }`}
             >
               {w.full_name}
-              <span className="block text-[9px] font-normal">{w.on_floor ? 'On Floor' : 'Outside Rotation'}</span>
+              <span className="block text-[9px] font-normal">{w.on_floor ? 'On Floor' : `Outside ${t('rotation', 'Rotation')}`}</span>
             </button>
           ))}
         </div>
@@ -517,6 +523,14 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                   >
                     <div className="min-w-0">
                       <div className="text-[10px] font-bold text-slate-500">{slot.date_or_day} — {slot.clinic_type}</div>
+                      {/* TODO(terminology): "Consultants" is a plural of the
+                          `senior_reviewer` concept, which has no plural key
+                          in TERMINOLOGY_DEFAULTS (src/modules/shared/terminology.tsx)
+                          and no established plural-form precedent elsewhere
+                          in the codebase (unlike member/members). Left
+                          hardcoded rather than inventing a new terminology
+                          key/schema field — see
+                          docs/LIVING_SYSTEM_GAP_AUDIT.md's terminology audit. */}
                       <div className="text-xs text-slate-700 truncate">Consultants: {slot.consultants.join(', ') || '—'}</div>
                     </div>
                     <div className="flex flex-wrap gap-1 justify-end min-w-[120px]">

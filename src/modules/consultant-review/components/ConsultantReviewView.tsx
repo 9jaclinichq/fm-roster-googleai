@@ -99,7 +99,7 @@ export const ConsultantReviewView: React.FC<ConsultantReviewViewProps> = ({ revi
         <div className="flex items-center space-x-2">
           <ShieldCheck className="text-slate-500" size={18} />
           <div>
-            <h2 className="font-bold text-slate-900 text-lg tracking-tight">Consultant Review Workspace</h2>
+            <h2 className="font-bold text-slate-900 text-lg tracking-tight">{t('senior_reviewer', 'Consultant')} Review Workspace</h2>
             <p className="text-xs text-slate-500">Reviewing as {reviewer.name}</p>
           </div>
         </div>

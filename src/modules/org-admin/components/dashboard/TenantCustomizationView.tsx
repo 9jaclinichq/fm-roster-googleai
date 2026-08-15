@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../../../../lib/databaseService';
 import { Tenant, CallDutyRule, TenantAiAdaptationRule } from '../../../../types';
-import { TERMINOLOGY_DEFAULTS } from '../../../shared/terminology';
+import { TERMINOLOGY_DEFAULTS, useTerminology } from '../../../shared/terminology';
 import { Settings2, Sliders, Tag, Sparkles, RefreshCw, Plus } from 'lucide-react';
 
 // Integrated into ChiefDashboardView as a tab. Operates on the Chief's own
@@ -10,8 +10,13 @@ import { Settings2, Sliders, Tag, Sparkles, RefreshCw, Plus } from 'lucide-react
 // hardcoded around) — see migration 11's header for the full scope/
 // architecture notes this component otherwise assumes.
 
-const MODULE_TOGGLES: { key: string; label: string; description: string }[] = [
-  { key: 'viva_simulator_enabled', label: 'Mock Viva Oral Exam Simulator', description: 'Residents can log self-scored practice viva sessions.' },
+// A function rather than a plain module-level constant because the first
+// toggle's description embeds the tenant-aware `members` term (was a
+// hardcoded "Residents" — see docs/LIVING_SYSTEM_GAP_AUDIT.md's terminology
+// audit) and `t()` is only available from useTerminology() inside the
+// component.
+const getModuleToggles = (t: (key: string, fallback?: string) => string): { key: string; label: string; description: string }[] => [
+  { key: 'viva_simulator_enabled', label: 'Mock Viva Oral Exam Simulator', description: `${t('members', 'Residents')} can log self-scored practice viva sessions.` },
   { key: 'dissertation_module_enabled', label: 'Dissertation Assistant', description: 'WACP-stage dissertation tracking and AI-assisted writing checks.' },
   { key: 'exam_readiness_enabled', label: 'Exam Readiness Scorecard', description: 'Eligibility checklist (Evidemy, logbook, fees, forms).' },
 ];
@@ -23,6 +28,8 @@ interface TenantCustomizationViewProps {
 }
 
 export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = ({ tenantId }) => {
+  const { t } = useTerminology();
+  const MODULE_TOGGLES = getModuleToggles(t);
   const [isLoading, setIsLoading] = useState(true);
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [callDutyRules, setCallDutyRules] = useState<CallDutyRule[]>([]);
