@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { forkTemplate } from '../lib/research/templateEngine';
+import { TenantUpgradeCheckoutModal } from './TenantUpgradeCheckoutModal';
 import { ResearchTemplate, CasebookTemplate, CasebookFrameworkType, VivaVignette } from '../types';
 import { BookOpen, ClipboardList, Plus, Trash2, RefreshCw, GitFork, X, Globe, Building2, Mic, Lock } from 'lucide-react';
 
@@ -86,6 +87,7 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
   // full rationale, including the deliberately-flagged gap that there is
   // no self-serve tenant-plan upgrade checkout yet.
   const [isFreeTier, setIsFreeTier] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   const load = async () => {
     setIsLoading(true);
@@ -119,7 +121,7 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
 
   const openResearchFork = (sourceId: string) => {
     if (isFreeTier) {
-      setStatusMessage('Creating custom research templates requires a paid plan. Contact the platform to upgrade your organization.');
+      setShowUpgradeModal(true);
       return;
     }
     const src = researchTemplates.find(t => t.id === sourceId);
@@ -171,7 +173,7 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
 
   const openCreateCasebook = () => {
     if (isFreeTier) {
-      setStatusMessage('Creating custom casebook templates requires a paid plan. Contact the platform to upgrade your organization.');
+      setShowUpgradeModal(true);
       return;
     }
     setEditingCasebookId(null);
@@ -252,7 +254,7 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
 
   const openCreateViva = () => {
     if (isFreeTier) {
-      setStatusMessage('Creating custom viva vignettes requires a paid plan. Contact the platform to upgrade your organization.');
+      setShowUpgradeModal(true);
       return;
     }
     setEditingVivaId(null);
@@ -328,11 +330,21 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
       </div>
 
       {isFreeTier && (
-        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 text-sm flex items-center gap-2">
-          <Lock size={15} className="shrink-0" />
-          Your organization is on the Free plan. Creating custom Research/Casebook templates and Viva Vignettes
-          requires the Pro plan (₦12,000/month) — contact the platform to upgrade. Global defaults and your
-          organization's existing custom content remain fully usable.
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 text-sm flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Lock size={15} className="shrink-0" />
+            <span>
+              Your organization is on the Free plan. Creating custom Research/Casebook templates and Viva
+              Vignettes requires the Pro plan (₦12,000/month). Global defaults and your organization's existing
+              custom content remain fully usable.
+            </span>
+          </div>
+          <button
+            onClick={() => setShowUpgradeModal(true)}
+            className="shrink-0 text-xs font-bold bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700 cursor-pointer"
+          >
+            Upgrade Organization
+          </button>
         </div>
       )}
 
@@ -580,6 +592,26 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
           </div>
         </div>
       )}
+
+      <TenantUpgradeCheckoutModal
+        open={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        tenantId={tenantId}
+        onPaymentCompleted={async () => {
+          // Check the tenant directly rather than trusting the isFreeTier
+          // closure — load() updates that state asynchronously, so it could
+          // still read stale by the time this runs.
+          const tenant = await databaseService.getTenant(tenantId);
+          const stillFree = (tenant?.plan_type ?? 'free_seeded') === 'free_seeded';
+          await load();
+          setShowUpgradeModal(false);
+          setStatusMessage(
+            stillFree
+              ? "Payment not confirmed yet — the webhook activates your organization's plan automatically once the provider settles it. Try again in a moment."
+              : "Your organization's plan is now active — custom content creation is unlocked."
+          );
+        }}
+      />
     </div>
   );
 };

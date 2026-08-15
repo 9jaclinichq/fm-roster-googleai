@@ -3,6 +3,14 @@
 // (whose UNIQUE constraint makes replayed deliveries idempotent no-ops),
 // and activates the matching user_subscriptions row (migration 17).
 //
+// SCOPE (migration 30, 2026-08-14): a row's `scope` column says who the
+// subscription is for. 'workforce' (the original, unchanged path) just
+// activates the row. 'tenant' ALSO promotes tenants.plan_type from
+// 'free_seeded' to 'tier_1' — the self-serve organization upgrade. That
+// promotion only fires FROM 'free_seeded': it will never downgrade or
+// silently overwrite a tenant an operator has manually placed on a higher
+// tier_2/enterprise plan (a custom/negotiated deal outside this flow).
+//
 // Signature verification:
 //   * Paystack sends `x-paystack-signature` = HMAC-SHA512 of the RAW request
 //     body keyed with the account's secret key — verified here with
@@ -54,6 +62,22 @@ function timingSafeEqual(a: string, b: string): boolean {
 }
 
 const SUBSCRIPTION_PERIOD_DAYS = 30;
+
+// Promotes a tenant to the self-serve paid tier — ONLY from 'free_seeded',
+// so this never overwrites an operator-assigned tier_2/enterprise plan.
+// deno-lint-ignore no-explicit-any
+async function promoteTenantIfFreeSeeded(admin: any, tenantId: string): Promise<void> {
+  const { error } = await admin
+    .from('tenants')
+    .update({ plan_type: 'tier_1' })
+    .eq('id', tenantId)
+    .eq('plan_type', 'free_seeded');
+  if (error) {
+    console.error('Failed to promote tenant plan_type after payment:', error);
+    // Non-fatal: the subscription row itself is still activated below, and
+    // is the source of truth an operator can reconcile from if this fails.
+  }
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return textResponse({ error: 'Method not allowed' }, 405);
@@ -139,7 +163,7 @@ Deno.serve(async (req: Request) => {
   // (e.g. the pending insert failed), reconstruct from webhook metadata.
   const { data: existing } = await admin
     .from('user_subscriptions')
-    .select('id')
+    .select('id, scope, tenant_id')
     .eq('provider_reference', reference)
     .maybeSingle();
 
@@ -157,26 +181,56 @@ Deno.serve(async (req: Request) => {
       console.error('Failed to activate subscription:', error);
       return textResponse({ error: 'Failed to activate subscription' }, 500);
     }
+    if (existing.scope === 'tenant' && existing.tenant_id) {
+      await promoteTenantIfFreeSeeded(admin, existing.tenant_id);
+    }
   } else {
     const meta = (provider === 'paystack' ? data.metadata : data.meta) ?? {};
-    if (!meta.workforce_id) {
-      console.error('No pending row and no workforce_id in metadata for', reference);
-      return textResponse({ error: 'Unmatchable payment — no workforce_id' }, 422);
-    }
-    const { error } = await admin.from('user_subscriptions').insert([{
-      tenant_id: meta.tenant_id || null,
-      workforce_id: meta.workforce_id,
-      plan: 'pro_unlimited',
-      status: 'active',
-      provider,
-      provider_reference: reference,
-      customer_email: data.customer?.email ?? null,
-      current_period_start: now.toISOString(),
-      current_period_end: periodEnd.toISOString(),
-    }]);
-    if (error) {
-      console.error('Failed to insert subscription from webhook:', error);
-      return textResponse({ error: 'Failed to record subscription' }, 500);
+    const scope = meta.scope === 'tenant' ? 'tenant' : 'workforce';
+
+    if (scope === 'tenant') {
+      if (!meta.tenant_id) {
+        console.error('No pending row and no tenant_id in metadata for', reference);
+        return textResponse({ error: 'Unmatchable payment — no tenant_id' }, 422);
+      }
+      const { error } = await admin.from('user_subscriptions').insert([{
+        scope: 'tenant',
+        tenant_id: meta.tenant_id,
+        workforce_id: null,
+        plan: 'pro_unlimited',
+        status: 'active',
+        provider,
+        provider_reference: reference,
+        customer_email: data.customer?.email ?? null,
+        current_period_start: now.toISOString(),
+        current_period_end: periodEnd.toISOString(),
+      }]);
+      if (error) {
+        console.error('Failed to insert tenant subscription from webhook:', error);
+        return textResponse({ error: 'Failed to record subscription' }, 500);
+      }
+      await promoteTenantIfFreeSeeded(admin, meta.tenant_id);
+    } else {
+      if (!meta.workforce_id) {
+        console.error('No pending row and no workforce_id in metadata for', reference);
+        return textResponse({ error: 'Unmatchable payment — no workforce_id' }, 422);
+      }
+      const { error } = await admin.from('user_subscriptions').insert([{
+        scope: 'workforce',
+        tenant_id: meta.tenant_id || null,
+        workforce_id: meta.workforce_id,
+        plan: 'pro_unlimited',
+        status: 'active',
+        provider,
+        provider_reference: reference,
+        customer_email: data.customer?.email ?? null,
+        current_period_start: now.toISOString(),
+        current_period_end: periodEnd.toISOString(),
+      }]);
+      if (error) {
+        console.error('Failed to insert subscription from webhook:', error);
+        return textResponse({ error: 'Failed to record subscription' }, 500);
+      }
     }
   }
 

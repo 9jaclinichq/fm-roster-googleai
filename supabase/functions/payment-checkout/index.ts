@@ -15,6 +15,16 @@
 // both in sync when this changes again). PAYSTACK_SECRET_KEY on this
 // project is a LIVE key — a completed checkout moves real money.
 //
+// SCOPE (migration 30, 2026-08-14): body.scope selects who the checkout is
+// for — 'workforce' (default, unchanged) is a resident buying their own
+// per-resident AI Copilot Pro allowance; 'tenant' is a Chief buying Pro for
+// their WHOLE organization (unlocks Template Manager / Viva Vignette
+// org-content creation gated in migration 29). Same flat price either way
+// — see migration 30's header for why this reuses user_subscriptions
+// instead of a second table. workforce_id is required+used for 'workforce'
+// scope, ignored for 'tenant' scope; tenant_id is required for 'tenant'
+// scope.
+//
 // Deploy:  npx supabase@2.112.0 functions deploy payment-checkout --project-ref <ref> --no-verify-jwt --use-api
 // Secrets: PAYSTACK_SECRET_KEY (set), FLUTTERWAVE_SECRET_KEY (set).
 
@@ -30,12 +40,15 @@ const PLAN = 'pro_unlimited';
 const PLAN_AMOUNT_NGN = 12000; // authoritative — see header
 
 // Where the provider sends the payer after checkout. Cosmetic only — the
-// webhook is the source of truth for activation.
-const RETURN_URL = 'https://privydoc-doc-workspace.web.app/#/workspace/research';
+// webhook is the source of truth for activation. Scope-specific because a
+// Chief has no /workspace/* session to land in.
+const RETURN_URL_WORKFORCE = 'https://privydoc-doc-workspace.web.app/#/workspace/research';
+const RETURN_URL_TENANT = 'https://privydoc-doc-workspace.web.app/#/chief/dashboard';
 
 interface RequestBody {
   provider: 'paystack' | 'flutterwave';
-  workforce_id: string;
+  scope?: 'workforce' | 'tenant';
+  workforce_id?: string;
   tenant_id?: string;
   email: string;
 }
@@ -58,11 +71,19 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'Invalid JSON body' }, 400);
   }
 
-  if (!body.provider || !body.workforce_id || !body.email) {
-    return jsonResponse({ error: 'provider, workforce_id, and email are required' }, 400);
+  const scope: 'workforce' | 'tenant' = body.scope === 'tenant' ? 'tenant' : 'workforce';
+
+  if (!body.provider || !body.email) {
+    return jsonResponse({ error: 'provider and email are required' }, 400);
   }
   if (body.provider !== 'paystack' && body.provider !== 'flutterwave') {
     return jsonResponse({ error: "provider must be 'paystack' or 'flutterwave'" }, 400);
+  }
+  if (scope === 'workforce' && !body.workforce_id) {
+    return jsonResponse({ error: 'workforce_id is required for a workforce-scoped checkout' }, 400);
+  }
+  if (scope === 'tenant' && !body.tenant_id) {
+    return jsonResponse({ error: 'tenant_id is required for a tenant-scoped checkout' }, 400);
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -73,7 +94,11 @@ Deno.serve(async (req: Request) => {
   const admin = createClient(supabaseUrl, serviceRoleKey);
 
   const reference = `privydoc-pro-${crypto.randomUUID()}`;
-  const metadata = { workforce_id: body.workforce_id, tenant_id: body.tenant_id || null, plan: PLAN };
+  const metadata =
+    scope === 'tenant'
+      ? { scope, tenant_id: body.tenant_id, plan: PLAN }
+      : { scope, workforce_id: body.workforce_id, tenant_id: body.tenant_id || null, plan: PLAN };
+  const returnUrl = scope === 'tenant' ? RETURN_URL_TENANT : RETURN_URL_WORKFORCE;
 
   try {
     let checkoutUrl: string;
@@ -90,7 +115,7 @@ Deno.serve(async (req: Request) => {
           amount: PLAN_AMOUNT_NGN * 100, // kobo
           currency: 'NGN',
           reference,
-          callback_url: RETURN_URL,
+          callback_url: returnUrl,
           metadata,
         }),
       });
@@ -110,10 +135,13 @@ Deno.serve(async (req: Request) => {
           tx_ref: reference,
           amount: String(PLAN_AMOUNT_NGN),
           currency: 'NGN',
-          redirect_url: RETURN_URL,
+          redirect_url: returnUrl,
           customer: { email: body.email },
           meta: metadata,
-          customizations: { title: 'PrivyDoc Workspace — Pro/Unlimited', description: 'Monthly Pro subscription' },
+          customizations: {
+            title: 'PrivyDoc Workspace — Pro/Unlimited',
+            description: scope === 'tenant' ? 'Monthly organization-wide Pro subscription' : 'Monthly Pro subscription',
+          },
         }),
       });
       const data = await res.json();
@@ -125,8 +153,9 @@ Deno.serve(async (req: Request) => {
 
     // Record the pending subscription the webhook will later activate.
     const { error: insertError } = await admin.from('user_subscriptions').insert([{
-      tenant_id: body.tenant_id || null,
-      workforce_id: body.workforce_id,
+      scope,
+      tenant_id: scope === 'tenant' ? body.tenant_id : body.tenant_id || null,
+      workforce_id: scope === 'tenant' ? null : body.workforce_id,
       plan: PLAN,
       status: 'pending',
       provider: body.provider,

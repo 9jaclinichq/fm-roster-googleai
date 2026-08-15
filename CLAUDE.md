@@ -593,14 +593,9 @@ AI Copilot actions:
   and lock icons on the three create entry points when gated, and surfaces
   the real RPC rejection message (via a `PostgrestError`-aware
   `errorMessage()` helper) instead of a generic "Failed to save..." string.
-  ⚠️ **Flagged gap, not silently solved**: there is still no self-serve
-  "upgrade my organization's plan" checkout — `tenants.plan_type` changes
-  only via the Platform Operator Console's `updateTenantPlan` (operator-only
-  action). A Chief hitting this gate sees a message telling them to contact
-  the platform, not a checkout button. A real self-serve tenant-plan
-  checkout (extending `payment-checkout`/`payment-webhook` to handle
-  tenant-keyed subscriptions instead of only workforce-keyed ones) is a
-  separate, larger task, not attempted in this pass. **Manually verified**:
+  The self-serve upgrade gap this originally left is closed by migration 30
+  below — this paragraph's own banner/lock-icon UI now also carries an
+  "Upgrade Organization" button. **Manually verified**:
   applied migration 29 live; browser-verified as the real UCH Chief on the
   live `free_seeded` tenant — banner + lock icons rendered, clicking a
   locked "Fork for My Org" button correctly blocked client-side with no
@@ -609,6 +604,52 @@ AI Copilot actions:
   disappeared, created a real Viva Vignette end-to-end through the live RPC,
   deleted it, then reverted the tenant back to `free_seeded` — no test data
   left behind.
+- **Migration 30 (2026-08-15) — self-serve organization-wide Pro upgrade
+  checkout**, closing the gap migration 29 flagged. Extends the EXISTING
+  per-resident billing machinery (migration 17) rather than adding a second
+  parallel table: `user_subscriptions` gets a `scope` discriminator
+  (`'workforce'` | `'tenant'`), `workforce_id` becomes nullable, and a CHECK
+  constraint enforces exactly one owner shape per scope (`scope='tenant'`
+  requires `tenant_id` and forbids `workforce_id`). This keeps
+  `payment-checkout`/`payment-webhook` on one lookup-by-`provider_reference`
+  code path instead of two — same "extend, don't duplicate" precedent as
+  migration 11's `guest_review_invites`.
+  `payment-checkout` now accepts `scope: 'tenant'` (Chief buying Pro for the
+  whole org — no `workforce_id`, `tenant_id` required) alongside the
+  original `scope: 'workforce'`/default (a resident's own per-resident AI
+  Copilot allowance) — same flat ₦12,000/month price either way, no
+  per-scope pricing. `payment-webhook`'s activation branches on the row's
+  `scope`: a `'tenant'` row also promotes `tenants.plan_type` from
+  `'free_seeded'` to `'tier_1'` via `promoteTenantIfFreeSeeded()` — guarded
+  to only fire FROM `'free_seeded'`, so it can never downgrade or silently
+  overwrite a tenant an operator has manually placed on `tier_2`/`enterprise`
+  (a custom/negotiated deal outside this flow). `databaseService.
+  initiateTenantPlanCheckout()` and the new `TenantUpgradeCheckoutModal.tsx`
+  (sibling to the per-resident `UpgradeCheckoutModal.tsx`, same
+  email-then-provider-buttons-then-confirm flow, no per-resident quota
+  numbers since a Chief has none) wire this into `TemplateManagerView.tsx`'s
+  existing Free-plan banner via a new "Upgrade Organization" button — the
+  three lock-gated create entry points now open this checkout directly
+  instead of a dead-end "contact the platform" message. **Manually
+  verified**: applied migration 30 live; POSTed directly to the deployed
+  `payment-checkout` function with `scope: 'tenant'` and confirmed a real
+  Flutterwave checkout URL plus a correctly-shaped pending
+  `user_subscriptions` row (`scope: 'tenant'`, `workforce_id: null`);
+  independently simulated the webhook's exact activation SQL to confirm the
+  row flips to `active` and `tenants.plan_type` flips to `tier_1`; separately
+  confirmed the `tier_2`-downgrade guard by pre-setting the tenant to
+  `tier_2` and confirming the guarded promotion UPDATE affected zero rows;
+  browser-verified as the real UCH Chief — clicked "Upgrade Organization",
+  filled a real email, clicked "Pay with Flutterwave", confirmed a genuine
+  Flutterwave-hosted checkout tab opened (closed without entering payment
+  details — no live transaction was completed, consistent with every other
+  billing verification in this file), clicked "I've completed payment" and
+  confirmed the modal correctly reports "not confirmed yet" and closes
+  cleanly since no webhook fired. All test rows deleted and the tenant
+  reverted to `free_seeded` afterward — no test data left behind. No actual
+  end-to-end paid transaction has been run (would move real money on the
+  live keys), matching this file's existing note on the per-resident
+  checkout below.
 - **NOT yet done** (needs the user / dashboards): confirm the webhook URL
   (`https://gdumksfffewpdqqwvcdo.supabase.co/functions/v1/payment-webhook`)
   is registered in BOTH provider dashboards (the user has configured the

@@ -1907,11 +1907,35 @@ export const databaseService = {
     checkSupabase();
 
     const { data, error } = await supabase!.functions.invoke('payment-checkout', {
-      body: { provider, workforce_id: workforceId, tenant_id: tenantId, email },
+      body: { provider, scope: 'workforce', workforce_id: workforceId, tenant_id: tenantId, email },
     });
 
     if (error || !data?.checkout_url) {
       console.warn('Error initiating payment checkout:', error || data);
+      throw new Error(data?.error || error?.message || 'Failed to initiate checkout');
+    }
+    return data as PaymentCheckoutResult;
+  },
+
+  // Self-serve ORGANIZATION-wide Pro upgrade (migration 30) — a Chief
+  // buying Pro for the whole tenant, distinct from initiatePaymentCheckout
+  // above (a resident's own per-resident AI Copilot allowance). Same
+  // payment-checkout Edge Function, scope: 'tenant' instead. Activation —
+  // including promoting tenants.plan_type — happens only in the
+  // payment-webhook Edge Function, never here.
+  async initiateTenantPlanCheckout(
+    provider: PaymentProvider,
+    tenantId: string,
+    email: string
+  ): Promise<PaymentCheckoutResult> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.functions.invoke('payment-checkout', {
+      body: { provider, scope: 'tenant', tenant_id: tenantId, email },
+    });
+
+    if (error || !data?.checkout_url) {
+      console.warn('Error initiating tenant plan checkout:', error || data);
       throw new Error(data?.error || error?.message || 'Failed to initiate checkout');
     }
     return data as PaymentCheckoutResult;
