@@ -338,6 +338,19 @@ order, each phase independently shippable and manually browser-verified before t
    before moving on). Live-verified: resident login → Casebook (legacy Builder renders) →
    Casebook & Logbook (the newer engine renders, exercising all 3 relocated lib files at once) — no
    console errors.
+   **`auth` DONE (2026-08-15)**: `AuthLandingView.tsx`, `ResidentLoginView.tsx`, `ChiefLoginView.tsx`,
+   `DoctorAuthView.tsx`, `AdminPortalChooserView.tsx` → `modules/auth/components/`. All 5 were leaf
+   views (only `App.tsx` imports any of them — confirmed by a `src`-wide grep before moving on), so
+   this batch was pure import-path surgery: each moved file's own `databaseService`/`types`/
+   `shared/terminology`/`shared/config/branding` imports repointed one directory level deeper, and
+   `App.tsx`'s 5 corresponding import statements (4 regular imports plus `ChiefLoginView`'s
+   `lazy(() => import(...))` call) updated to the new paths. `tsc --noEmit` and `npm run build` both
+   clean on the first pass. Live-verified all 3 login surfaces end-to-end against the real DB:
+   `AuthLandingView` at `/#/login`; full resident login (Dr. Apata / `795012`) through
+   `ResidentLoginView` landing on `/workspace/form` with real data; `AdminPortalChooserView` at
+   `/#/admin-portal`; full Chief login (`719603`) through `ChiefLoginView` landing on
+   `/chief/dashboard`; `DoctorAuthView` rendering correctly at `/#/doctor/login`. No console errors
+   on any of the three routes. This closes every Phase 3 module except `org-admin` (Task below).
 4. **`databaseService.ts` split**, module-by-module, following the same order — each module's
    service slice extracted only after that module's components have already moved, so the diff per
    step stays reviewable.

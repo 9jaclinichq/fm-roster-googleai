@@ -3,13 +3,13 @@ import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation
 import { Navbar } from './modules/shared/ui/Navbar';
 import { DevHelper } from './modules/shared/ui/DevHelper';
 import { LoadingShell } from './modules/shared/ui/LoadingShell';
-import { ResidentLoginView } from './components/ResidentLoginView';
+import { ResidentLoginView } from './modules/auth/components/ResidentLoginView';
 import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
-import { AuthLandingView } from './components/AuthLandingView';
-import { DoctorAuthView } from './components/DoctorAuthView';
+import { AuthLandingView } from './modules/auth/components/AuthLandingView';
+import { DoctorAuthView } from './modules/auth/components/DoctorAuthView';
 import { DoctorHomeView } from './modules/doctors/components/DoctorHomeView';
-import { AdminPortalChooserView } from './components/AdminPortalChooserView';
+import { AdminPortalChooserView } from './modules/auth/components/AdminPortalChooserView';
 import { CreateOrganizationView } from './modules/doctors/components/CreateOrganizationView';
 import { databaseService, DEFAULT_TENANT_ID } from './lib/databaseService';
 import { TerminologyProvider } from './modules/shared/terminology';
@@ -26,7 +26,7 @@ import { WorkforceMember } from './types';
 // majority of sessions are residents who never touch a /chief/* route, so
 // this was the single biggest lever toward the stated <150KB target.
 const ChiefLoginView = lazy(() =>
-  import('./components/ChiefLoginView').then(m => ({ default: m.ChiefLoginView }))
+  import('./modules/auth/components/ChiefLoginView').then(m => ({ default: m.ChiefLoginView }))
 );
 const ChiefDashboardView = lazy(() =>
   import('./components/ChiefDashboardView').then(m => ({ default: m.ChiefDashboardView }))

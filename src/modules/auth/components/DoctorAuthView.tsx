@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Stethoscope, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { databaseService } from '../lib/databaseService';
+import { databaseService } from '../../../lib/databaseService';
 
 // Self-service email+password login/register for individual doctors
 // (migration 18) — the first real-auth flow in this app. On success this

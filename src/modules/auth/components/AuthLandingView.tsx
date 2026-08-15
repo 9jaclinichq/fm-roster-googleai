@@ -1,8 +1,8 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Stethoscope, ChevronRight } from 'lucide-react';
-import { getActiveBrand } from '../modules/shared/config/branding';
-import { useTerminology } from '../modules/shared/terminology';
+import { getActiveBrand } from '../../shared/config/branding';
+import { useTerminology } from '../../shared/terminology';
 
 // Landing chooser between the two, independent identity tracks this app
 // supports — see supabase/migrations/18_individual_doctor_identity.sql:
