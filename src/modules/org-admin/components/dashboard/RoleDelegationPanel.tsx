@@ -1,6 +1,7 @@
 import React from 'react';
 import { DelegatedRole, OrgGroup, WorkforceMember } from '../../../../types';
 import { ShieldCheck, UserPlus, AlertTriangle, FolderPlus } from 'lucide-react';
+import { useTerminology } from '../../../shared/terminology';
 
 interface RoleDelegationPanelProps {
   delegatedRoles: DelegatedRole[];
@@ -65,6 +66,7 @@ export const RoleDelegationPanel: React.FC<RoleDelegationPanelProps> = ({
   isCreatingGroup,
   handleCreateOrgGroup,
 }) => {
+  const { t } = useTerminology();
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* List of delegated roles */}
@@ -173,7 +175,7 @@ export const RoleDelegationPanel: React.FC<RoleDelegationPanelProps> = ({
             </button>
           </form>
           <p className="text-[10px] text-slate-400 leading-relaxed">
-            Delegated members log in with their normal resident access code — an extra "Consultant Review" tab
+            Delegated members log in with their normal resident access code — an extra "{t('senior_reviewer', 'Consultant')} Review" tab
             appears automatically once their group grants approval authority.
           </p>
         </div>
@@ -234,7 +236,7 @@ export const RoleDelegationPanel: React.FC<RoleDelegationPanelProps> = ({
                 onChange={(e) => setNewGroupGrantsApproval(e.target.checked)}
                 className="rounded border-slate-300"
               />
-              <span className="text-[11px] font-semibold text-slate-600">Grants Consultant Review / logbook approval authority</span>
+              <span className="text-[11px] font-semibold text-slate-600">Grants {t('senior_reviewer', 'Consultant')} Review / logbook approval authority</span>
             </label>
 
             <button

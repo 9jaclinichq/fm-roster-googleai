@@ -220,10 +220,10 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
     
     const headers = [
       `${t('member', 'Resident')} Name`,
-      'Category', 
-      'Current Rotation', 
-      'Expected Next Rotation', 
-      'Taking Leave', 
+      'Category',
+      `Current ${t('rotation', 'Rotation')}`,
+      `Expected Next ${t('rotation', 'Rotation')}`,
+      'Taking Leave',
       'Leave Type', 
       'Leave Start Date', 
       'Leave End Date', 
@@ -634,12 +634,12 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
     if (!editingSubmission) return;
 
     if (!editCurrentRotation.trim()) {
-      setEditError('Current Rotation is required.');
+      setEditError(`Current ${t('rotation', 'Rotation')} is required.`);
       return;
     }
 
     if (!editNextRotation.trim()) {
-      setEditError('Expected Rotation is required.');
+      setEditError(`Expected ${t('rotation', 'Rotation')} is required.`);
       return;
     }
 
