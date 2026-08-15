@@ -45,9 +45,10 @@ export const AI_QUOTA_WINDOW_DAYS = 14;
 /**
  * The AI Copilot action types that count against the free-tier quota:
  * the Research Engine and PMR/Casebook module actions (migrations 14/16).
- * The original academic-copilot action types (migration 08) are deliberately
- * not gated in this pass — the task brief scopes gating to "Research &
- * PMR/Casebook modules".
+ * The original dissertation-copilot action types (migration 08, function
+ * renamed from academic-copilot 2026-08-15) are deliberately not gated in
+ * this pass — the task brief scopes gating to "Research & PMR/Casebook
+ * modules".
  */
 export const AI_QUOTA_ACTION_TYPES = [
   'research_audit',

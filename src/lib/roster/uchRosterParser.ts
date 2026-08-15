@@ -18,7 +18,7 @@ import {
 // text extracted from an uploaded file) into the grid shapes used by
 // MultiRosterManagerView.tsx. Tries the `roster-parser` Supabase Edge
 // Function first (real LLM structuring, same OpenAI->Gemini chain as
-// academic-copilot); falls back to a deterministic heuristic parser if
+// dissertation-copilot); falls back to a deterministic heuristic parser if
 // the function isn't deployed/configured or fails for any reason.
 //
 // Both paths are Human-In-The-Loop by design: neither invents a resident,

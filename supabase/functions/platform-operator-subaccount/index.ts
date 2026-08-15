@@ -1,12 +1,19 @@
 // Supabase Edge Function: creates a real Paystack subaccount for a tenant.
 //
+// RENAMED from paystack-subaccount (2026-08-15, modularization pass — see
+// docs/MODULARIZATION_ARCHITECTURE.md's backend module map) for 1:1 naming
+// with the `platform-operator` frontend module (this function's only
+// caller, tenant provisioning in SaaSOperatorConsoleView). Cosmetic rename
+// only, same code — Deno bundles per-function, so this carries no
+// functional change.
+//
 // Why an Edge Function at all: PAYSTACK_SECRET_KEY is a live secret key
 // that can create subaccounts and, on other endpoints, move real money.
 // It can never be embedded in client code — even a non-VITE_-prefixed one,
 // since Vite ships whatever the bundled JS actually references — so this
 // function is the only place in this project's architecture that can hold
 // it safely (Deno.env, never in the repo or the client bundle). Same
-// pattern as academic-copilot's AI_API_KEY/GEMINI_API_KEY.
+// pattern as dissertation-copilot's AI_API_KEY/GEMINI_API_KEY.
 //
 // SCOPE (deliberately narrow — see migration 11's header): this function
 // ONLY creates a subaccount (POST /subaccount) and returns the resulting
@@ -15,7 +22,7 @@
 // separate, larger task (needs a public webhook endpoint + signature
 // verification) not attempted in this pass.
 //
-// Deploy:  npx supabase@2.112.0 functions deploy paystack-subaccount --project-ref <ref> --no-verify-jwt --use-api
+// Deploy:  npx supabase@2.112.0 functions deploy platform-operator-subaccount --project-ref <ref> --no-verify-jwt --use-api
 // Secret:  npx supabase@2.112.0 secrets set PAYSTACK_SECRET_KEY=sk_live_... --project-ref <ref>
 // (--no-verify-jwt because this app has no Supabase Auth sessions to verify
 // against — see migration 01's header. This function is reachable by

@@ -279,7 +279,7 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
           </div>
           <p className="text-[11px] text-slate-400 -mt-2">
             Global counts across all tenants (not tenant-scoped). Revenue metrics require live subscription/charge
-            data, which this pass does not build — see paystack-subaccount's scope note.
+            data, which this pass does not build — see platform-operator-subaccount's scope note.
           </p>
 
           {/* Per-Tenant Usage Breakdown */}
@@ -409,9 +409,10 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
             <div className="bg-white rounded-2xl border border-slate-200 p-4">
               <h2 className="font-bold text-slate-800 flex items-center gap-2 mb-1"><Sparkles size={16} /> AI Adaptation Rules — {tenants.find(t => t.id === selectedTenantId)?.name}</h2>
               <p className="text-[11px] text-slate-400 mb-3">
-                Inspect only in this pass — the academic-copilot and roster-parser Edge Functions do not yet read
-                or apply these overrides when constructing prompts (deferred, see migration 11's header). Editing
-                here stores data but has no live effect on AI output yet.
+                All 4 AI Copilot Edge Functions (dissertation-copilot, casebook-copilot, research-copilot,
+                roster-parser) read and apply these overrides when constructing prompts — see
+                supabase/functions/_shared/tenantAdaptation.ts. Inspect only here; use each organization's
+                own Chief Customization panel to change a tenant's rules.
               </p>
               {adaptationRules.length === 0 ? (
                 <p className="text-xs text-slate-400">No adaptation rules recorded for this tenant yet.</p>

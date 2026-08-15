@@ -4,7 +4,7 @@
 // This module is deliberately AI-provider-agnostic: it only builds prompt
 // text and runs deterministic validators against whichever
 // `research_templates` row is active for a workspace. It does not call
-// OpenAI/Gemini itself — see supabase/functions/academic-copilot/index.ts
+// OpenAI/Gemini itself — see supabase/functions/dissertation-copilot/index.ts
 // for that pattern (provider chain, JSON response parsing) if/when a
 // research-specific action is wired into a live Edge Function endpoint.
 //
@@ -134,7 +134,7 @@ export function validateCitationSyntax(referenceList: string, template: Research
 }
 
 // Appends the active template's rubric as clearly-labeled context on top of
-// a base action prompt (e.g. academic-copilot's methodology_check prompt).
+// a base action prompt (e.g. dissertation-copilot's methodology_check prompt).
 // See module header for the prompt-injection safety rationale.
 export function buildDynamicSystemPrompt(basePrompt: string, template: ResearchTemplateRubric): string {
   const rules: string[] = [

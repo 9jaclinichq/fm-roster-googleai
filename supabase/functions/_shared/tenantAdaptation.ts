@@ -8,7 +8,7 @@
 // supabase/functions/casebook-copilot/index.ts's git history / CLAUDE.md)
 // with a hardcoded `feature_key=eq.casebook_copilot` filter baked into the
 // fetch call. Extracted here and parameterized so the same mechanism can be
-// reused by academic-copilot, research-copilot, and roster-parser without
+// reused by dissertation-copilot, research-copilot, and roster-parser without
 // duplicating the fetch/validation logic four times.
 //
 // PROMPT-INJECTION SAFETY: appendTenantAdaptationOverride always frames the

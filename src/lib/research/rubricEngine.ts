@@ -5,8 +5,8 @@ import { ResearchTemplate } from '../../types';
 // (live gauges as a resident types — no network round-trip per keystroke).
 // Same "independent heuristic implementation, not shared code across the
 // Vite/Deno boundary" pattern already used by academicCopilot.ts vs
-// academic-copilot/index.ts's SYSTEM_PROMPTS. Keep both in sync by hand if
-// the rubric rules change.
+// dissertation-copilot/index.ts's SYSTEM_PROMPTS. Keep both in sync by hand
+// if the rubric rules change.
 
 const DEFAULT_TITLE_MAX_WORDS = 25;
 const DEFAULT_AFRICAN_LITERATURE_MIN_PCT = 25;

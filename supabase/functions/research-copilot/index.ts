@@ -1,21 +1,21 @@
 // Supabase Edge Function: server-side proxy for the Universal Research
 // Engine's AI Copilot Panel (ResearchWorkspaceView.tsx). Same rationale and
-// provider chain as supabase/functions/academic-copilot/index.ts — an LLM
+// provider chain as supabase/functions/dissertation-copilot/index.ts — an LLM
 // API key can only live here (Deno.env), never in client code, since this
 // app is a pure static SPA. See that function's header for the full
 // deploy/secrets/provider-chain explanation; not repeated here.
 //
-// Kept as its OWN Edge Function rather than folded into academic-copilot's
+// Kept as its OWN Edge Function rather than folded into dissertation-copilot's
 // action list: it depends on supabase/functions/_shared/researchRubric.ts
 // to build a per-template dynamic system prompt (see that module's header
-// for the prompt-injection safety design), which academic-copilot's fixed
+// for the prompt-injection safety design), which dissertation-copilot's fixed
 // prompts have no use for. Every action here is deterministic-fallback-
 // first at the CLIENT (see src/lib/ai/researchCopilot.ts) — this function
 // only makes the "real AI" tier possible, the UI never depends on it.
 //
 // Deploy:  npx supabase functions deploy research-copilot --project-ref <ref> --no-verify-jwt --use-api
 // Secrets: reuses the same AI_API_KEY / GEMINI_API_KEY already set for
-//          academic-copilot — no new secrets needed.
+//          dissertation-copilot — no new secrets needed.
 //
 // TENANT AI QUOTA: shares the SAME rolling free-tier quota as every other
 // AI-backed Edge Function (check_and_increment_tenant_ai_quota, migration
@@ -55,7 +55,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 // Every prompt frames output as an educational planning aid requiring
 // human (supervisor/consultant) review — same framing convention as
-// academic-copilot's SYSTEM_PROMPTS — and explicitly forbids inventing
+// dissertation-copilot's SYSTEM_PROMPTS — and explicitly forbids inventing
 // bibliographic details or results beyond what the resident provided.
 const BASE_SYSTEM_PROMPTS: Record<ActionType, string> = {
   audit_draft:

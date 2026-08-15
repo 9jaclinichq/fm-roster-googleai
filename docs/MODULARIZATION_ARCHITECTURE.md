@@ -208,12 +208,12 @@ Already close to this shape — rename for clarity, don't restructure:
 
 | Current name | Serves module | Notes |
 |---|---|---|
-| `academic-copilot` | `dissertation` | rename target: `dissertation-copilot` for 1:1 module naming |
+| `dissertation-copilot` | `dissertation` | **renamed 2026-08-15** from `academic-copilot` for 1:1 module naming |
 | `research-copilot` | `research` | already matches |
 | `casebook-copilot` | `casebook-logbook` | already matches |
 | `roster-parser` | `roster-engine` | already matches |
 | `payment-checkout` / `payment-webhook` | `billing` | already matches |
-| `paystack-subaccount` | `platform-operator` | tenant provisioning uses this — rename target: `platform-operator-subaccount` |
+| `platform-operator-subaccount` | `platform-operator` | tenant provisioning uses this — **renamed 2026-08-15** from `paystack-subaccount` |
 | `_shared/tenantAdaptation.ts` | cross-module (AI-rigor tuning) | correctly named already — keep as the pattern for future cross-module backend helpers |
 | `_shared/casebookRubric.ts` / `researchRubric.ts` | `casebook-logbook` / `research` | correctly scoped already |
 
@@ -246,6 +246,15 @@ order, each phase independently shippable and manually browser-verified before t
 
 1. **Backend renames** (`paystack-subaccount` → `platform-operator-subaccount`, `academic-copilot` →
    `dissertation-copilot`) — zero frontend risk, just update the 2 caller sites and redeploy.
+   **DONE (2026-08-15)**: both functions renamed and deployed, the 2 real client call sites
+   (`src/lib/ai/academicCopilot.ts`, `databaseService.ts`'s `provisionTenantWithSubaccount`) updated,
+   comment references updated throughout the codebase and this repo's `CLAUDE.md`, old function slugs
+   deleted from Supabase, `tsc --noEmit` clean. Live-verified: a real OpenAI response through the
+   actual Dissertation Assistant UI (logged in as a real resident, ran "Check Departmental
+   Guidelines"), and a real Paystack validation-error response confirming the renamed subaccount
+   function's key still authenticates (without creating a real subaccount). Test data cleaned up
+   afterward. The `academic_copilot` `tenant_ai_adaptation_rules` feature_key was deliberately left
+   unrenamed — see `CLAUDE.md`'s AI/Edge Functions section for why.
 2. **`shared/` extraction** — move `Navbar`, `LoadingShell`, `DevHelper`, `branding.ts`, `tiers.ts`,
    `terminology.tsx` verbatim into `modules/shared/`; update imports. No logic changes.
 3. **One module at a time, smallest first**: `announcements` → `doctors` → `billing` →

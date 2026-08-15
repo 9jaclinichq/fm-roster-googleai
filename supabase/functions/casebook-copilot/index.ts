@@ -1,18 +1,18 @@
 // Supabase Edge Function: server-side proxy for the Casebook & Clinical
 // Logbook Engine's AI-assisted actions (migration 15). Same rationale,
-// provider chain, and deployment/secrets story as academic-copilot and
-// research-copilot — see academic-copilot/index.ts's header for the full
+// provider chain, and deployment/secrets story as dissertation-copilot and
+// research-copilot — see dissertation-copilot/index.ts's header for the full
 // explanation, not repeated here.
 //
-// Kept as its own Edge Function (not folded into academic-copilot),
+// Kept as its own Edge Function (not folded into dissertation-copilot),
 // matching the precedent set by research-copilot: depends on
 // supabase/functions/_shared/casebookRubric.ts to build a per-template
-// dynamic prompt, and keeps academic-copilot's existing 3 actions
+// dynamic prompt, and keeps dissertation-copilot's existing 3 actions
 // untouched rather than growing that file further.
 //
 // Deploy:  npx supabase functions deploy casebook-copilot --project-ref <ref> --no-verify-jwt --use-api
 // Secrets: reuses the same AI_API_KEY / GEMINI_API_KEY already set for
-//          academic-copilot / research-copilot — no new secrets needed.
+//          dissertation-copilot / research-copilot — no new secrets needed.
 //
 // TENANT AI QUOTA: shares the same rolling free-tier quota as every other
 // AI-backed Edge Function (check_and_increment_tenant_ai_quota, migration

@@ -1,11 +1,11 @@
 // Supabase Edge Function: server-side proxy for LLM-backed UCH roster
 // document structuring, used by src/lib/roster/uchRosterParser.ts.
 //
-// Same architecture and reasoning as supabase/functions/academic-copilot —
+// Same architecture and reasoning as supabase/functions/dissertation-copilot —
 // see that function's header for the full explanation of why an Edge
 // Function is the only safe place to hold an LLM key in this project.
 // This is a SEPARATE function (not a new action bolted onto
-// academic-copilot) because roster parsing is an operational/scheduling
+// dissertation-copilot) because roster parsing is an operational/scheduling
 // task, not an academic one — different domain, different prompts, no
 // reason to couple their deploys.
 //
@@ -23,13 +23,13 @@
 // the merge grid, same as they always would have on paper.
 //
 // Deploy:  npx supabase functions deploy roster-parser --project-ref <ref> --no-verify-jwt --use-api
-// Secrets: shared with academic-copilot (AI_API_KEY / GEMINI_API_KEY) —
+// Secrets: shared with dissertation-copilot (AI_API_KEY / GEMINI_API_KEY) —
 //          no separate secret needed if that function is already deployed.
 //
 // Status: deployed and live-verified (see CLAUDE.md).
 //
 // TENANT AI QUOTA (migration 11): same optional tenant_id + server-side
-// quota check as academic-copilot — see that function's header for the
+// quota check as dissertation-copilot — see that function's header for the
 // full rationale. Enforced here too, not just client-side.
 //
 // AI-RIGOR TUNING (2026-08-15): after the quota check, this also splices in

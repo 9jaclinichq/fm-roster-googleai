@@ -181,11 +181,24 @@ plan below.
 
 ## AI / Supabase Edge Functions
 
+**Function renames (2026-08-15, modularization Phase 1)**: `academic-copilot` → `dissertation-copilot`
+and `paystack-subaccount` → `platform-operator-subaccount`, per `docs/MODULARIZATION_ARCHITECTURE.md`'s
+backend module map — 1:1 naming with the frontend module each serves. Cosmetic rename only (Deno
+bundles per-function, so no functional change); the 2 real client call sites
+(`src/lib/ai/academicCopilot.ts` — filename deliberately NOT renamed in this pass, that's a later
+module-move phase — and `src/lib/databaseService.ts`'s `provisionTenantWithSubaccount`) were updated,
+both new functions deployed and live-verified (a real OpenAI response through the actual Dissertation
+Assistant UI; a real Paystack validation-error response confirming the key still authenticates,
+without creating a real subaccount), then the old function slugs deleted from Supabase so nothing is
+left orphaned. The AI-rigor tuning `feature_key` string stayed `'academic_copilot'` deliberately — that's
+a `tenant_ai_adaptation_rules` data identifier, independent of the function's deploy name; renaming it
+too would be a data-contract change, out of scope for this rename.
+
 `src/lib/ai/academicCopilot.ts` backs the Dissertation Assistant's and
 Casebook Builder's AI-assisted actions (guideline check, Vancouver citation
 formatting, differential-diagnosis extraction). It tries the
-`academic-copilot` Supabase Edge Function first
-(`supabase/functions/academic-copilot/index.ts`), which itself tries
+`dissertation-copilot` Supabase Edge Function first
+(`supabase/functions/dissertation-copilot/index.ts`), which itself tries
 **OpenAI first, then Gemini** as a second-tier fallback, and only if both
 providers are unconfigured or fail does the client fall back to its own
 deterministic local heuristic implementation — the UI never breaks
@@ -220,7 +233,7 @@ directly to every command instead of relying on a persisted link.
 locally:
 
 ```bash
-npx supabase functions deploy academic-copilot --project-ref gdumksfffewpdqqwvcdo --no-verify-jwt --use-api
+npx supabase functions deploy dissertation-copilot --project-ref gdumksfffewpdqqwvcdo --no-verify-jwt --use-api
 ```
 
 `--no-verify-jwt` is required because this app has no Supabase Auth
@@ -256,7 +269,7 @@ backs `src/lib/roster/uchRosterParser.ts`, which structures the 5 UCH roster
 document formats (Combined GOP, Consultant GOP, A&E Emergency Call,
 Afternoon/Priority/Saturday Supervision, Satellite Outposts) ingested by
 `MultiRosterManagerView.tsx`. Same architecture and secrets as
-`academic-copilot` (OpenAI → Gemini → client-side heuristic fallback, same
+`dissertation-copilot` (OpenAI → Gemini → client-side heuristic fallback, same
 `source`/`provider` result fields). **Status: deployed and live-verified**
 — tested against the real deployed function with a sample Consultant GOP
 roster and confirmed a correctly structured response via the OpenAI tier.
@@ -281,7 +294,7 @@ If a future `npx supabase` invocation fails with a "no matching binary"
 error right after an `ENOSPC` or other interrupted install, suspect a
 corrupted npx cache entry before assuming the CLI itself is broken.
 
-**Third Edge Function: `paystack-subaccount`** (`supabase/functions/paystack-subaccount/index.ts`)
+**Third Edge Function: `platform-operator-subaccount`** (`supabase/functions/platform-operator-subaccount/index.ts`)
 creates a Paystack subaccount for a tenant being provisioned in the SaaS
 Operator Console. Uses a `PAYSTACK_SECRET_KEY` secret (currently a **live**
 key, not test — see "SaaS Multi-Tenancy" below). Deliberately narrow scope:
@@ -298,7 +311,7 @@ but no Flutterwave code path exists yet.
 backs the Universal Research Engine's AI Copilot Panel (see that section below) for 3 of its 4
 actions — `audit_draft`, `synthesize_literature_matrix`, `generate_table_shells`. Same
 OpenAI→Gemini→client-heuristic-fallback architecture and `source`/`provider` result fields as
-`academic-copilot`, but prompts are built dynamically per-request from the workspace's active
+`dissertation-copilot`, but prompts are built dynamically per-request from the workspace's active
 `research_templates` row (via `supabase/functions/_shared/researchRubric.ts`'s
 `buildDynamicSystemPrompt`) rather than a fixed prompt set. Reuses the same
 `check_and_increment_tenant_ai_quota` RPC and `AI_API_KEY`/`GEMINI_API_KEY` secrets — no new
@@ -316,9 +329,9 @@ questions grounded in the resident's own write-up), and `parse_logbook_curriculu
 raw pasted logbook text into stations/procedures/required-counts). Same
 OpenAI→Gemini→client-heuristic-fallback architecture as every other Edge Function here, built on
 `supabase/functions/_shared/casebookRubric.ts`'s `buildCasebookSystemPrompt`. Kept as its own
-function rather than folded into `academic-copilot`, matching the separation precedent
+function rather than folded into `dissertation-copilot`, matching the separation precedent
 `research-copilot` set — despite the original task spec asking to inject these into
-`academic-copilot` directly, that call was made explicitly with the user rather than followed
+`dissertation-copilot` directly, that call was made explicitly with the user rather than followed
 literally. Reuses the same quota RPC and `AI_API_KEY`/`GEMINI_API_KEY` secrets — no new secrets
 needed. **Status: deployed and live-verified** — curl-tested all 3 actions directly against the
 deployed function (real OpenAI responses confirmed) and re-verified end-to-end in the browser.
@@ -329,7 +342,7 @@ deployed function (real OpenAI responses confirmed) and re-verified end-to-end i
 (`fetchTenantAdaptationPromptOverride`/`appendTenantAdaptationOverride`) moved out of
 `casebookRubric.ts` into a new `supabase/functions/_shared/tenantAdaptation.ts`, parameterized with
 a `featureKey` argument instead of hardcoding `casebook_copilot` — `casebook-copilot`,
-`academic-copilot`, `research-copilot`, and `roster-parser` each now call it with their own feature
+`dissertation-copilot`, `research-copilot`, and `roster-parser` each now call it with their own feature
 key (`casebook_copilot` / `academic_copilot` / `research_copilot` / `roster_parser`) right after
 their existing quota check, splicing the tenant's `adapted_prompt_overrides.extra_instructions`
 (still the one trusted free-text field, length-capped, type-checked) onto that action's system
@@ -341,7 +354,7 @@ suggested an arbitrary JSON shape like `{"citation_style": "APA"}` that the code
 (only `.extra_instructions` is ever read); it now names the real 4 feature keys and the real JSON
 shape. **Live-verified**: all 4 functions deployed; for each, set a real `tenant_ai_adaptation_rules`
 row with a distinctive marker string as `extra_instructions` and curled the live function directly —
-the marker appeared verbatim in the real OpenAI response for all 4 (`academic-copilot`,
+the marker appeared verbatim in the real OpenAI response for all 4 (`dissertation-copilot`,
 `research-copilot`, `roster-parser`, and a `casebook-copilot` regression check since its import path
 changed); all 4 test rows deleted afterward. Browser-verified the updated panel copy renders
 correctly as the real UCH Chief.
@@ -467,7 +480,7 @@ WACP/NPMCN templates) against the workspace's active template, with zero network
 keystroke. A server-side mirror of the same validators lives in
 `supabase/functions/_shared/researchRubric.ts` for `research-copilot`'s use — the two are
 deliberately independent implementations, same pattern as `academicCopilot.ts` vs.
-`academic-copilot/index.ts`'s heuristic fallback, not shared code across the Vite/Deno boundary.
+`dissertation-copilot/index.ts`'s heuristic fallback, not shared code across the Vite/Deno boundary.
 
 **AI Copilot Panel** (`ResearchWorkspaceView.tsx`, provider in `src/lib/ai/researchCopilot.ts`):
 "Run AI Audit", "Generate [Dummy Table Shells]", and "Synthesize [Literature Matrix]" call the
@@ -513,7 +526,7 @@ only one tenant seeded and no tenant-switching login flow.
 
 **AI usage quota**: `tenant_ai_usage` + `check_and_increment_tenant_ai_quota()`
 gate the free-tier plan to 50 AI-assisted actions per rolling 14-day window,
-enforced **server-side inside** `academic-copilot` and `roster-parser`
+enforced **server-side inside** `dissertation-copilot` and `roster-parser`
 (not just client-side, which would be trivially bypassable via a direct
 curl to the Edge Function URL). Paid tiers (`tier_1`/`tier_2`/`enterprise`)
 are unlimited in this pass.
@@ -550,7 +563,7 @@ created during that walkthrough was cleaned up afterward.
 
 **Not yet built** (flagged, not silently skipped): `tenant_ai_adaptation_rules`
 is now wired into all 4 AI Copilot Edge Functions (`casebook-copilot`,
-`academic-copilot`, `research-copilot`, `roster-parser` — see the AI/Edge
+`dissertation-copilot`, `research-copilot`, `roster-parser` — see the AI/Edge
 Functions section above), closing what was previously flagged here.
 Flutterwave integration, live charge/subscription billing and webhooks, and
 the terminology retrofit are all now built — see the Billing section and
@@ -562,7 +575,7 @@ Paystack/Flutterwave-backed Pro upgrades gating the Research & PMR/Casebook
 AI Copilot actions:
 
 - **`src/config/tiers.ts`**: Free = 50 AI actions per rolling 14 days
-  (Research + Casebook action types only — the original academic-copilot
+  (Research + Casebook action types only — the original dissertation-copilot
   types are deliberately ungated); Pro/Unlimited = no cap. Pro price is
   **₦12,000/month**, confirmed by the user (Dr. Olanipekun) on 2026-08-14 —
   no longer the earlier ₦5,000 placeholder. The charged amount lives in

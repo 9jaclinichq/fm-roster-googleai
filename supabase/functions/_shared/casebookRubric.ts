@@ -139,7 +139,7 @@ export function buildCasebookSystemPrompt(basePrompt: string, template: Casebook
 
 // AI-rigor tuning (tenant_ai_adaptation_rules) now lives in
 // _shared/tenantAdaptation.ts, generalized with a feature_key param so
-// academic-copilot/research-copilot/roster-parser can reuse it too — this
+// dissertation-copilot/research-copilot/roster-parser can reuse it too — this
 // module originally had its own hardcoded-to-casebook_copilot copy; see
 // that module's header for the extraction rationale. Import
 // fetchTenantAdaptationPromptOverride/appendTenantAdaptationOverride from

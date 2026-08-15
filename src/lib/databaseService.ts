@@ -1596,11 +1596,13 @@ export const databaseService = {
     return data;
   },
 
-  // Creates a Paystack subaccount via the Edge Function, then inserts the
-  // tenant row with the returned subaccount_code. If the Paystack call
-  // fails, no tenant row is created — surfaced to the caller as a thrown
-  // error so the operator console can show it plainly rather than leaving
-  // a tenant with no billing configured.
+  // Creates a Paystack subaccount via the platform-operator-subaccount Edge
+  // Function (renamed from paystack-subaccount 2026-08-15, see
+  // docs/MODULARIZATION_ARCHITECTURE.md), then inserts the tenant row with
+  // the returned subaccount_code. If the Paystack call fails, no tenant row
+  // is created — surfaced to the caller as a thrown error so the operator
+  // console can show it plainly rather than leaving a tenant with no
+  // billing configured.
   async provisionTenantWithSubaccount(tenant: {
     name: string;
     short_code: string;
@@ -1614,7 +1616,7 @@ export const databaseService = {
   }): Promise<Tenant> {
     checkSupabase();
 
-    const { data: fnData, error: fnError } = await supabase!.functions.invoke('paystack-subaccount', {
+    const { data: fnData, error: fnError } = await supabase!.functions.invoke('platform-operator-subaccount', {
       body: {
         business_name: tenant.business_name,
         settlement_bank: tenant.settlement_bank,
@@ -1836,7 +1838,7 @@ export const databaseService = {
 
   // --- TENANT AI QUOTA ---
   // Real enforcement happens server-side inside the Edge Functions (see
-  // supabase/functions/academic-copilot and roster-parser) — this is a
+  // supabase/functions/dissertation-copilot and roster-parser) — this is a
   // client-side convenience for displaying remaining quota, and also
   // increments the counter itself when called (same RPC either way).
   async checkTenantAiQuota(tenantId: string): Promise<TenantAiQuota> {

@@ -1,5 +1,16 @@
 // Supabase Edge Function: server-side proxy for LLM-backed academic tools.
 //
+// RENAMED from academic-copilot (2026-08-15, modularization pass — see
+// docs/MODULARIZATION_ARCHITECTURE.md's backend module map) for 1:1 naming
+// with the `dissertation` frontend module. Cosmetic rename only, same code
+// — Deno bundles per-function, so this carries no functional change. Note
+// this function ALSO backs the legacy Casebook Builder MVP's 3 original
+// actions (vancouver_format, methodology_check, extract_ddx are shared
+// across both call sites in src/lib/ai/academicCopilot.ts) — the name
+// favors its primary/larger use case rather than being a perfect 1:1
+// module boundary, same tradeoff the modularization doc calls out
+// explicitly for this rename.
+//
 // This exists so an LLM API key can be used safely at all — this app is a
 // pure static SPA with no backend of its own (see CLAUDE.md), so any key
 // embedded in client code (even a non-VITE_-prefixed one, since Vite still
@@ -14,7 +25,7 @@
 // own deterministic heuristic implementations — the UI never breaks or
 // silently invents output just because both providers had a bad day.
 //
-// Deploy:  npx supabase functions deploy academic-copilot --project-ref <ref> --no-verify-jwt --use-api
+// Deploy:  npx supabase functions deploy dissertation-copilot --project-ref <ref> --no-verify-jwt --use-api
 //          (--use-api bundles server-side, no Docker required)
 // Secrets: npx supabase secrets set AI_API_KEY=sk-... --project-ref <ref>
 //          npx supabase secrets set GEMINI_API_KEY=... --project-ref <ref>
@@ -36,8 +47,12 @@
 //
 // AI-RIGOR TUNING (2026-08-15): after the quota check, this also splices in
 // the tenant's operator-authored prompt override, if any, via
-// _shared/tenantAdaptation.ts under the 'academic_copilot' feature_key —
-// extending the pattern casebook-copilot originally proved out alone.
+// _shared/tenantAdaptation.ts. Deliberately still keyed to the
+// 'academic_copilot' feature_key — that's a stored data identifier in
+// tenant_ai_adaptation_rules (and the exact string named in
+// TenantCustomizationView.tsx's AI Behavior Tuning panel), independent of
+// this function's deploy name; renaming it too would be a data-contract
+// change, out of scope for what this pass's rename touches.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { fetchTenantAdaptationPromptOverride, appendTenantAdaptationOverride } from '../_shared/tenantAdaptation.ts';

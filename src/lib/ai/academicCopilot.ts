@@ -2,8 +2,10 @@ import { databaseService, supabase, DEFAULT_TENANT_ID } from '../databaseService
 import { AiActionType } from '../../types';
 
 // Client-side academic support actions for the Dissertation Assistant and
-// Casebook Builder. Each action tries the `academic-copilot` Supabase Edge
-// Function first (supabase/functions/academic-copilot/index.ts), which
+// Casebook Builder. Each action tries the `dissertation-copilot` Supabase
+// Edge Function first (supabase/functions/dissertation-copilot/index.ts —
+// renamed from academic-copilot 2026-08-15, see
+// docs/MODULARIZATION_ARCHITECTURE.md), which
 // holds a real LLM API key server-side — never in client code, since this
 // app is a pure static SPA with no backend of its own to hold a secret
 // safely. If the Edge Function isn't deployed, has no AI_API_KEY secret
@@ -105,32 +107,33 @@ interface EdgeFunctionSuccess<T> {
   provider: AcademicCopilotProviderName;
 }
 
-// Calls the academic-copilot Edge Function (which itself tries OpenAI then
-// Gemini — see supabase/functions/academic-copilot/index.ts). Returns null
-// on ANY failure (function not deployed, neither secret configured,
-// network error, malformed response, free-tier quota exhausted — see
-// migration 11) so callers can fall back to the heuristic path uniformly.
-// Quota-exceeded is deliberately treated the same as any other Edge
-// Function failure, not surfaced as a distinct UI state — consistent with
-// this app's existing "the AI tier is optional, the UI never breaks"
-// design rather than a new user-facing paywall message in this pass.
+// Calls the dissertation-copilot Edge Function (which itself tries OpenAI
+// then Gemini — see supabase/functions/dissertation-copilot/index.ts).
+// Returns null on ANY failure (function not deployed, neither secret
+// configured, network error, malformed response, free-tier quota
+// exhausted — see migration 11) so callers can fall back to the heuristic
+// path uniformly. Quota-exceeded is deliberately treated the same as any
+// other Edge Function failure, not surfaced as a distinct UI state —
+// consistent with this app's existing "the AI tier is optional, the UI
+// never breaks" design rather than a new user-facing paywall message in
+// this pass.
 async function callEdgeFunction<T>(action: 'vancouver_format' | 'methodology_check' | 'extract_ddx', text: string): Promise<EdgeFunctionSuccess<T> | null> {
   if (!supabase) return null;
   try {
-    const { data, error } = await supabase.functions.invoke('academic-copilot', {
+    const { data, error } = await supabase.functions.invoke('dissertation-copilot', {
       body: { action, text, tenant_id: DEFAULT_TENANT_ID },
     });
     if (error) {
-      console.warn(`Edge Function academic-copilot (${action}) failed, using heuristic fallback:`, error.message);
+      console.warn(`Edge Function dissertation-copilot (${action}) failed, using heuristic fallback:`, error.message);
       return null;
     }
     if (!data || data.error || !data.result) {
-      if (data?.error) console.warn(`Edge Function academic-copilot (${action}) returned an error, using heuristic fallback:`, data.error);
+      if (data?.error) console.warn(`Edge Function dissertation-copilot (${action}) returned an error, using heuristic fallback:`, data.error);
       return null;
     }
     return { result: data.result as T, provider: data.provider as AcademicCopilotProviderName };
   } catch (err) {
-    console.warn(`Edge Function academic-copilot (${action}) threw, using heuristic fallback:`, err);
+    console.warn(`Edge Function dissertation-copilot (${action}) threw, using heuristic fallback:`, err);
     return null;
   }
 }
