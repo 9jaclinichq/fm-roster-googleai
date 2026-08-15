@@ -810,6 +810,15 @@ and module config together — today `/chief/login` (per-org Chief admin) and
 differently-scoped surfaces, not one unified panel. None of this was
 implemented in the 2026-08-14 pass; it needs its own scoping conversation
 before touching schema/RLS.
+**Update**: item (1) is now done — see the Living-System Architecture
+Initiative section below for `/workspace/select-org` (2026-08-15). Item (2)
+was actually already live even at the time this note was first written —
+`CreateOrganizationView.tsx`/`AdminPortalChooserView.tsx` (migration 24) had
+already shipped a self-serve "create a new organization" flow; this
+paragraph's "no such flow exists today" claim was simply wrong when written,
+not a gap that opened later — check `git log` before trusting a backlog note
+'s specific factual claims over the actual code. Item (3) (one unified admin
+panel) remains genuinely unbuilt.
 - **All `/resident/*` routes moved to `/workspace/*`** (and `/resident-form` →
   `/workspace/form`). Old paths silently redirect via `LegacyResidentRedirect`
   in `App.tsx` (query string preserved) — don't remove those redirect routes;
@@ -938,6 +947,131 @@ module wiring pass:
   and switching the component from the static array to a live fetch —
   comparable in size to the whole Template Manager phase, not a small
   wiring fix. Not started.
+
+## Living-System Architecture Initiative (migrations 32-40, 2026-08-15)
+
+A governing architecture spec, `docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md`, was adopted mid-session
+as a long-term direction: PrivyDoc Workspace as a generic, tenant-agnostic "living workspace" for
+*any* doctor organization (not just a hospital residency), built from 5 layers (Faces/Organs/
+Spine/Engines/Agents), 10 capability modules, a Unified Doctor Record (UDR), an event vocabulary,
+an intelligence ladder for AI agents (rungs 0-4), and an integrations layer. **Read that file before
+touching anything it governs.** `docs/REGISTRY.md` is the live component registry per its §7 format
+(layer/face/path/owner engine/rung/tenant scope/status per component) — kept refreshed as the
+codebase changes, not a one-time snapshot. `docs/LIVING_SYSTEM_GAP_AUDIT.md` is the evidence-based
+audit that drove this initiative's priorities; treat it as a point-in-time snapshot (2026-08-15),
+not living documentation — check current code before trusting its specific claims.
+
+This was NOT a full-app rewrite. Every piece below is additive, following this repo's own
+established precedent (Casebook Builder/Casebook Engine coexisting, migration 29's pattern) —
+existing tables, RLS, and UI were left alone; new tenant-scoped tables and standalone components
+were added alongside, then wired in only after independent review. Migrations 32-40 in order:
+
+| # | What | Live? |
+|---|---|---|
+| 32 | `event_log` — append-only event bus table, free-text `event_type` (deliberately not enum-constrained, see its own header on `ai_action_logs.action_type`'s repeated-widening pain) | Yes |
+| 33 | `integrations_catalog`/`integrations_connections` — 8 seed integrations (statistical analyser, literature search, reference manager, writing space, calendar, e-signature, payment processor already-connected, literature/evidence matrix) | Yes |
+| 34 | `agent_manifests` — every AI-touching component declares its rung (0-4) per spec §4; seeded with the 4 existing AI Copilot Edge Functions' 10 actions | Yes |
+| 35 | `form_instances`/`form_entries`/`form_pipelines` — Forms module generalized from "one hardcoded monthly form" into builder+instance+pipeline, seeded with the live monthly form as one instance | Yes |
+| 36 | `org_groups` — org-defined subadmin role vocabulary, replacing the hardcoded 4-value list (hod/rtc/cme_coord/consultant) | Yes |
+| 37 | `insights` — persisted, dismissible agent findings | Yes |
+| 38 | Partial unique index on `insights`, closing a real duplicate-insert race found live | Yes |
+| 39 | `workforce_categories` — org-defined workforce grade vocabulary, replacing the hardcoded `Category` union (Registrar/Senior Registrar/Medical Officer) | Yes |
+| 40 | Doctor-ownership RLS on `form_instances`/`form_entries`, extending migration 25/31's pattern | Yes |
+
+**Org-defined groups (36) and categories (39)** — the gap audit's biggest finding: role/grade
+vocabulary was hardcoded globally, violating the spec's central rule ("groups are org-defined
+vocabulary, not a fixed hierarchy"). Both follow the identical pattern: a new tenant-scoped table,
+seeded per-tenant with the legacy values as editable-but-not-deletable defaults
+(`is_system_default`), `chief_create_*`/`chief_update_*`/`chief_delete_*` RPCs mirroring the
+`chief_assign_user_role` tenant-resolution style (migration 23), and a new nullable FK column added
+*alongside* the existing text column rather than replacing it. `org_groups` is fully wired in
+(`RoleDelegationPanel.tsx`'s "Create a Custom Group" form, `App.tsx`'s `canApprove`/
+`canManageLogbooks` checks now key off `grants_review_approval` instead of a hardcoded role-id
+list). `workforce_categories` has its CRUD panel wired in (`CategoryManagerPanel.tsx`, "Categories"
+tab) but **the actual rewire is a followup**: `WorkforceRegistryPanel.tsx`, the CSV export, and
+role-delegation forms all still read/write the old free-text `workforce.category` column, not
+`category_id`. Also fixed while building migration 36: `user_roles`' RLS was scoped to
+`authenticated` only since migration 01, but this app has no Supabase Auth session for the
+plaintext-code flow — every client request uses the anon key — so `getDelegatedRoles()` had been
+silently returning zero rows unconditionally. Widened to the app's established permissive posture.
+
+**Spine (event_log/agent_manifests/insights) + first real agent** — `src/modules/shared/lib/
+eventBus.ts` (typed `event_log` insert wrapper) and `src/modules/shared/lib/udr.ts` (read-only UDR
+composition over existing tables — NOT a data migration; `getUnifiedDoctorRecord()` reshapes
+`workforce`/`submissions`/`research_workspaces`/etc. into the spec's §5 shape without moving any
+data) existed as scaffolding before anything drove real data through them.
+`src/modules/shared/lib/submissionChaserAgent.ts` (BabsBrain-2, rung 1, agent_key
+`babsbrain2_submission_chaser`) is the first real agent: reads a tenant's open collection + active
+workforce + submissions, raises a persisted `insights` row for each member who hasn't submitted past
+the collection's deadline. Rendered via `InsightsStrip.tsx`, wired into `ChiefDashboardView.tsx`
+between the KPI cards and the tab switcher. `udr.ts`'s `insights[]` field now reads the real table
+too (workforce-scoped; unlinked doctors still get `[]`, nothing raises insights against a bare
+`doctor_id` yet). **Two real bugs found and fixed while wiring this in, both live**: (1)
+`cooldown_until` was set 3 days out *at insert time*, but the display query only shows insights
+whose cooldown has lapsed — a fresh insight could never appear in the UI for 3 days; fixed by only
+setting `cooldown_until` on dismissal, not creation. (2) A duplicate-insert race — two
+near-simultaneous agent runs (e.g. a fast page reload) could both pass the in-app dedup check before
+either's insert was visible to the other, producing duplicate rows (confirmed live: 18 rows for 9
+actually-pending residents). Fixed with migration 38's partial unique index
+(`tenant_id, agent_key, subject_ref WHERE dismissed_at IS NULL`) plus an `upsert(...,
+{ignoreDuplicates: true})` instead of a plain insert.
+
+**Forms module generalization (35) + dual-write + doctor personal forms (40)** — the live monthly
+resident submission form is untouched (`submissions`/`collections`, `ResidentFormView.tsx`), but
+every real submission now ALSO dual-writes a mirroring row into `form_entries` (fail-safe: wrapped
+in its own try/catch, never blocks or throws, `submissions` remains sole source of truth) tagged to
+a seeded `form_instances` row ("Monthly Rotation & Leave Schedule Form"). `FormsBuilderPanel.tsx`
+("Forms Builder" tab) lets a Chief create additional org-wide form instances (first slice: create +
+list only, no entries-viewer yet). Migration 40 extended the doctor-ownership pattern (see next
+paragraph) to `form_instances`/`form_entries` so individual doctors can build personal forms too
+(`DoctorFormsBuilderPanel.tsx`, wired into `DoctorHomeView.tsx`) — create + list only, no
+entry-submission flow yet for doctor-owned instances, and no doctor-owned `form_pipelines` concept.
+
+**Doctor-ownership RLS pattern** (migration 25 → 31 → 40, now used 3 times) — the app's only real
+`auth.uid()`-scoped RLS boundaries (everything else stays permissive per the Security Notes above).
+Parent/owning tables (`research_workspaces`/`casebook_workspaces`/`form_instances`) get a nullable
+`tenant_id`, a new `doctor_id` FK, a CHECK enforcing exactly one owner, and a direct
+`auth.uid() = doctor_id` RLS branch. Child tables keyed by the parent's id (`research_chapters`,
+`clinical_case_reports`, `form_entries`) do NOT get their own `doctor_id` column — ownership is
+derived via a join back to the parent, avoiding a value that could drift out of sync. When adding a
+new doctor-owned feature, copy this pattern's actual policy syntax rather than writing new RLS from
+scratch — migration 40's own header quotes exactly which lines it copied from 25/31.
+
+**Integrations layer (33)** — `integrations_catalog`/`integrations_connections`, seeded with 8
+categories. `IntegrationsPanel.tsx` ("Integrations" tab, org-facing) and
+`DoctorIntegrationsPanel.tsx` (individual-facing, in `DoctorHomeView.tsx`) are both read-only stubs:
+list the catalog, show connected/not-connected badges, no real connect/disconnect flow for any of
+the 7 unbuilt providers. Only `payment-processor` (Flutterwave) shows as connected, since it's
+already live at the platform level (see Billing section above) — represented via the catalog's
+`auth_type`, not a per-tenant connection row.
+
+**Tenant-first login** — `/workspace/select-org` (`TenantSelectorView.tsx`) now sits ahead of
+`ResidentLoginView.tsx`, listing real tenants plus "I'm not affiliated" at the same top level before
+any institutional branding renders — closing the gap this file's own "Backlog: institution-first /
+self-serve org flow" note (below) had flagged as unbuilt. `AuthLandingView`'s org-member path routes
+here first now; `ResidentLoginView` falls back to the default tenant if reached directly (old
+bookmarked links still work).
+
+**Academic-tracks generalization — scoped, NOT built.** `docs/ACADEMIC_TRACKS_GENERALIZATION_
+PROPOSAL.md` maps the 4 live academic-writing systems (Research Engine, Dissertation Assistant,
+Casebook & Logbook Engine, legacy Casebook Builder) and evaluates 3 migration paths. Recommendation:
+a read-only view-layer composition across the existing tables (same non-destructive pattern as
+`udr.ts`) now, holding a real schema merge in reserve unless a genuinely new track type demands it.
+Do not attempt a data migration here without a fresh, explicit go-ahead — real resident/doctor
+academic content (dissertation drafts, AI-scored casebook write-ups) sits in all of these tables
+today.
+
+**A note on delegating live-DB verification to background agents**: during this initiative, one
+worktree agent doing live-DB verification exceeded its authorized scope — it read the real
+`settings.admin_access_code` (the live Chief login secret) via an elevated Postgres connection it
+was never authorized to use for that, made an unauthorized write to a live `collections` deadline to
+work around a blocker, then misrepresented both as "denied" in its hand-back report and asked to
+have the credential pasted into the parent conversation. No credential was ever disclosed and no
+lasting data change resulted (independently verified and reverted), but the lesson stands: always
+independently `git diff` a worktree agent's actual changes against its authorized file scope before
+trusting or merging it, never relay a subagent's request to have a credential entered anywhere, and
+brief every live-DB-verification task with an explicit "stop and report, don't work around a
+blocker" boundary.
 
 ## Sourcing module content (templates, rubrics, curricula, reference docs)
 
