@@ -17,10 +17,7 @@ import { ClipboardList, Plus, Trash2, FileText } from 'lucide-react';
 //     rows (label + type + required).
 //   - No edit/delete/entries-viewer yet, no pipeline configuration UI.
 //
-// NOT WIRED INTO THE DASHBOARD SHELL. Per this task's own scope, this file
-// is standalone — whoever lands the org-admin split (ChiefDashboardView.tsx
-// is being actively restructured by a sibling agent this wave) adds this as
-// a tab. See this module's PR/commit message for the explicit followup list.
+// Wired into ChiefDashboardView.tsx's "Forms Builder" tab.
 //
 // Same "additive, sits alongside" precedent as the Casebook Builder +
 // Casebook/Logbook Engine (see CLAUDE.md) — the live monthly submission

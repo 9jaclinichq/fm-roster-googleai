@@ -2,13 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { integrationsService, IntegrationCatalogEntry } from '../../../shared/lib/integrationsService';
 import { Plug, CheckCircle2, CircleDashed } from 'lucide-react';
 
-// Standalone read-only stub for the integrations layer scaffold
-// (supabase/migrations/33_integrations_layer.sql). Deliberately NOT wired
-// into ChiefDashboardView's tab list here — that file is being actively
-// restructured by a sibling agent this wave (the org-admin module move,
-// see docs/MODULARIZATION_ARCHITECTURE.md's Phase 3 "org-admin last" note),
-// so touching it in this pass would conflict. Dashboard wiring (adding an
-// "Integrations" tab that renders this component) is a follow-up.
+// Read-only stub for the integrations layer scaffold
+// (supabase/migrations/33_integrations_layer.sql). Wired into
+// ChiefDashboardView.tsx's "Integrations" tab.
 //
 // This panel only lists the catalog and shows a static connected/
 // not-connected badge — there is no real connect/disconnect flow yet (that's

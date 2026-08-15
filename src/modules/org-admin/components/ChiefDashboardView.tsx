@@ -7,6 +7,8 @@ import { WorkforceRegistryPanel } from './dashboard/WorkforceRegistryPanel';
 import { AnnouncementsAdminPanel } from './dashboard/AnnouncementsAdminPanel';
 import { RoleDelegationPanel } from './dashboard/RoleDelegationPanel';
 import { CollectionSettingsPanel } from './dashboard/CollectionSettingsPanel';
+import { FormsBuilderPanel } from './dashboard/FormsBuilderPanel';
+import { IntegrationsPanel } from './dashboard/IntegrationsPanel';
 
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
 // only needed when the Chief actually opens the Knowledge Packs tab.
@@ -63,7 +65,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'settings'>('submissions');
+  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'settings'>('submissions');
 
   // Role delegation state
   const [delegatedRoles, setDelegatedRoles] = useState<DelegatedRole[]>([]);
@@ -873,6 +875,26 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           Templates
         </button>
         <button
+          onClick={() => setActiveTab('forms')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'forms'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Forms Builder
+        </button>
+        <button
+          onClick={() => setActiveTab('integrations')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'integrations'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Integrations
+        </button>
+        <button
           onClick={() => setActiveTab('settings')}
           className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === 'settings'
@@ -1034,7 +1056,17 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           </Suspense>
         )}
 
-        {/* TAB 9: SETTINGS & COLLECTIONS */}
+        {/* TAB 9a: FORMS BUILDER (migration 35 — living-system Forms module generalization) */}
+        {activeTab === 'forms' && (
+          <FormsBuilderPanel tenantId={tenantId ?? DEFAULT_TENANT_ID} createdByWorkforceId={null} />
+        )}
+
+        {/* TAB 9b: INTEGRATIONS (migration 33 — living-system integrations layer) */}
+        {activeTab === 'integrations' && (
+          <IntegrationsPanel />
+        )}
+
+        {/* TAB 10: SETTINGS & COLLECTIONS */}
         {activeTab === 'settings' && (
           <CollectionSettingsPanel
             newCollectionTitle={newCollectionTitle}
