@@ -1,16 +1,36 @@
 # PrivyDoc Workspace — Component Registry
 
-Per `docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md` §7. This is a snapshot of what
-actually exists on disk as of this audit (branch `worktree-agent-aca09f03430a0109b`,
-based on `main` @ `0145357`, mid-way through the "Phase 3" frontend
-modularization pass — see `docs/MODULARIZATION_ARCHITECTURE.md`). Every path
-below was confirmed against the real file tree, not guessed. Update this file
-in the same change whenever you touch a component it describes (rule 12).
+Per `docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md` §7. This is a refresh of the
+registry against what actually exists on disk as of this pass (branch
+`worktree-agent-aff357db5b7760e82`, based on `main`, migrations through
+`38_insights_dedup_index.sql`). This refresh folds in the wave of work that
+landed since the previous registry snapshot: the org-admin module split
+(Phase 3 of `docs/MODULARIZATION_ARCHITECTURE.md` — `ChiefDashboardView` is
+now `src/modules/org-admin/components/ChiefDashboardView.tsx` composing
+panels under its own `dashboard/` folder), the L3 spine's first real pieces
+(`event_log`, `agent_manifests`, `insights` + the first live L1 agent), the
+integrations-layer scaffold, the Forms module generalization scaffold, and
+org-defined groups. Every path below was re-confirmed against the real file
+tree in this pass, not copied forward from the previous snapshot without
+checking — several paths in the previous registry were stale (still citing
+`src/components/...` for faces that have since moved into `src/modules/org-admin/`)
+and are corrected here.
 
 Status legend: `stable` = works, matches its current scope; `fixing` = mid-move
 in the modularization pass; `fragmented` = still split across the old
 `src/components/` and new `src/modules/` trees, or doing one god-file's worth
 of unrelated things; `stub` = scaffolding exists but no real behavior yet.
+
+**Note on migration status**: migrations 32–35 each carry an explicit
+"NOT APPLIED LIVE — a human will review and apply the pending batch" header
+comment. Migration 36 (org-defined groups) carries no such disclaimer.
+Migration 37 (`insights`) also says "NOT APPLIED LIVE" in its own header, yet
+migration 38's header describes a *live* duplicate-row bug it fixed ("Confirmed
+live: 18 rows for 9 actually-pending residents") — i.e. 37 was apparently
+applied live at some point after its own header was written, contradicting
+that header. This audit is docs-only and has no database access, so this
+contradiction is reported as-is from the migration files rather than resolved
+against the live schema — flag it to whoever applies the pending batch.
 
 ---
 
@@ -26,7 +46,7 @@ consumes: none
 emits: navigation intents only (`/workspace/login`, `/doctor/login`)
 udr fields: none
 gates: none
-status: stable — **but see gap audit**: renders institutional-flavored copy pre-login because `TerminologyProvider` (mounted higher in the tree) defaults to `DEFAULT_TENANT_ID` (UCH) until a session exists, so `t('member','Resident')`/`t('admin','Chief Resident')` fallbacks resolve to UCH's actual overrides, not neutral copy. Violates spec rule 6 ("neutral until known").
+status: stable — **but see gap audit**: renders institutional-flavored copy pre-login because `TerminologyProvider` (mounted higher in the tree) defaults to `DEFAULT_TENANT_ID` (UCH) until a session exists, so `t('member','Resident')`/`t('admin','Chief Resident')` fallbacks resolve to UCH's actual overrides, not neutral copy. Violates spec rule 6 ("neutral until known"). Not re-verified in this pass; carried forward from the previous audit.
 
 ### F2 Resident/Member Login
 layer: L5
@@ -36,9 +56,9 @@ owner engine: none
 tenant scope: org
 consumes: `tenants` (active list, migration 26), `workforce` (by tenant), terminology overrides
 emits: none (writes session to localStorage client-side only, not an event)
-udr fields: none (no UDR exists — see L3)
+udr fields: none (no formal UDR write path yet — see S3)
 gates: none
-status: stable — already does tenant → member → code → registered-email order (migration 26). Tenant picker only renders when >1 active tenant exists, which is today's real single-tenant deployment state, not a code gap.
+status: stable — already does tenant → member → code → registered-email order (migration 26).
 
 ### F3 Chief/Org-Admin Login
 layer: L5
@@ -98,7 +118,7 @@ consumes: `currentDoctor` session
 emits: navigation intents (`/doctor/research`, `/doctor/casebook-logbook`)
 udr fields: none
 gates: none
-status: stable — **contrary to what this audit was briefed to expect**, this is NOT a bare waiting-room anymore. Migration 25 + this component already surface entry cards into personal Research and Casebook workspaces for an unaffiliated doctor. See gap audit for what's still missing (no AI Copilot / no logbook on personal workspaces, by design).
+status: stable — surfaces entry cards into personal Research and Casebook workspaces (migration 25), **and now also renders F19 `DoctorIntegrationsPanel`** (new since the previous snapshot — see L4 organs).
 
 ### F8 SaaS Operator Console
 layer: L5
@@ -110,79 +130,79 @@ consumes: `tenants`, `tenant_ai_usage`, `workforce`, `submissions`, `platform_op
 emits: none
 udr fields: none
 gates: operator login (separate shared code, `platform_operators`)
-status: fragmented — still under `src/components/`, not moved into any `src/modules/` org-admin/operator-admin location. Not yet split from a single file the way `ChiefDashboardView` is being split.
+status: fragmented — **still** under `src/components/`, unlike every Chief-dashboard-adjacent face, which did move in this wave's org-admin module split. Confirmed unchanged in this pass — not touched by the Phase 3 modularization batch.
 
 ### F9 Org-Admin: Chief Dashboard (root shell)
 layer: L5
 face: org-admin
-path: `src/components/ChiefDashboardView.tsx`
+path: `src/modules/org-admin/components/ChiefDashboardView.tsx`
 owner engine: none
 tenant scope: org
-consumes: `workforce`, `collections`, `submissions`, `settings`, `user_roles`
-emits: none
+consumes: `workforce`, `collections`, `submissions`, `settings`, `user_roles`, `org_groups` (migration 36, via `RoleDelegationPanel`)
+emits: none directly (the L1 agent it embeds, F18 `InsightsStrip`, does emit — see below)
 udr fields: none
 gates: Chief session
-status: **fragmented/fixing** — confirmed still present at `src/components/ChiefDashboardView.tsx` as a single ~1900-line file (per its own lazy-import comment in `App.tsx`) covering workforce CRUD, submissions table, CSV export, subadmin role assignment, and roster editing entry points all in one component. `src/modules/org-admin/` does **not** exist yet in this worktree — the Phase 3 modularization commits landed for `auth`/`casebook-logbook`/`research`/`dissertation`/`consultant-review`/7 small modules/`shared`, but Chief-dashboard/SaaS-operator/template-manager/tenant-customization were not part of that batch. Being split into `org-admin/dashboard/` panels is the stated direction, not yet started.
+status: **substantially de-fragmented since the previous audit** — the Phase 3 org-admin module split landed. `ChiefDashboardView.tsx` is now 1,153 lines (down from ~1,900) and composes 11 sibling panels from `src/modules/org-admin/components/dashboard/`: `SubmissionsPanel`, `PendingResidentsPanel`, `WorkforceRegistryPanel`, `AnnouncementsAdminPanel`, `RoleDelegationPanel`, `CollectionSettingsPanel`, `FormsBuilderPanel`, `IntegrationsPanel` (all directly imported), plus lazy-loaded `MultiRosterManagerView`, `TenantCustomizationView`, `TemplateManagerView`, `TenantUpgradeCheckoutModal`. Still not a pure composition shell (1,153 lines still holds substantial cross-panel state/handlers), so still marked `fixing` rather than fully `stable` — but this is real, confirmed progress, not a re-label. Also now renders **F18 `InsightsStrip`** between the KPI cards and the tab switcher (the living-system spec's Dashboard-module row: "insight strips, module tiles, tenant switcher").
 
 ### F10 Org-Admin: Multi-Roster Manager (HITL roster editor)
 layer: L5
 face: org-admin
-path: `src/components/MultiRosterManagerView.tsx`
+path: `src/modules/org-admin/components/dashboard/MultiRosterManagerView.tsx`
 owner engine: babsbrain-2 (via `roster-parser`)
 tenant scope: org
 consumes: `raw_roster_uploads`, `combined_master_rosters`, `roster_types`, `workforce`
 emits: none
 udr fields: none
 gates: Chief session
-status: fragmented — same pattern as F9: still in `src/components/`, while its backing lib (`uchRosterParser.ts`) already moved to `src/modules/roster-engine/lib/`. The module's own `components/` directory does not exist — `roster-engine` is lib-only today.
+status: fragmented — **path corrected**: moved out of `src/components/` in the org-admin split, but into `org-admin/components/dashboard/`, not into its own module's `roster-engine/components/`. `roster-engine` (M11 below) is still lib-only (`uchRosterParser.ts`); this face lives in a different module's folder than the lib it calls, which is itself a cross-module import (`org-admin` face importing `roster-engine`'s lib) — not a new problem, just re-homed rather than resolved.
 
 ### F11 Org-Admin: Template Manager
 layer: L5
 face: org-admin
-path: `src/components/TemplateManagerView.tsx`
+path: `src/modules/org-admin/components/dashboard/TemplateManagerView.tsx`
 owner engine: none
 tenant scope: org
 consumes: `casebook_templates`, `research_templates`, `viva_vignettes`, `tenants.plan_type`
 emits: none
 udr fields: none
 gates: Chief session; plan-gated (migration 29 — `free_seeded` tenants blocked from create/update)
-status: fragmented — one screen that is a builder for **three different L4 organs** (casebook-logbook, research, viva-simulator) at once. Architecturally this is fine for an L5 face (faces may call any RPC), but it means there is no single "builder" sub-surface owned by any one module — worth flagging against spec §7's "every module ships four things: builder / instances / data / pipelines" since here the builder lives outside all three modules.
+status: fragmented — **path corrected** (moved from `src/components/` into `org-admin/components/dashboard/`). Still one screen acting as a builder for three separate L4 organs (casebook-logbook, research, viva-simulator) at once — same architectural note as before, not resolved by the module split.
 
 ### F12 Org-Admin: Tenant Customization
 layer: L5
 face: org-admin
-path: `src/components/TenantCustomizationView.tsx`
+path: `src/modules/org-admin/components/dashboard/TenantCustomizationView.tsx`
 owner engine: none
 tenant scope: org
 consumes: `tenants` (module_flags, call_duty_rules, terminology_overrides, tenant_ai_adaptation_rules)
 emits: none
 udr fields: none
 gates: Chief session
-status: stable — closest existing thing to a real "tenant config service" (part of the L3 spine per spec §7), but it is a single UI screen writing directly to `tenants` columns/child tables, not a spine service other faces/modules call through.
+status: stable — **path corrected** (moved from `src/components/`). Still the closest existing thing to a real "tenant config service" (S4), but remains a single UI screen writing directly to `tenants` columns/child tables, not a spine service other faces/modules call through.
 
 ### F13 Org-Admin: Tenant Upgrade Checkout
 layer: L5
 face: org-admin
-path: `src/components/TenantUpgradeCheckoutModal.tsx`
+path: `src/modules/org-admin/components/dashboard/TenantUpgradeCheckoutModal.tsx`
 owner engine: none
 tenant scope: org
 consumes: none
 emits: none (calls `payment-checkout` Edge Function directly with `scope: 'tenant'`)
 udr fields: none
 gates: Chief session
-status: stable
+status: stable — **path corrected** (moved from `src/components/`).
 
 ### F14 Compliance Nudges (embedded doctor-face panel)
 layer: L5
 face: doctor
-path: `src/components/ComplianceNudgesView.tsx`
-owner engine: babsbrain-2 (conceptually — "submission chaser" per spec §7, but not actually agent-driven; it's a synchronous client-side derivation, not an agent write)
+path: `src/modules/org-admin/components/ComplianceNudgesView.tsx`
+owner engine: babsbrain-2 (conceptually — "submission chaser" per spec §7; **note this is a distinct, older client-side derivation, not the same code as the new L1 `submissionChaserAgent.ts` below** — the two currently coexist unmerged)
 tenant scope: individual (per-resident)
 consumes: `dissertations`, `case_reports`, `exam_readiness`, `settings`, `collections` (via `deriveNudges`)
 emits: none
 udr fields: none
 gates: none
-status: fragmented — still in `src/components/`, embedded (compact mode) inside `src/modules/form/components/ResidentFormView.tsx`. Logic that conceptually belongs to BabsBrain-2 is computed client-side in a React component, not by any engine/agent.
+status: fragmented — **path corrected**: moved from `src/components/` to `src/modules/org-admin/components/` (note: directly under `org-admin/components/`, not under its `dashboard/` panel subfolder), embedded (compact mode) inside `src/modules/form/components/ResidentFormView.tsx` — a cross-module embedding (`form` face importing an `org-admin` face) that predates and is unrelated to the module split. Logic that conceptually belongs to BabsBrain-2 is still computed client-side in a React component, not by any engine/agent — **this is now a real duplication risk**: `src/modules/shared/lib/submissionChaserAgent.ts` (A1 below) is a second, independently-built "submission chaser" concept with different mechanics (persisted `insights` rows, tenant-wide, deadline-gated) that has not been reconciled with this component's per-resident client-side nudges. Flagged for a future consolidation pass, not silently merged here.
 
 ### F15 Navbar
 layer: L5
@@ -194,7 +214,7 @@ consumes: session state (resident/chief/doctor), terminology overrides, branding
 emits: navigation intents
 udr fields: none
 gates: none
-status: stable — fully retrofitted through `useTerminology()`, no offenders found.
+status: stable
 
 ### F16 Loading Shell / Dev Helper
 layer: L5
@@ -206,7 +226,43 @@ consumes: `workforce`, `settings` (DevHelper only)
 emits: none
 udr fields: none
 gates: none
-status: `LoadingShell` stable. `DevHelper` — **flagged in CLAUDE.md as the single highest-priority security finding**: mounted unconditionally, no `import.meta.env.DEV` guard found in this worktree at the point it's rendered in `App.tsx` line ~353 (`onSelectResident={handleSelectResidentFromHelper}`). Not re-verified line-by-line in this pass since CLAUDE.md already tracks it; still present as `DevHelper`, still excluded from the terminology retrofit by design.
+status: `LoadingShell` stable. `DevHelper` — **flagged in CLAUDE.md as the single highest-priority security finding**: mounted unconditionally in `App.tsx`. Not re-verified line-by-line in this pass (still present, unchanged path/behavior).
+
+### F17 Tenant Selector (institution-first login step)
+layer: L5
+face: landing
+path: `src/modules/auth/components/TenantSelectorView.tsx`
+owner engine: none
+tenant scope: any (pre-tenant-resolution)
+consumes: `tenants` (active list, via `databaseService`)
+emits: navigation intent carrying the selected tenant id forward
+udr fields: none
+gates: none
+status: stable — **new since the previous snapshot**, not part of the task's briefed list but found while walking `src/modules/auth/`. Sits between `AuthLandingView`'s "My organization has an access code" choice and `ResidentLoginView`, listing every active tenant as a selectable card plus the individual-doctor path at the same top level. Directly addresses part of CLAUDE.md's "Backlog: institution-first / self-serve org flow" item (1) — the tenant-first ordering — though that backlog item's other two asks (a limited-tools "not affiliated" tier, and a single unified admin panel) remain unbuilt.
+
+### F18 Insights Strip (L1 agent's dashboard face)
+layer: L5
+face: org-admin
+path: `src/modules/shared/ui/InsightsStrip.tsx`
+owner engine: babsbrain-2
+tenant scope: org
+consumes: `insights` (via `getActiveInsights`), triggers `A1` (`runSubmissionChaser`) on mount
+emits: none directly (the agent it triggers emits `insight.generated` — see A1)
+udr fields: `insights[]` conceptually, though this reads the `insights` table directly rather than through `udr.ts` (see S3's gap note — `udr.ts`'s own `insights[]` field is still hardcoded empty)
+gates: dismiss is a plain user action (no approval gate — matches rung-1 "shown as suggestion")
+status: stable, new — first real face wired to a real L1 agent. Wired into `ChiefDashboardView.tsx` (F9) between the KPI cards and tab switcher. Fails gracefully by design: if `insights`/`agent_manifests` don't exist yet (migration 37/38 not applied) or Supabase isn't configured, renders nothing — no error boundary, no visible failure state.
+
+### F19 Doctor Integrations Panel
+layer: L5
+face: doctor
+path: `src/modules/doctors/components/DoctorIntegrationsPanel.tsx`
+owner engine: none
+tenant scope: individual
+consumes: `integrations_catalog`, `integrations_connections` (scope='individual', via `integrationsService.getConnectionsForDoctor`)
+emits: none
+udr fields: none
+gates: none
+status: stub — read-only. Sibling to org-admin's `IntegrationsPanel` (M14 below); unlike that panel, this one does fetch the doctor's real `integrations_connections` rows and treats `status: 'connected'` as connected, but there is still no connect/disconnect mutation flow anywhere in the app, so in practice every row reads as not-connected until a future pass seeds/writes real connections. Wired into `DoctorHomeView.tsx` (F7).
 
 ---
 
@@ -215,16 +271,16 @@ status: `LoadingShell` stable. `DevHelper` — **flagged in CLAUDE.md as the sin
 ### M1 Announcements
 layer: L4
 face: doctor, org-admin
-path: `src/modules/announcements/components/AnnouncementBoardView.tsx`
+path: `src/modules/announcements/components/AnnouncementBoardView.tsx` (instance/consumption view); **builder now exists** at `src/modules/org-admin/components/dashboard/AnnouncementsAdminPanel.tsx`
 owner engine: babsbrain-2 (target)
 tenant scope: org
 consumes: `announcements` (tenant-scoped, migration 11), `announcement_reads`
-emits: none today (spec wants `module.configured`/broadcast events — not implemented)
-udr fields: none (no UDR)
+emits: none today (spec wants `module.configured`/broadcast events — not implemented; `event_log`/`eventBus.ts` now exist but nothing in this module calls `emitEvent`)
+udr fields: none
 gates: none
-status: fragmented — module has no `builder` component of its own; announcement authoring appears to live inside `ChiefDashboardView.tsx` (unconfirmed exact line, not traced in this pass), not in `src/modules/announcements/`. **Gap vs spec**: maps toward target capability #8 "Messages & broadcasts," but today it is one fixed announcement-category enum (see migration 03's admin announcement category), not a generic instance/pipeline model.
+status: fragmented, **gap partially closed since the previous audit** — the previous snapshot flagged "module has no builder component of its own... not traced in this pass." That's now confirmed: `AnnouncementsAdminPanel.tsx` is a real, separate builder component (create/pin/categorize), composed into `ChiefDashboardView.tsx` (F9) rather than embedded inline in the god-file. **Gap vs spec unchanged**: still one fixed announcement-category enum (Roster/Exam/CME/Admin), not a generic instance/pipeline model — maps toward target capability #8 "Messages & broadcasts."
 
-### M2 Auth (see L5 Faces F1–F5 above)
+### M2 Auth (see L5 Faces F1–F5, F17 above)
 This "module" is entirely L5 faces (login/landing screens), not an L4 organ with builder/instance/data/pipeline shape. Registered under Faces, not here, to avoid a duplicate entry.
 
 ### M3 Billing
@@ -234,10 +290,10 @@ path: `src/modules/billing/components/UpgradeCheckoutModal.tsx`, `src/modules/bi
 owner engine: babsbrain-2 (target — "payment watcher")
 tenant scope: individual (per-resident quota) and org (tenant plan)
 consumes: `ai_action_logs`, `user_subscriptions`, `tenants.plan_type`
-emits: none (spec wants `payment.succeeded`/`plan.changed` — not implemented as events, only DB writes from the webhook)
+emits: none (spec wants `payment.succeeded`/`plan.changed` — not implemented as events; `eventBus.ts`'s `EventType` union already includes `billing.checkout_started`/`billing.subscription_activated`/`billing.subscription_cancelled`/`billing.quota_exhausted` for when this is wired)
 udr fields: none
 gates: payment confirmation (external, Flutterwave/Paystack hosted checkout)
-status: stable — the closest-to-generic module today: one flat plan (`free`/`pro_unlimited`), two scopes (`workforce`/`tenant`) sharing one `user_subscriptions` table and one Edge Function pair. **Gap vs spec**: no per-module or per-seat pricing (deliberately rejected by the user, see CLAUDE.md), so target #10 "seat management" is not built.
+status: stable — unchanged in this pass. Now that `integrations_catalog` (M14) exists with a seeded `payment-processor` row representing Flutterwave, there's a nominal cross-reference between this module and the integrations layer, though nothing in `useWorkspaceQuota.ts`/`UpgradeCheckoutModal.tsx` reads from `integrations_catalog` — the two remain independent today.
 
 ### M4 Casebook & Logbook
 layer: L4
@@ -246,10 +302,10 @@ path: `src/modules/casebook-logbook/components/{CasebookBuilderView,CasebookWork
 owner engine: privybrain-2
 tenant scope: org (institutional) and individual (doctor-owned workspaces, migration 25)
 consumes: `casebook_templates`, `casebook_workspaces`, `clinical_case_reports`, `clinical_logbooks`, `case_reports` (old MVP)
-emits: none (spec wants `track.stage.advanced`/`writing.reviewed` — not implemented)
-udr fields: none
+emits: none
+udr fields: `udr.ts`'s `instances[]` now includes `casebook_workspace` rows (see S3) — the first real UDR read-composition wiring for this module, though `udr.ts` remains read-only/composition-only, not a write path this module calls into
 gates: AI Copilot actions require doctor review before save (client-side, no formal gate record)
-status: stable, but **two separate hardcoded flows, not one generic capability** — `CasebookBuilderView` (old 15-slot MVP, `case_reports`) and `CasebookWorkspaceView` (new WACP/NPMCN PMR portfolio, `clinical_case_reports`) are deliberately kept independent (CLAUDE.md's own "SCOPE DECISION"), not unified as one "academic tracks" instance model. **Gap vs spec**: maps to target #4/#5; framework_type is a fixed 5-value enum (`WACP_PMR_10`, `WACP_CASEBOOK_15`, `NPMCN_CASEBOOK_15`, `GENERIC_10`, `CUSTOM_CLINICAL`), not an open builder for arbitrary track types.
+status: stable, unchanged in this pass — still two separate hardcoded flows (`CasebookBuilderView`/`case_reports` vs. `CasebookWorkspaceView`/`clinical_case_reports`), deliberately kept independent per CLAUDE.md's own "SCOPE DECISION."
 
 ### M5 Consultant / Co-Resident Review
 layer: L4
@@ -258,10 +314,10 @@ path: `src/modules/consultant-review/components/{ConsultantReviewView,GuestRevie
 owner engine: none (approval workflow, not AI-driven)
 tenant scope: org
 consumes: `consultant_reviews`, `guest_review_invites`
-emits: none (spec has no explicit "review" event; closest is `entry.reviewed`, not wired)
+emits: none
 udr fields: none
-gates: subadmin role check (`canApprove`), guest-link token
-status: stable — does not map cleanly to any of the spec's 10 named modules; it's an approval/sign-off capability that today is bolted onto Casebook/Dissertation submissions rather than being its own generic "approvals" primitive. One retrofit gap: its own panel heading ("Consultant Review Workspace") is hardcoded, not routed through `t('senior_reviewer', ...)` — see gap audit's terminology section.
+gates: subadmin role check (`canApprove`) — **now backed by `org_groups.grants_review_approval`** (migration 36) rather than a hardcoded 4-value role-id list, via `RoleDelegationPanel`/`chief_assign_user_role`; guest-link token
+status: stable, unchanged in this pass structurally. One retrofit gap carried forward: its own panel heading ("Consultant Review Workspace") is still hardcoded, not routed through `t('senior_reviewer', ...)`.
 
 ### M6 Dissertation Assistant
 layer: L4
@@ -271,9 +327,9 @@ owner engine: privybrain-2
 tenant scope: org (institutional resident only — no doctor-owned path)
 consumes: `dissertations`, `dissertation_milestones`
 emits: none
-udr fields: none
+udr fields: `udr.ts`'s `academic.dissertation`/`entries[]` (type `dissertation_milestone`) now read this module's tables directly (see S3) — read-only composition, no write-back
 gates: none
-status: stable — **one hardcoded dissertation-tracking flow**, not folded into the newer, more generic `research` module's template system. **Gap vs spec**: this and `research` both partially implement target #5 "Research & academic tracks" as two separate, non-unified tools — a real fragmentation the spec's "one rule that matters most" calls out directly.
+status: stable, unchanged — still one hardcoded dissertation-tracking flow, not folded into the newer `research` module's template system (M10).
 
 ### M7 Exam Readiness
 layer: L4
@@ -283,9 +339,9 @@ owner engine: babsbrain-2 (target — compliance checker)
 tenant scope: org
 consumes: `exam_readiness` (fixed named columns, migration 05)
 emits: none
-udr fields: none
+udr fields: `udr.ts`'s `academic.examReadiness` now reads this table directly (see S3) — read-only
 gates: none
-status: stable — **deliberately not generalized** (CLAUDE.md: "DELIBERATELY SKIPPED, not an oversight" — its 4 pillars mirror actual WACP/NPMCN college requirements, not a program-specific choice). Does not map to any of the spec's 10 target modules as a distinct capability; closest is target #6 "Learning & development" but the spec's own module list doesn't carve out a dedicated "certification eligibility" capability either. Worth a conversation before assuming this needs a registry slot of its own long-term.
+status: stable — unchanged, deliberately not generalized (see CLAUDE.md).
 
 ### M8 Forms (monthly roster submission)
 layer: L4
@@ -293,11 +349,11 @@ face: doctor, org-admin
 path: `src/modules/form/components/{ResidentFormView,ResidentActivityGraph}.tsx`
 owner engine: babsbrain-2
 tenant scope: org
-consumes: `submissions`, `collections`, `rotations`
-emits: none
-udr fields: none
+consumes: `submissions`, `collections`, `rotations`; **now also writes (additively) into `form_entries`** via `src/modules/form/lib/formService.ts` — see M13
+emits: none as an event, but **now has a real, live dual-write into the generalized Forms scaffold** (M13) on every successful submission
+udr fields: `udr.ts`'s `entries[]` (type `submission`) reads `submissions` directly (see S3)
 gates: none
-status: stable but **the single clearest example of a use-case wearing a module's clothes** (spec rule 9): this is one hardcoded monthly rotation/leave form, not a form builder + instances + pipelines system. `rotations` (the dropdown source) is itself a single global, non-tenant-scoped table seeded with Family-Medicine-specific postings (see gap audit's Tenancy section) — a second, compounding hardcoding. The form→roster pipeline exists (`MultiRosterManagerView` consumes `submissions`) but is not modeled as a first-class "pipeline" entity; it's just another view reading the same table.
+status: stable but still **the single clearest example of a use-case wearing a module's clothes** (spec rule 9) as its own hardcoded flow — **however, this is no longer purely a hardcoded dead end**: `ResidentFormView.tsx`'s `handleSubmit` (around line 294–332) now does a best-effort, non-blocking dual-write into `form_entries` immediately after the real `submissions` insert succeeds. Mechanism: looks up the seeded `form_instances` row by exact name (`"Monthly Rotation & Leave Schedule Form"`, migration 35's seed) via `getFormInstanceByName(tenantId, name)`, then calls `createFormEntry(instanceId, tenantId, resident.id, payload)` mirroring the submission's own fields into the generic `payload` jsonb. Wrapped in try/catch — any failure (missing tenant, no seeded instance, network, RLS) is logged and swallowed; `submissions` remains the sole source of truth and the dual-write can never block or roll back the real submission. Nothing yet *reads* `form_entries` back out for any user-facing purpose (`FormsBuilderPanel.tsx`'s "view submissions" affordance isn't built — see M13) — so today this is a one-way mirror with no consumer, not yet a functioning pipeline.
 
 ### M9 Knowledge Packs
 layer: L4
@@ -309,31 +365,31 @@ consumes: `knowledge_packs`, `knowledge_pack_items`
 emits: none
 udr fields: none
 gates: none
-status: stable — already has both a builder (`KnowledgePackManagerView`) and an instance/consumption view (`KnowledgeLibraryView`), making it structurally closer to the spec's builder/instance split than most modules. **Gap vs spec**: content type is still fixed ("knowledge pack" with fixed item shape), not a generic document/resource capability, and doesn't map to any of the spec's 10 named modules directly (closest: target #6 "Learning & development").
+status: stable, unchanged in this pass.
 
 ### M10 Research Engine
 layer: L4
 face: doctor, org-admin
 path: `src/modules/research/components/ResearchWorkspaceView.tsx`, `src/modules/research/lib/{folderStructure,researchCopilot,rubricEngine,templateEngine}.ts`
 owner engine: privybrain-2
-tenant scope: org (institutional) and individual (doctor-owned, migration 25 — confirmed live in `App.tsx`'s `/doctor/research` route, `owner.kind: 'doctor'`)
+tenant scope: org (institutional) and individual (doctor-owned, migration 25)
 consumes: `research_templates`, `research_workspaces`, `research_chapters`, `research_correction_logs`
 emits: none
-udr fields: none
+udr fields: `udr.ts`'s `instances[]` includes `research_workspace` rows for both `workforceId` and `doctorId` lookups (see S3) — read-only composition
 gates: none
-status: stable — **the module closest to the spec's target shape today**: `research_templates` is genuinely forkable/org-customizable (WACP/NPMCN/ICMJE/STROBE/CONSORT/PRISMA/CARE/University/Custom, `templateEngine.ts`), and both institutional and individual-doctor ownership paths are real and RLS-differentiated (migrations 25/31). **Gap vs spec**: still hardcoded to one "research proposal/dissertation" track shape (fixed `research_chapters` section keys `ch1_intro`…`ch5_discussion`), not a fully generic "academic track" that could also model a CME log or exam-prep track per target #5's own description.
+status: stable, unchanged in this pass — still the module closest to the spec's target shape.
 
 ### M11 Roster Engine
 layer: L4
 face: org-admin
-path: `src/modules/roster-engine/lib/uchRosterParser.ts` (lib only — see F10 for the UI, still in `src/components/`)
+path: `src/modules/roster-engine/lib/uchRosterParser.ts` (lib only — see F10 for the UI, now in `src/modules/org-admin/components/dashboard/`, not this module's own folder)
 owner engine: babsbrain-2
 tenant scope: org
 consumes: `raw_roster_uploads`
 emits: none
 udr fields: none
-gates: HITL review before publish (manual, in `MultiRosterManagerView`)
-status: fragmented — no `components/` directory exists under this module; its face (F10) never moved out of `src/components/`. **Gap vs spec**: parser is hardcoded to 5 specific UCH document formats (Combined GOP, Consultant GOP, A&E Emergency Call, Afternoon/Priority/Saturday Supervision, Satellite Outposts) — a textbook case of target #3 "Scheduling" being one organization's workflow instead of a generic pattern.
+gates: HITL review before publish (manual, in F10)
+status: fragmented, unchanged in substance — still no `components/` directory under this module; F10's move (this wave) landed it in `org-admin/dashboard/` rather than here, so the module/face split is now cross-module rather than resolved.
 
 ### M12 Viva Simulator
 layer: L4
@@ -345,7 +401,31 @@ consumes: `viva_vignettes` (tenant-scoped bank, migration 28), `viva_simulations
 emits: none
 udr fields: none
 gates: plan-gated vignette creation (migration 29, Chief-authored content only)
-status: stable — vignette *content* is now tenant-customizable via the Template Manager (F11) since migration 28, closing the gap CLAUDE.md's own "Module admin-content build-out" section flagged as "scoped, not built." **Gap vs spec**: the practice-session flow itself (`OralExamSimulatorView`) is still a fixed component, and `viva_simulations` stores scores only — no session transcript/replay model.
+status: stable, unchanged in this pass.
+
+### M13 Forms & Pipelines (generalization scaffold)
+layer: L4
+face: org-admin
+path: builder — `src/modules/org-admin/components/dashboard/FormsBuilderPanel.tsx`; data access — `src/modules/form/lib/formService.ts`; schema — `supabase/migrations/35_forms_pipelines.sql`
+owner engine: babsbrain-2
+tenant scope: org
+consumes: `form_instances`, `form_entries`, `form_pipelines`
+emits: none (no event emission wired here yet)
+udr fields: none (not read by `udr.ts`)
+gates: none
+status: stub — **new since the previous snapshot**, directly addresses the living-system spec's own backlog line (§10: "Forms module currently equals one monthly schedule form; generalise into builder + instances + pipelines"). Schema is deliberately minimal (no conditional logic/sections/validation rules — `form_instances.schema` is a flat field-definition list; `form_pipelines.pipeline_type` is free text, not an enum, to avoid the CHECK-constraint churn `ai_action_logs.action_type` already hit twice). `FormsBuilderPanel.tsx` is first-slice only: create + list `form_instances`, no update/delete, no UI for `form_pipelines` at all. `formService.ts`'s `getFormEntries` exists but is not called by the panel yet. The one live consumer of this scaffold is M8's dual-write (a producer, not this panel) — nothing in this module's own UI surfaces `form_entries` back to a Chief yet, so "builder" and "data" exist but there is no working "instances you can actually use" loop end to end.
+
+### M14 Integrations Layer
+layer: L4
+face: org-admin, doctor
+path: org-admin panel — `src/modules/org-admin/components/dashboard/IntegrationsPanel.tsx`; doctor panel — `src/modules/doctors/components/DoctorIntegrationsPanel.tsx` (F19); shared data access — `src/modules/shared/lib/integrationsService.ts`; schema — `supabase/migrations/33_integrations_layer.sql`
+owner engine: none (cross-cutting; feeds whichever engine the connected tool serves — see the catalog's `feeds_modules`)
+tenant scope: org (`IntegrationsPanel`) and individual (`DoctorIntegrationsPanel`)
+consumes: `integrations_catalog`, `integrations_connections`
+emits: none
+udr fields: none
+gates: none
+status: stub — **new since the previous snapshot**, directly addresses spec §7's "External and native tool integrations" section. 8 catalog rows seeded (statistical analyser, literature search, literature/evidence matrix, reference manager, writing space, calendar/video, e-signature, payment processor) — 3 native (already-live features re-represented as catalog entries: statistical analyser, literature/evidence matrix, writing space), 4 external stubs with no real OAuth/API flow (`auth_type: 'oauth'`, `kind: 'external'`), and Flutterwave as the one already-live platform-managed row (`auth_type: 'platform_managed'`). Both panels are **read-only**: they list the catalog and show a connected/not-connected badge — `IntegrationsPanel` infers connection purely from `auth_type === 'platform_managed'` (doesn't call `getConnectionsForTenant` at all); `DoctorIntegrationsPanel` does call `getConnectionsForDoctor` and treats a `status: 'connected'` row as connected, but nothing anywhere writes such a row, so in practice both panels always show every non-platform-managed integration as disconnected. No connect/disconnect mutation flow exists for any of the 7 non-native rows — flagged in both panels' own code comments as future per-provider work, not hidden.
 
 ---
 
@@ -358,34 +438,52 @@ path: `src/lib/databaseService.ts`
 owner engine: none
 tenant scope: any
 consumes: every table in `supabase/schema.sql` + `supabase/migrations/*`
-emits: nothing (no event bus exists — see below)
-udr fields: none (no UDR exists)
+emits: nothing directly (see S2 for the new, separate event-emission path)
+udr fields: none (see S3 — the new UDR composition layer reads through this file's exported `supabase` client, not through this file's own service functions)
 gates: none
-status: **fragmented** — this is one large file doing direct per-module Supabase reads/writes (a god-service, not a spine). It has none of the 8 spine components the spec names in §7 ("event bus, UDR, tenant config service, rules console, notification dispatcher, audit stream, access-code service, integrations service"). It is the closest thing that exists to a spine only in the sense that every module already funnels its I/O through one file — a real, useful precedent to build the actual spine on top of, not a spine itself.
+status: **fragmented, unchanged in substance** — still one large god-file doing direct per-module Supabase reads/writes. New spine pieces this wave (S2/S3/S5/S6) were deliberately built *alongside* this file rather than inside it — `formService.ts`, `integrationsService.ts`, `udr.ts`, and `eventBus.ts` all import the `supabase` client this file exports rather than adding more functions to it, per each new file's own header comment (avoiding further growth of the god-file while `docs/MODULARIZATION_ARCHITECTURE.md`'s Phase 4 client-extraction hasn't started).
 
 ### S2 Event Bus
 layer: L3
 face: shared
-path: **not present in this worktree** (checked: `src/modules/shared/lib/` does not exist — only `src/modules/shared/{config,ui}` do, plus `terminology.tsx` directly under `shared/`)
-status: **absent** — no `event_log` table in `supabase/schema.sql` or any of the 31 migrations, no `eventBus.ts` file anywhere in `src/`. Confirmed not present as of this audit; a sibling agent may be building this on a separate branch/worktree, which this audit cannot see (expected and fine — not double-counted as "done").
+path: `src/modules/shared/lib/eventBus.ts`
+owner engine: none
+tenant scope: any
+consumes: nothing (write-only)
+emits: `event_log` rows (any string; `EventType` union in this file covers §6's vocabulary for editor autocomplete only, not DB-enforced)
+udr fields: none
+gates: none
+status: **real, but minimal — no longer absent, still far from a real bus.** Backed by `event_log` (migration 32). This is a plain typed insert wrapper (`emitEvent`) — explicitly **no pub/sub, no listeners, no in-process dispatch**, per the file's own header. Nothing in this app currently reads `event_log` back out. Confirmed exactly one real caller today: `submissionChaserAgent.ts`'s `insight.generated` emission (A1 below) — every other module (Announcements, Billing, Casebook, Dissertation, Research, Forms, Integrations) has an `EventType` reserved for it in the union but does not call `emitEvent` anywhere yet.
 
 ### S3 Unified Doctor Record (UDR)
 layer: L3
 face: shared
-path: **not present in this worktree**
-status: **absent** — no `udr.ts`, no `unified_doctor_record` table or equivalent. `WorkforceMember`/`DoctorSession` in `src/types.ts` and `App.tsx` are the closest existing identity shapes, but neither aggregates `instances[]`/`entries[]`/`pipelines[]`/`insights[]` the way `udr.*` in spec §5 describes. Greenfield work, not yet begun in this worktree.
+path: `src/modules/shared/lib/udr.ts`
+owner engine: none
+tenant scope: any
+consumes: `workforce`, `doctor_profiles`, `tenants`, `research_workspaces`, `casebook_workspaces`, `submissions`, `case_reports`, `dissertations`, `dissertation_milestones`, `exam_readiness`, `user_subscriptions`
+emits: nothing (pure read composition, no writes)
+udr fields: `identity`, `tenant`, `instances[]`, `entries[]`, `academic`, `billing` — all real; **`insights[]` is confirmed still hardcoded to the literal empty array `[]`** (see below)
+gates: none
+status: **real since this wave — no longer absent, but with one specifically-checked gap.** `getUnifiedDoctorRecord(client, ref)` is a deliberate **read-only composition function**, not new storage — it queries tables that already exist and reshapes them into §5's `udr.*` shape; it performs no writes and creates no new tables, per its own header's explicit rationale (migrating every existing table into a truly generic schema would be a high-risk live-production rewrite, out of scope). Accepts either a `workforceId` or `doctorId` ref and correctly unions both when a doctor is linked to a workforce row (`workforce.doctor_id`). **Directly checked per this task's instruction**: `insights[]` is typed `UdrInsight = unknown` and the function's return statement ends with a literal `insights: []` — it does **not** read the new `insights` table (migration 37) at all, despite that table now existing and being actively written by A1/read by F18. This is a real, currently-unclosed gap: the `insights` table and `InsightsStrip.tsx` (F18) read/write it directly, bypassing this composition layer entirely, rather than `udr.ts` being the single place `insights[]` is assembled as §5 describes. Also unaddressed: `entries[]` deliberately does not expand into `research_chapters`/`clinical_case_reports` (kept at the coarser `instances[]` granularity), and `billing` only reflects `workforce_id`-scoped subscriptions, never `scope='tenant'` org-wide ones or an unlinked doctor's billing.
 
 ### S4 Tenant Config Service
 layer: L3
 face: shared
-path: partially — `databaseService.getTenant()`/`getTenants()` + the `tenants` table's `module_flags`/`terminology_overrides`/`call_duty_rules` columns
-status: fragmented — config *exists* and is real (module toggles, terminology, AI-rigor tuning all read live tenant config), but it's exposed as ad hoc columns on `tenants` read directly by whichever face needs them (F12 `TenantCustomizationView`, `terminology.tsx`, each Edge Function's `tenantAdaptation.ts`), not a single service with its own contract.
+path: partially — `databaseService.getTenant()`/`getTenants()` + the `tenants` table's `module_flags`/`terminology_overrides`/`call_duty_rules` columns; **now also `org_groups` (migration 36)** for the delegatable-role-vocabulary slice specifically
+status: fragmented, **one real sub-gap narrowed this wave**. Config still exists as ad hoc columns/tables read directly by whichever face needs them (F12 `TenantCustomizationView`, `terminology.tsx`, each Edge Function's `tenantAdaptation.ts`), not a single service with its own contract — that part is unchanged. What's new: the spec's own rule 10 ("groups are org-defined vocabulary, not a fixed hierarchy") was previously violated by a genuinely global, hardcoded 4-row `roles` table duplicated in three frontend places plus a hardcoded RPC IN-list (per migration 36's own header, confirmed by reading `App.tsx` before that migration was written). Migration 36 adds tenant-scoped `org_groups` (seeded per-tenant with the 4 previous defaults as editable-but-not-deletable rows, `grants_review_approval boolean` as the one real permission bit in use today), three Chief-only SECURITY DEFINER RPCs (`chief_create_org_group`/`chief_update_org_group`/`chief_delete_org_group`), and rewires `chief_assign_user_role` to take an `org_group_id` instead of a hardcoded role-id string. Wired into `RoleDelegationPanel.tsx` (composed into F9). Migration 36 also fixes a latent bug found in the same investigation: `user_roles`' RLS was `TO authenticated` only, but this app has no Supabase Auth session for the plaintext-code flow, so `getDelegatedRoles()` had been returning zero rows unconditionally since migration 01 — widened to the app's established permissive posture.
 
 ### S5 Integrations Layer
 layer: L3
 face: shared
-path: **not present**
-status: **absent** — no `integrations.catalog`/`integrations.connections` tables, no integrations UI. Zero integrations from spec §7's seed list (statistical analyser, literature search, reference manager, writing space, calendar/video, e-signature) are wired; Flutterwave/Paystack are hardcoded into the billing Edge Functions directly rather than modeled as a catalog entry, which is itself a minor deviation from "an integration writes into the UDR through the same shape as any native module output."
+path: `src/modules/shared/lib/integrationsService.ts`; schema `supabase/migrations/33_integrations_layer.sql`
+status: **scaffold exists — no longer absent, but still not a real integrations layer.** `integrations_catalog` (reference data, 8 seeded rows) and `integrations_connections` (per-tenant-or-per-individual status, 3-way owner-shape CHECK constraint mirroring migration 30's `user_subscriptions.scope` pattern) both exist and are read by two UI panels (M14/F19). Zero real OAuth/API integration flow exists for any of the 7 non-native rows — this remains a read-only catalog/status scaffold, exactly as its own migration header describes it ("a SCAFFOLD only"). Flutterwave/Paystack remain hardcoded directly into the billing Edge Functions rather than actually routed through this layer — the `payment-processor` catalog row documents that live integration but doesn't mediate it.
+
+### S6 Agent Manifests (new)
+layer: L3
+face: shared
+path: schema `supabase/migrations/34_agent_manifests.sql`, seed additions in `supabase/migrations/37_insights.sql`
+status: **new this wave.** A lookup/registry table (`agent_manifests`: `agent_key`, `name`, `owner_engine`, `rung`, `description`, `gates`, `tenant_scope`) intended per spec §4/§7 as the place AI-assisted actions and agents formally declare their rung. Seeded with 10 rows (migration 34) documenting the existing 4 AI Copilot Edge Functions' individual actions (verbatim action-key strings from each function's own request contract, not invented), plus 1 more row (migration 37) for the new `babsbrain2_submission_chaser` agent (A1). **Important limitation, directly checked**: confirmed via repo-wide search that `agent_manifests` is referenced only by `src/modules/shared/lib/eventBus.ts`, `submissionChaserAgent.ts`, and `InsightsStrip.tsx` (via comments/the `insights.agent_key` foreign key) — **no Edge Function (`dissertation-copilot`, `research-copilot`, `casebook-copilot`, `roster-parser`) actually reads or writes this table at runtime.** It is a static reference/documentation table today, not yet a live orchestration registry; the FK relationship from `insights.agent_key → agent_manifests.agent_key` (migration 37) is the only place a manifest row is structurally required to exist.
 
 ---
 
@@ -399,10 +497,10 @@ owner engine: privybrain-2
 rung: 0
 tenant scope: org
 consumes: `dissertations` content (client-supplied), `tenant_ai_adaptation_rules` (feature_key `academic_copilot`)
-emits: `ai_action_logs` rows (not a real event, a direct table write)
+emits: `ai_action_logs` rows (not a real event, a direct table write — still not routed through `eventBus.ts`)
 udr fields: none
 gates: doctor edits/accepts output before save (client-side only, no formal gate record)
-status: fragmented — actions are `vancouver_format` (formatting, rung 0), `methodology_check` (guideline audit, rung 0 per this registry's convention), `extract_ddx` (extraction, rung 0). OpenAI→Gemini→heuristic fallback, deployed and live-verified per CLAUDE.md. Not wired to any common agent-manifest/rung-declaration system — rung above is inferred from behavior, not read from a manifest, because no manifest format exists yet.
+status: fragmented, unchanged in this pass. Now has 3 corresponding rows in `agent_manifests` (S6) documenting its actions, but the function itself does not read that table.
 
 ### E2 research-copilot
 layer: L2
@@ -415,7 +513,7 @@ consumes: `research_templates` (dynamic prompt build via `_shared/researchRubric
 emits: `ai_action_logs`
 udr fields: none
 gates: doctor edits/accepts output before save
-status: fragmented — actions `audit_draft`, `synthesize_literature_matrix`, `generate_table_shells`, all rung 0 (audit/draft-style, no autonomous scoring gate or cross-tenant action). Same fallback architecture as E1.
+status: fragmented, unchanged in this pass. 3 corresponding `agent_manifests` rows (S6), not read at runtime.
 
 ### E3 casebook-copilot
 layer: L2
@@ -428,7 +526,7 @@ consumes: `casebook_templates` (via `_shared/casebookRubric.ts`), `tenant_ai_ada
 emits: `ai_action_logs`
 udr fields: none
 gates: doctor edits/accepts output before save
-status: fragmented — `audit_case` produces a real WACP 100-point / PMR 7-step numeric score (closer to rung 1 "reasoning/scoring" than a plain draft), `generate_defense_questions` and `parse_logbook_curriculum` are rung 0. Flagged as the one Edge Function whose primary action arguably already crosses into rung 1 without any formal rung declaration or cooldown record.
+status: fragmented, unchanged in this pass. 3 corresponding `agent_manifests` rows (S6), not read at runtime.
 
 ### E4 roster-parser
 layer: L2
@@ -440,11 +538,30 @@ tenant scope: org
 consumes: `raw_roster_uploads` text, `tenant_ai_adaptation_rules` (feature_key `roster_parser`)
 emits: `ai_action_logs`
 udr fields: none
-gates: HITL review in `MultiRosterManagerView` before the parsed roster is published (manual, not a formal agent-action-proposed/executed pair)
-status: fragmented — structures the 5 UCH-specific document formats into `combined_master_rosters`; pure extraction, no conflict detection despite being the module most in need of it (target #3 "Scheduling" names "roster.conflict.detected" as an event this kind of engine should emit — not implemented).
+gates: HITL review in F10 before the parsed roster is published (manual)
+status: fragmented, unchanged in this pass. 1 corresponding `agent_manifests` row (S6), not read at runtime.
 
 ---
 
 ## L1 Agents
 
-**None exist.** No file in this repo declares an agent manifest (rung, cooldown, `agent.action.proposed`/`executed` emission) as described in spec §4/§7. The 4 Edge Functions above are static/reasoning-rung *helpers* invoked synchronously by a UI action — not autonomous agents with their own record, policy, or cooldown. This is a real, confirmed gap, not an oversight in this audit.
+### A1 babsbrain2_submission_chaser (Submission Chaser)
+layer: L1
+face: none (see F18 for its dashboard face)
+path: `src/modules/shared/lib/submissionChaserAgent.ts`; manifest seed `supabase/migrations/37_insights.sql`; dedup fix `supabase/migrations/38_insights_dedup_index.sql`
+owner engine: babsbrain-2
+rung: **1** (per the seeded `agent_manifests` row: `agent_key = 'babsbrain2_submission_chaser'`, `owner_engine = 'babsbrain-2'`, `rung = 1`, `tenant_scope = 'org'`)
+tenant scope: org
+consumes: `collections` (currently-open, per tenant), `workforce` (active, per tenant), `submissions` (for the open collection), `insights` (for its own dedup check)
+emits: `insights` rows (persisted, dismissible); `insight.generated` on `event_log` (best-effort, via `emitEvent` — see S2)
+udr fields: writes what should conceptually be `udr.insights[]`, but writes directly to the `insights` table rather than through `udr.ts` — see S3's gap note; `udr.ts` itself does not surface this agent's output
+gates: **rung 1 = "shown as suggestion"** per spec §4 — no autonomous action is taken. The manifest's own `gates` text: *"Shown as a suggestion in InsightsStrip.tsx; no autonomous action taken — a human (org admin) reads the insight and decides whether to remind/reset the member's code. Dismissing is a plain UPDATE, not a gated approval flow."*
+status: stable, new — **the first real agent in this app to run end-to-end through a persisted record**: reads existing operational state → writes a persisted `insights` row → emits an `event_log` row → is read back and rendered by a UI face (F18) with a working dismiss action. This closes the previous registry's "**None exist**" finding for L1 agents, at least for this one agent.
+
+**Scope, exactly as implemented** (confirmed by reading the source): one signal only — active workforce members with no `submissions` row yet for the tenant's currently-open `collections` row, and only once that collection's `deadline` has passed (the open/closed `status` flag and "past deadline" are independent in this app, same distinction `ChiefDashboardView.tsx` already treats separately). Not a general-purpose rules engine.
+
+**Idempotency, worth knowing exactly**: the dedup check is deliberately *not* the same formula as `getActiveInsights`'s "active" predicate (dismissed_at IS NULL AND cooldown_until has lapsed) — a literal reading of that formula would not be idempotent, since a freshly-inserted row's `cooldown_until` is 3 days in the future and would itself fail an "active" check, causing a same-day re-run to insert a second row. Instead, the insert-time dedup skips any subject with a not-yet-superseded row (not dismissed, OR dismissed but still inside its own cooldown). `cooldown_until` is left `null` at insert time (so a brand-new insight is immediately visible in F18) and is only set 3 days out when `dismissInsight()` is called. A genuine race (two near-simultaneous runs, e.g. a fast reload remounting `InsightsStrip` before the first run's insert was visible to the second run's dedup SELECT) was found live — 18 duplicate rows for 9 actually-pending residents — and fixed in migration 38 with a partial unique index (`(tenant_id, agent_key, subject_ref) WHERE dismissed_at IS NULL`) plus switching the insert to an `upsert(..., { ignoreDuplicates: true })` against that same conflict target.
+
+---
+
+*End of registry. Per spec §7/rule 12: update this file in the same change whenever you touch a component it describes.*
