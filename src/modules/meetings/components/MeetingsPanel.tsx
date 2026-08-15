@@ -31,10 +31,7 @@ import { Users, Plus, Trash2, CalendarClock, ListChecks, ArrowLeft, CheckCircle2
 //   - No edit/delete for series or meetings, no agenda editing on an
 //     existing meeting occurrence yet, no notification/reminder wiring.
 //
-// NOT wired into ChiefDashboardView.tsx, App.tsx, or any navigation in
-// this pass — standalone, same precedent as FormsBuilderPanel.tsx/
-// IntegrationsPanel.tsx/CategoryManagerPanel.tsx each had before their own
-// dashboard wiring landed. Dashboard-tab wiring is a deliberate followup.
+// Wired into ChiefDashboardView.tsx's "Meetings" tab.
 //
 // Visual style follows FormsBuilderPanel.tsx (card layout, field-row
 // pattern for the agenda-item list) and CategoryManagerPanel.tsx

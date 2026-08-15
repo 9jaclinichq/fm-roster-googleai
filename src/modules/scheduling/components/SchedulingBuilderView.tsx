@@ -36,12 +36,7 @@ import { CalendarClock, Plus, Rows3, Columns3, Grid3x3, ArrowLeft, Trash2, Check
 // unique to MultiRosterManagerView.tsx, which this component does not
 // import from, read, or otherwise touch.
 //
-// NOT WIRED IN. Same "additive, standalone" precedent FormsBuilderPanel.tsx
-// / IntegrationsPanel.tsx / CategoryManagerPanel.tsx all followed before
-// being wired into ChiefDashboardView.tsx by a separate, later, reviewed
-// step — this component is not imported from ChiefDashboardView.tsx,
-// App.tsx, or any navigation in this pass. Deliberate followup, not an
-// oversight.
+// Wired into ChiefDashboardView.tsx's "Scheduling" tab.
 
 interface SchedulingBuilderViewProps {
   tenantId: string;

@@ -11,6 +11,8 @@ import { InsightsStrip } from '../../shared/ui/InsightsStrip';
 import { FormsBuilderPanel } from './dashboard/FormsBuilderPanel';
 import { IntegrationsPanel } from './dashboard/IntegrationsPanel';
 import { CategoryManagerPanel } from './dashboard/CategoryManagerPanel';
+import { SchedulingBuilderView } from '../../scheduling/components/SchedulingBuilderView';
+import { MeetingsPanel } from '../../meetings/components/MeetingsPanel';
 
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
 // only needed when the Chief actually opens the Knowledge Packs tab.
@@ -58,7 +60,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'categories' | 'settings'>('submissions');
+  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'categories' | 'scheduling' | 'meetings' | 'settings'>('submissions');
 
   // Role delegation state (migration 36 — org-defined groups, replacing the
   // previously hardcoded 4-value subadmin role list)
@@ -954,6 +956,26 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           Categories
         </button>
         <button
+          onClick={() => setActiveTab('scheduling')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'scheduling'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Scheduling
+        </button>
+        <button
+          onClick={() => setActiveTab('meetings')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'meetings'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Meetings
+        </button>
+        <button
           onClick={() => setActiveTab('settings')}
           className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === 'settings'
@@ -1140,6 +1162,16 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         {/* TAB 9c: CATEGORIES (migration 39 — org-defined workforce categories) */}
         {activeTab === 'categories' && adminCode && (
           <CategoryManagerPanel tenantId={tenantId ?? DEFAULT_TENANT_ID} adminCode={adminCode} />
+        )}
+
+        {/* TAB 9d: SCHEDULING (migration 44 — additive generic Scheduling module) */}
+        {activeTab === 'scheduling' && (
+          <SchedulingBuilderView tenantId={tenantId ?? DEFAULT_TENANT_ID} createdByWorkforceId={null} />
+        )}
+
+        {/* TAB 9e: MEETINGS (migration 45 — Meetings & Actions module) */}
+        {activeTab === 'meetings' && (
+          <MeetingsPanel tenantId={tenantId ?? DEFAULT_TENANT_ID} createdByWorkforceId={null} />
         )}
 
         {/* TAB 10: SETTINGS & COLLECTIONS */}
