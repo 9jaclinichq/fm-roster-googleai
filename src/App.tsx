@@ -29,7 +29,7 @@ const ChiefLoginView = lazy(() =>
   import('./modules/auth/components/ChiefLoginView').then(m => ({ default: m.ChiefLoginView }))
 );
 const ChiefDashboardView = lazy(() =>
-  import('./components/ChiefDashboardView').then(m => ({ default: m.ChiefDashboardView }))
+  import('./modules/org-admin/components/ChiefDashboardView').then(m => ({ default: m.ChiefDashboardView }))
 );
 const DissertationAssistantView = lazy(() =>
   import('./modules/dissertation/components/DissertationAssistantView').then(m => ({ default: m.DissertationAssistantView }))

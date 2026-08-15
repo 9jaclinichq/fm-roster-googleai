@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { databaseService } from '../../../lib/databaseService';
 import { ResidentActivityGraph } from './ResidentActivityGraph';
-import { ComplianceNudgesView } from '../../../components/ComplianceNudgesView';
+import { ComplianceNudgesView } from '../../org-admin/components/ComplianceNudgesView';
 import { Collection, Submission, Rotation } from '../../../types';
 import { 
   ClipboardList, 

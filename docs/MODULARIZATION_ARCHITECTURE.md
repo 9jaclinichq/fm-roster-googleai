@@ -1,9 +1,10 @@
 # PrivyDoc Workspace — Modularization Architecture
 
 Status: **in progress**, grounded in the actual codebase as of 2026-08-15. Phases 1 (backend
-renames) and 2 (`shared/` extraction) are done — see "Rollout phases" for exactly what shipped in
-each and how the remaining phases apply safely, since this repo has no automated test suite to
-catch a broken mechanical refactor.
+renames), 2 (`shared/` extraction), and 3 (per-module component relocation, including the org-admin
+structural split) are done — see "Rollout phases" for exactly what shipped in each and how the
+remaining phases apply safely, since this repo has no automated test suite to catch a broken
+mechanical refactor. Phases 4 (`databaseService.ts` split) and 5 (type-barrel decision) are next.
 
 ## Why this exists
 
@@ -351,6 +352,42 @@ order, each phase independently shippable and manually browser-verified before t
    `/#/admin-portal`; full Chief login (`719603`) through `ChiefLoginView` landing on
    `/chief/dashboard`; `DoctorAuthView` rendering correctly at `/#/doctor/login`. No console errors
    on any of the three routes. This closes every Phase 3 module except `org-admin` (Task below).
+   **`org-admin` DONE (2026-08-15)** — the one module in Phase 3 that was real refactoring, not pure
+   relocation. `ChiefDashboardView.tsx` (2,062 lines) is now a thin shell at
+   `modules/org-admin/components/ChiefDashboardView.tsx`: it keeps every `useState`/`useEffect`/
+   `databaseService` call and handler, and composes 6 new **presentational** panel components under
+   `modules/org-admin/components/dashboard/` — `SubmissionsPanel` (+ its two modals, view/edit),
+   `PendingResidentsPanel`, `WorkforceRegistryPanel`, `AnnouncementsAdminPanel`, `RoleDelegationPanel`,
+   `CollectionSettingsPanel` — each receiving the state slices and handlers it needs as props. This
+   is Phase 3 scope (structural split only); `orgAdminService.ts` extraction from `databaseService.ts`
+   stays deferred to Phase 4, same as every other module. The 4 already-standalone lazy-loaded
+   components (`MultiRosterManagerView.tsx`, `TenantCustomizationView.tsx`, `TemplateManagerView.tsx`,
+   `TenantUpgradeCheckoutModal.tsx`) relocated as-is into `dashboard/` — `TenantUpgradeCheckoutModal`
+   went to `dashboard/` rather than the module map's top-level `components/` since it's only ever
+   imported by `TemplateManagerView.tsx` (same directory, trivial relative import) — a deliberate,
+   low-risk deviation from the aspirational file list. `ComplianceNudgesView.tsx` relocated to
+   `org-admin/components/` (top-level, matching the map); its cross-module importer,
+   `modules/form/components/ResidentFormView.tsx`, had its import path updated — this is the exact
+   "revisit once org-admin moves" case flagged in the `form` module's own DONE note above. `SUBADMIN_ROLES`
+   is duplicated (shell needs it only for one success-toast label lookup; `RoleDelegationPanel` owns
+   the canonical copy) rather than shared, consistent with this being a structural pass, not a
+   dedup pass. `tsc --noEmit` and `npm run build` both clean (one real miss caught by `tsc` on the
+   first pass, same pattern as the research module: a leftover `SUBADMIN_ROLES` reference in the
+   shell's `handleAssignRole` after the const moved into the panel — fixed by keeping a small local
+   copy in the shell rather than exporting one, since it's truly only needed for that one toast
+   string). Live-verified as the real UCH Chief: logged in and clicked through all 10 tabs in order
+   (submissions, pending, workforce, announcements, roles, knowledge, roster, customization,
+   templates, settings) — every panel rendered real live data (22 submissions, 31 workforce members,
+   9 pending, 0 announcements, 0 delegated roles, real roster/template/customization content); typed
+   into the Submissions search box and confirmed the live filter narrowed 22 rows down to the exact
+   match, proving `SubmissionsPanel`'s props wiring works, not just its initial render. Also logged in
+   as resident Dr. Apata and confirmed the relocated `ComplianceNudgesView` still renders real active
+   nudges (missing case reports, unpaid exam fees, unsubmitted college forms) on `/workspace/form` —
+   the cross-module import fix. Zero console errors across the entire walkthrough. `SaaSOperatorConsoleView.tsx`
+   is now the **one remaining component outside `src/modules/`** — it belongs to a separate
+   `platform-operator` module (per this doc's own module map) that was never part of this session's
+   named Phase 3 order; flagged here so it isn't silently forgotten, not moved in this pass. This
+   completes Phase 3 for every module in the session's named order.
 4. **`databaseService.ts` split**, module-by-module, following the same order — each module's
    service slice extracted only after that module's components have already moved, so the diff per
    step stays reviewable.

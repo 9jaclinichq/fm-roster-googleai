@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { WORKSPACE_TIERS, DEFAULT_PAYMENT_PROVIDER } from '../modules/shared/config/tiers';
-import { PaymentProvider } from '../types';
+import { databaseService } from '../../../../lib/databaseService';
+import { WORKSPACE_TIERS, DEFAULT_PAYMENT_PROVIDER } from '../../../shared/config/tiers';
+import { PaymentProvider } from '../../../../types';
 import { X, Building2, CreditCard, RefreshCw, ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
 
 // Self-serve ORGANIZATION-wide Pro upgrade (migration 30) — closes the gap

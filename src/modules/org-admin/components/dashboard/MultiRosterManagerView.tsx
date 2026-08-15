@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { databaseService } from '../lib/databaseService';
+import { databaseService } from '../../../../lib/databaseService';
 import {
   parseConsultantGop,
   parseCombinedGop,
   parseEmergencyRoster,
   parseSupervisionRoster,
   parseSatelliteRoster,
-} from '../modules/roster-engine/lib/uchRosterParser';
+} from '../../../roster-engine/lib/uchRosterParser';
 import {
   WorkforceMember,
   Collection,
@@ -16,7 +16,7 @@ import {
   SupervisionGrid,
   SatelliteGrid,
   RosterTypeId,
-} from '../types';
+} from '../../../../types';
 import {
   ListChecks,
   UploadCloud,
@@ -29,7 +29,7 @@ import {
   Sparkles,
   User,
 } from 'lucide-react';
-import { useTerminology } from '../modules/shared/terminology';
+import { useTerminology } from '../../../shared/terminology';
 
 const EMPTY_GOP: GopClinicGrid = { slots: [], unparsed_notes: [] };
 const EMPTY_EMERGENCY: EmergencyCallGrid = { shifts: [], unparsed_notes: [] };

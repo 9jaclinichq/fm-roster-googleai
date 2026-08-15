@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { Tenant, CallDutyRule, TenantAiAdaptationRule } from '../types';
-import { TERMINOLOGY_DEFAULTS } from '../modules/shared/terminology';
+import { databaseService } from '../../../../lib/databaseService';
+import { Tenant, CallDutyRule, TenantAiAdaptationRule } from '../../../../types';
+import { TERMINOLOGY_DEFAULTS } from '../../../shared/terminology';
 import { Settings2, Sliders, Tag, Sparkles, RefreshCw, Plus } from 'lucide-react';
 
 // Integrated into ChiefDashboardView as a tab. Operates on the Chief's own

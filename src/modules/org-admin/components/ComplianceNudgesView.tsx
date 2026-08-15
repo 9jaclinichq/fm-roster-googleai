@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { databaseService } from '../lib/databaseService';
-import { ComplianceNudge, DerivedNudge, NudgeSeverity } from '../types';
+import { databaseService } from '../../../lib/databaseService';
+import { ComplianceNudge, DerivedNudge, NudgeSeverity } from '../../../types';
 import { AlertTriangle, CheckCircle2, X, ArrowRight, RefreshCw } from 'lucide-react';
 
 interface ComplianceNudgesViewProps {
