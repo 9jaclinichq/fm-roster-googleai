@@ -13,12 +13,8 @@ interface InsightsStripProps {
 // ("insight strips, module tiles, tenant switcher"), this is meant to sit
 // near the top of the org-admin dashboard, above the tab switcher.
 //
-// STANDALONE ON PURPOSE: this component is deliberately not imported or
-// rendered anywhere yet. ChiefDashboardView.tsx/App.tsx are under active
-// restructuring elsewhere this same work session — wiring this in here
-// would guarantee a merge conflict with that work. Whoever integrates this
-// next should render `<InsightsStrip tenantId={resolvedTenantId} />` near
-// the top of the Chief dashboard shell, above its tab switcher.
+// Wired into ChiefDashboardView.tsx, between the KPI cards and the tab
+// switcher.
 //
 // FAILS GRACEFULLY: both the agent run and the read are best-effort. If
 // `insights`/`agent_manifests`/`event_log` don't exist yet (migration 37 not

@@ -204,7 +204,11 @@ export async function runSubmissionChaser(
     return { collectionId: collection.id, pastDeadline: true, pendingCount: pending.length, insightsCreated: 0 };
   }
 
-  const cooldownUntil = new Date(nowMs + COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  // cooldown_until is intentionally left unset here (wiring-in decision,
+  // per this file's header note): it gates re-INSERTION of a duplicate
+  // after dismissal, not initial visibility — a brand-new insight must be
+  // immediately visible in InsightsStrip, not hidden for 3 days. See
+  // dismissInsight() below for where the cooldown is actually applied.
   const rowsToInsert = toInsert.map((w) => ({
     tenant_id: tenantId,
     agent_key: SUBMISSION_CHASER_AGENT_KEY,
@@ -213,10 +217,18 @@ export async function runSubmissionChaser(
     action: { type: 'reset_code_or_remind', workforce_id: w.id },
     workforce_id: w.id,
     subject_ref: subjectRefFor(collection.id, w.id),
-    cooldown_until: cooldownUntil,
   }));
 
-  const { error: insertErr } = await supabaseClient.from('insights').insert(rowsToInsert);
+  // Upsert against the partial unique index (migration 38) instead of a
+  // plain insert: two near-simultaneous runs (e.g. a fast page reload
+  // remounting InsightsStrip before the first run's insert is visible to
+  // the second run's dedup SELECT) previously raced past the in-app dedup
+  // check and created duplicate rows for the same member/collection.
+  // ignoreDuplicates makes the second racer's redundant row a silent no-op
+  // at the database level instead of a duplicate insight.
+  const { error: insertErr } = await supabaseClient
+    .from('insights')
+    .upsert(rowsToInsert, { onConflict: 'tenant_id,agent_key,subject_ref', ignoreDuplicates: true });
   if (insertErr) throw insertErr;
 
   // One batched event for the whole run rather than one per insight — this
@@ -276,11 +288,19 @@ export async function getActiveInsights(
   );
 }
 
-/** Dismisses one insight — sets `dismissed_at = now()`. */
+/**
+ * Dismisses one insight — sets `dismissed_at = now()` and a `cooldown_until`
+ * COOLDOWN_DAYS out. The cooldown is applied HERE, not at creation (see the
+ * insert path in runSubmissionChaser above): it suppresses the agent from
+ * immediately re-raising the same finding again on its very next run right
+ * after a Chief dismisses it, without delaying a brand-new insight's first
+ * appearance in InsightsStrip.
+ */
 export async function dismissInsight(supabaseClient: SupabaseClient, insightId: string): Promise<void> {
+  const cooldownUntil = new Date(Date.now() + COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { error } = await supabaseClient
     .from('insights')
-    .update({ dismissed_at: new Date().toISOString() })
+    .update({ dismissed_at: new Date().toISOString(), cooldown_until: cooldownUntil })
     .eq('id', insightId);
   if (error) throw error;
 }

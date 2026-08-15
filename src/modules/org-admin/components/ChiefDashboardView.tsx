@@ -7,6 +7,7 @@ import { WorkforceRegistryPanel } from './dashboard/WorkforceRegistryPanel';
 import { AnnouncementsAdminPanel } from './dashboard/AnnouncementsAdminPanel';
 import { RoleDelegationPanel } from './dashboard/RoleDelegationPanel';
 import { CollectionSettingsPanel } from './dashboard/CollectionSettingsPanel';
+import { InsightsStrip } from '../../shared/ui/InsightsStrip';
 import { FormsBuilderPanel } from './dashboard/FormsBuilderPanel';
 import { IntegrationsPanel } from './dashboard/IntegrationsPanel';
 
@@ -825,6 +826,9 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           </div>
         </div>
       </div>
+
+      {/* Insights Strip (L4/L5 face for the Submission Chaser agent, migration 37) */}
+      <InsightsStrip tenantId={tenantId ?? DEFAULT_TENANT_ID} />
 
       {/* Tabs Switcher Navigation */}
       <div className="flex border-b border-slate-200 overflow-x-auto gap-4 scrollbar-none">
