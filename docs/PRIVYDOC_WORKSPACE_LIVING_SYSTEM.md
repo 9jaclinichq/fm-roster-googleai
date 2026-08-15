@@ -16,7 +16,7 @@ It serves two kinds of doctor:
 
 Everything a doctor does here is watched over by two engines that behave like a mentor and a coordinator: **PrivyBrain-2** (academic and clinical-writing mind) and **BabsBrain-2** (operational mind). Their job is to turn what the doctor records into what the doctor needs next.
 
-Operator: 9JaClinic Limited. Product owner: Dr Babatunde Olanipekun. Domain: workspace.privydoc.com.ng (open question: fold into privydoc.com.ng; see section 9). Stack: Vite/React frontend, Node/Express backend, Supabase, Flutterwave.
+Operator: 9JaClinic Limited. Product owner: Dr Babatunde Olanipekun. Domain: workspace.privydoc.com.ng (open question: fold into privydoc.com.ng; see section 10). Stack: Vite/React frontend, Node/Express backend, Supabase, Flutterwave.
 
 Design intent, in one line: **from the smallest form field to the whole organisation, from static AI helpers to autonomous learning agents, everything runs as one living professional workspace — configurable to whatever kind of doctor or doctor organisation is using it.**
 
@@ -233,7 +233,65 @@ Rules for integrations:
 
 ---
 
-## 8. Working rules for Claude Code
+## 8. Seeded templates and integrations catalog
+
+Claude Code asked what to seed the template library and integrations catalog with. Answer: seed it wide and generically, then layer one account's real, in-progress work on top as *instance data*, never as module code. The two are answered separately below and must stay separated in the repo.
+
+### 8.1 A reusable primitive: the scored rubric
+
+Several very different documents in professional life turn out to be the same shape: a sectioned form where each item is graded on a fixed scale, sections total to a threshold, and a final score maps to a recommendation. Fellowship dissertation and proposal assessments are one example; so are OSCE mark sheets, credentialing checklists, competency sign-offs, audit scorecards, and peer-review forms in any field. Build this once as a **Scored Rubric** primitive inside Forms & pipelines, not as a one-off "dissertation form":
+
+```
+rubric.template     (id, name, sections[], scale definition, pass logic)
+rubric.section       (name, items[], max points, pass threshold, "all items required" flag)
+rubric.item          (label, guidance text, scale (e.g. 0-3, 0-2, 0-10), weight)
+rubric.instance       (rubric_template_id, subject_ref, assessor, scores[], section_totals, final_score, recommendation)
+```
+
+Pipeline: `rubric.instance` submitted → BabsBrain-2 computes section totals, applies pass thresholds, flags any zero-scored required item, proposes the recommendation band → org admin or assessor confirms. This one primitive, configured differently, covers a dissertation proposal assessor's guide, a full dissertation assessment (with per-chapter word-count checks and a defence sub-score), an OSCE station, a credentialing audit, or a journal's peer-review form. None of that domain knowledge lives in code; it lives in the rubric template's sections and items, supplied as seed data (8.2) or authored by any org admin.
+
+### 8.2 Global seed template library (available to every tenant, exhaustive over time)
+
+These ship as default, editable instances of existing modules — not new modules, not hard-coded logic. An org admin or individual can use one as-is, clone and edit it, or ignore it. Keep this library growing; it is meant to be broad, not scoped to any one specialty.
+
+**Research & academic tracks**
+- Fellowship/postgraduate dissertation track: proposal → corrections → data collection → write-up → defence, as a staged track with a title-page template, a corrections-synopsis template, and a scored-rubric instance at each review point.
+- Case-based portfolio / casebook: a multi-case container (title page, declaration, certification, list of cases by theme, abbreviations, reference values) holding many individual case instances.
+- Individual clinical case template: presenting complaint → history (presenting complaint, review of systems, past medical/surgical, drug/allergy, family & social history with genogram/ecomap) → examination by system → provisional and differential diagnosis → management → dated follow-up entries. Usable for any specialty, any training programme, any case-based learning requirement — not specific to one college or one discipline.
+- Case-selection guide: a short structured prompt set (why this patient, what clinical area, what evidence guided the intervention, family/social context, illness experience, relevant discipline-specific tools, relevant interventions) plus an optional case-mix planner (a table of theme vs. count) for programmes that require a spread of cases across domains.
+- Generic audit / QI project track, generic publication track, generic grant track — staged, lighter-weight versions of the same pattern.
+- Generic scored-rubric templates: proposal assessment, full-work assessment (with defence scoring), OSCE/skills sign-off, credentialing/audit checklist, peer-review form — all built on 8.1.
+
+**Scheduling**
+- Duty roster template: a combined roster covering multiple staff bands on the same grid, with per-cadre/per-band colour coding, weekday vs. weekend/holiday rules, and configurable "special coverage" rows for an outstation or satellite site.
+- Priority/on-call/supervision list, generated as a pipeline output from a duty roster's data rather than entered separately.
+- Emergency/urgent-coverage roster and satellite/outstation coverage roster, each realignable month to month from a prior month's pattern.
+- Clinic/session allocation roster (non-emergency), booking/room roster.
+
+**Forms & pipelines**
+- Leave/absence request, incident/audit report, feedback form, membership/credential renewal, generic intake/checklist form — org admin edits fields and destination pipeline per instance.
+
+**Clinical & professional writing**
+- Structured clerking template (shared with the case template above), referral letter, SOP/protocol template.
+
+**Meetings & actions**: standing meeting template with agenda, minutes, and action-tracker pipeline, usable for any recurring meeting type.
+
+None of the above should be readable in code as "WACP" or "dissertation" or "roster" logic — they are named, seeded rows in `rubric.template` / module instance tables. A future org in a different specialty or country should be able to delete every seed above and start from zero without touching a module.
+
+The integrations catalog (section 7) should be seeded just as exhaustively and just as generically: statistical analyser, literature search, literature/evidence matrix builder, reference manager, and a word-processing/long-form writing space are the immediate asks, feeding the Research & academic tracks and Clinical & professional writing modules exactly as described in section 7. Add to that catalog over time — citation-style checkers, plagiarism/similarity checkers, survey/data-collection tools, transcription tools — using the same additive, non-required pattern. None of these are specific to Dr. Olanipekun's account or to Family Medicine; they are catalog rows any tenant can connect.
+
+### 8.3 Personal instances (one account, not the seed library)
+
+Dr. Babatunde Olanipekun (Senior Registrar) is using his own individual account to continue real, in-progress work, using the seed templates above as starting points. This is instance data under his `member_id`, private to him unless he shares it into an org:
+
+- **Dissertation track** (Research & academic tracks, fellowship track instance): title "Association between Sexual Communication and Erectile Function among Married Men at UCH GOPD"; currently at the corrections stage after proposal review, with a proposal-assessment and full-assessment rubric instance attached (built on 8.1, seeded from the two WACP scoring guides supplied).
+- **Casebook** (Research & academic tracks, case-based portfolio instance): an in-progress multi-case container. One reference casebook (a completed, corrected fifteen-case example from another candidate) was supplied purely as a formatting/structure sample — it is not his data and should seed the *template*, not appear as his content. His own casebook currently holds roughly five individual case instances in progress, one of which (a stroke case in a hypertensive farmer) is fully drafted through several follow-ups and can seed the individual case template's field structure.
+- **Case-selection support**: the seven-step guideline and the specialty/case-count distribution table (both supplied) become the case-selection guide and case-mix planner seed content, attached to his casebook instance so PrivyBrain-2 can flag gaps in his specialty spread as he adds cases.
+- **Scheduling**: he has prior, detailed working knowledge of building combined duty rosters (floor + priority/on-call + emergency-coverage + outstation rows, cadre-based colour coding, month-to-month realignment from a prior month, fairness rules such as no back-to-back duty). This should inform the *seed* duty-roster template's configurability (colour coding, per-row rules, realign-from-prior-month pipeline step), not be entered as his personal roster data unless he chooses to run his department's roster through his own account.
+
+Keep 8.2 and 8.3 in different tables/seed files in the repo (e.g. `seed/templates/*.json` vs a normal member-scoped instance) so a template-library reset or export never touches his personal records, and so his personal records are never mistaken for platform defaults.
+
+## 9. Working rules for Claude Code
 
 1. **Surgical fixes.** Smallest change that resolves the issue.
 2. **Tenant first.** Any new table, route or query starts with `tenant_id`. If you cannot say which tenant owns a piece of data, stop.
@@ -251,7 +309,7 @@ Rules for integrations:
 
 ---
 
-## 9. Domain and identity
+## 10. Domain and identity
 
 Whether this stays on workspace.privydoc.com.ng or folds into privydoc.com.ng is a routing decision, not an architecture one. Either way, the neutral landing resolves tenant first, then renders the tenant's face.
 
@@ -259,7 +317,7 @@ Reserve a `privydoc_doctor_id` field on `udr.identity`. Leave it null. It exists
 
 ---
 
-## 10. Backlog framing (from the current sign-in screenshots)
+## 11. Backlog framing (from the current sign-in screenshots)
 
 - Portal is for doctors, not "residents": rename headings, helper text and copy throughout.
 - Login order: tenant → member → code, with the individual path visible at the top level.
@@ -273,9 +331,13 @@ Reserve a `privydoc_doctor_id` field on `udr.identity`. Leave it null. It exists
 - Research module currently equals one dissertation flow; generalise into academic tracks, with the current dissertation kept as one track template among many.
 - Add the integrations layer (statistical analyser, literature search, literature/evidence matrix, reference manager, writing space) as connectable, optional tools feeding the Research and Clinical & professional writing modules — not built into either module directly.
 - Audit every module, label and default template repo-wide for hospital/residency-specific wording (e.g. "resident", "ward", "consultant", "department") and move it into instance config rather than code or copy.
+- Build the scored-rubric primitive (8.1) and seed it with the supplied dissertation proposal and full-dissertation assessment guides as the first two rubric templates.
+- Seed the case-based portfolio, individual case, and case-selection templates (8.2/8.3) from the supplied casebook and case documents, keeping the reference casebook as template-structure input only.
+- Seed the duty-roster template's configurability (colour coding, per-row rules, month realignment pipeline) from known roster-building rules, without entering any specific month's roster as seed data.
+- Stand up the integrations catalog with the five requested integrations (statistical analyser, literature search, literature/evidence matrix, reference manager, writing space) as connectable, optional, not-yet-required entries.
 
 ---
 
-## 11. The test
+## 12. The test
 
 Can this component be drawn as one numbered part on the exploded view, with a tenant on it, an arrow in and an arrow out — and would it still make sense drawn for a solo doctor, a private clinic, and a hospital department alike? If yes, it belongs to the living workspace. If not, it is dead tissue or it is scoped too narrowly.
