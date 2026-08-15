@@ -1,5 +1,5 @@
-import { databaseService } from '../databaseService';
-import { ResearchTemplate, ResearchReferencingStyle } from '../../types';
+import { databaseService } from '../../../lib/databaseService';
+import { ResearchTemplate, ResearchReferencingStyle } from '../../../types';
 
 // Template customization/forking logic for the Universal Research Engine
 // (migration 13). Kept separate from databaseService.ts's plain CRUD

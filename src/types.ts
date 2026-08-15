@@ -608,7 +608,7 @@ export interface ResearchCorrectionLog {
 }
 
 // A folder or subfolder in the default 7-folder drive taxonomy
-// (src/lib/research/folderStructure.ts). Recursive, but the current
+// (src/modules/research/lib/folderStructure.ts). Recursive, but the current
 // taxonomy is only 2 levels deep (folder -> subfolder).
 export interface FolderNode {
   name: string;

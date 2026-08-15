@@ -1,4 +1,4 @@
-import { FolderNode } from '../../types';
+import { FolderNode } from '../../../types';
 
 // Default 7-folder Drive taxonomy stamped onto every new research
 // workspace's `folder_tree` column at creation time (see

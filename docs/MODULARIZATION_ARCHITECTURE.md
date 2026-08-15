@@ -312,6 +312,21 @@ order, each phase independently shippable and manually browser-verified before t
    Dissertation (create flow renders) → the public `/guest-review/:token` route (renders its real
    "invalid token" error state, not a broken-import crash) — no console errors beyond the expected
    "invite not found" warning for the deliberately-fake test token.
+   **`research` DONE (2026-08-15)**: `ResearchWorkspaceView.tsx` → `modules/research/components/`;
+   `folderStructure.ts`/`rubricEngine.ts`/`templateEngine.ts` (from `src/lib/research/`, now
+   removed) and `researchCopilot.ts` (from `src/lib/ai/`) → `modules/research/lib/`. Notable
+   reverse dependency, left as-is per Phase 3's pure-relocation scope (Phase 4's `databaseService.ts`
+   split is where this gets properly resolved): `databaseService.ts` itself imports
+   `buildDefaultFolderTree` from `modules/research/lib/folderStructure.ts` — the shared god-file
+   reaching into a module's lib, not the other way around. `TemplateManagerView.tsx` (stays in
+   `src/components/` until `org-admin`'s turn) also updated its `forkTemplate` import. A first
+   `tsc --noEmit` pass caught one real miss — `ResearchWorkspaceView.tsx`'s second, multi-line
+   `../types` import was overlooked when only the first import block was fixed — corrected before
+   the pass came back clean, which is exactly why every phase runs `tsc` rather than trusting the
+   sweep alone. `npm run build` clean, identical bundle shape. Live-verified: resident login →
+   Research Engine → "New Research Workspace" modal, whose Template dropdown populated with real
+   options (proving the relocated `templateEngine.ts`'s `loadAvailableTemplates()` call still
+   resolves), closed without creating test data. No console errors.
 4. **`databaseService.ts` split**, module-by-module, following the same order — each module's
    service slice extracted only after that module's components have already moved, so the diff per
    step stays reviewable.

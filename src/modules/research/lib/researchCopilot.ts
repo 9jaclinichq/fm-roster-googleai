@@ -1,6 +1,6 @@
-import { databaseService, supabase, DEFAULT_TENANT_ID } from '../databaseService';
-import { ResearchTemplate, ResearchStudyDesign } from '../../types';
-import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../research/rubricEngine';
+import { databaseService, supabase, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
+import { ResearchTemplate, ResearchStudyDesign } from '../../../types';
+import { validatePicoTitle, validateWordCap, validateCitationSyntax } from './rubricEngine';
 
 // Client-side provider for the Universal Research Engine's AI Copilot
 // Panel (ResearchWorkspaceView.tsx). Same "Edge-Function-first, heuristic-

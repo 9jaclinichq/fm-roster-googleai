@@ -71,7 +71,7 @@ import {
   PaymentCheckoutResult,
   DoctorProfile,
 } from '../types';
-import { buildDefaultFolderTree } from './research/folderStructure';
+import { buildDefaultFolderTree } from '../modules/research/lib/folderStructure';
 
 // Read from import.meta.env
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -2256,7 +2256,7 @@ export const databaseService = {
 
   // --- UNIVERSAL RESEARCH ENGINE (migration 13) ---
   // Plain CRUD only — fork/edit business logic lives in
-  // src/lib/research/templateEngine.ts, which calls these.
+  // src/modules/research/lib/templateEngine.ts, which calls these.
   async getResearchTemplates(): Promise<ResearchTemplate[]> {
     checkSupabase();
 
@@ -2400,7 +2400,7 @@ export const databaseService = {
   },
 
   // Stamps the default 7-folder Drive taxonomy onto every new workspace —
-  // see src/lib/research/folderStructure.ts.
+  // see src/modules/research/lib/folderStructure.ts.
   async createResearchWorkspace(entry: {
     tenant_id: string | null;
     workforce_id: string | null;

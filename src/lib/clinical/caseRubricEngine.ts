@@ -4,7 +4,7 @@ import { CasebookTemplate, PccmFramework } from '../../types';
 // validators, for the Real-Time WACP 100-Point Scorecard in
 // CasebookWorkspaceView (live gauges as a resident types — no network
 // round-trip per keystroke). Same independent-implementation pattern as
-// src/lib/research/rubricEngine.ts vs. researchRubric.ts.
+// src/modules/research/lib/rubricEngine.ts vs. researchRubric.ts.
 
 export interface ValidationResult {
   valid: boolean;

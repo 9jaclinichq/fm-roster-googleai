@@ -50,7 +50,7 @@ const ConsultantReviewView = lazy(() =>
   import('./modules/consultant-review/components/ConsultantReviewView').then(m => ({ default: m.ConsultantReviewView }))
 );
 const ResearchWorkspaceView = lazy(() =>
-  import('./components/ResearchWorkspaceView').then(m => ({ default: m.ResearchWorkspaceView }))
+  import('./modules/research/components/ResearchWorkspaceView').then(m => ({ default: m.ResearchWorkspaceView }))
 );
 const CasebookWorkspaceView = lazy(() =>
   import('./components/CasebookWorkspaceView').then(m => ({ default: m.CasebookWorkspaceView }))

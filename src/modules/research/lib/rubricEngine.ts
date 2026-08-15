@@ -1,4 +1,4 @@
-import { ResearchTemplate } from '../../types';
+import { ResearchTemplate } from '../../../types';
 
 // Client-side mirror of supabase/functions/_shared/researchRubric.ts's
 // validators, for the Real-Time Rubric Scorecard in ResearchWorkspaceView

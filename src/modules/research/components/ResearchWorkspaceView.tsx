@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { loadAvailableTemplates, forkTemplate, editTemplate, TemplateEditPayload } from '../lib/research/templateEngine';
-import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../lib/research/rubricEngine';
-import { researchCopilot, DraftAuditResult, LiteratureMatrixResult, TableShellsResult, ResearchCopilotSource } from '../lib/ai/researchCopilot';
-import { useWorkspaceQuota } from '../modules/billing/lib/useWorkspaceQuota';
-import { UpgradeCheckoutModal } from '../modules/billing/components/UpgradeCheckoutModal';
+import { databaseService } from '../../../lib/databaseService';
+import { loadAvailableTemplates, forkTemplate, editTemplate, TemplateEditPayload } from '../lib/templateEngine';
+import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../lib/rubricEngine';
+import { researchCopilot, DraftAuditResult, LiteratureMatrixResult, TableShellsResult, ResearchCopilotSource } from '../lib/researchCopilot';
+import { useWorkspaceQuota } from '../../billing/lib/useWorkspaceQuota';
+import { UpgradeCheckoutModal } from '../../billing/components/UpgradeCheckoutModal';
 import {
   ResearchWorkspace,
   ResearchTemplate,
@@ -14,7 +14,7 @@ import {
   ResearchCorrectionSource,
   ResearchStudyDesign,
   FolderNode,
-} from '../types';
+} from '../../../types';
 import {
   FolderKanban, BookOpen, ClipboardCheck, Sparkles, Plus, X, ChevronRight, ChevronDown,
   Folder, FileText, Calculator, Table2, RefreshCw, Save, CheckCircle2, AlertTriangle,

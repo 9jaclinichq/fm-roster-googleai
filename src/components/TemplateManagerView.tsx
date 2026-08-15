@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
-import { forkTemplate } from '../lib/research/templateEngine';
+import { forkTemplate } from '../modules/research/lib/templateEngine';
 import { TenantUpgradeCheckoutModal } from './TenantUpgradeCheckoutModal';
 import { ResearchTemplate, CasebookTemplate, CasebookFrameworkType, VivaVignette } from '../types';
 import { BookOpen, ClipboardList, Plus, Trash2, RefreshCw, GitFork, X, Globe, Building2, Mic, Lock } from 'lucide-react';
