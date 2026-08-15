@@ -120,6 +120,24 @@ export interface OrgGroup {
   created_at: string;
 }
 
+// Org-defined workforce category vocabulary (migration 39) — replaces the
+// previously hardcoded global `Category` union ('Registrar' | 'Senior
+// Registrar' | 'Medical Officer') with a tenant-scoped table. Seeded
+// per-tenant with those 3 legacy labels (is_system_default: true, editable
+// but not deletable); a Chief can also create fully custom categories for
+// their own org's grade structure. Additive only — `workforce.category`
+// (text) and the `Category` union stay in place; no existing component
+// reads/writes `workforce.category_id` yet (followup, not this pass).
+export interface WorkforceCategory {
+  id: string;
+  tenant_id: string;
+  category_key: string;
+  label: string;
+  description: string | null;
+  is_system_default: boolean;
+  created_at: string;
+}
+
 export interface Rotation {
   id: string;
   name: string;

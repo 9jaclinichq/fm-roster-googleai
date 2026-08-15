@@ -26,6 +26,7 @@ import {
   ReviewTargetType,
   ReviewStatus,
   OrgGroup,
+  WorkforceCategory,
   DelegatedRole,
   DissertationMilestoneWithContext,
   CaseReportWithWorkforce,
@@ -1180,6 +1181,77 @@ export const databaseService = {
 
     if (error) {
       console.warn('Error deleting org group:', error);
+      throw error;
+    }
+    return !!data;
+  },
+
+  // --- ORG-DEFINED WORKFORCE CATEGORIES (migration 39) ---
+  // Additive scaffold only — mirrors listOrgGroups/createOrgGroup/updateOrgGroup/
+  // deleteOrgGroup's exact pattern. No existing UI reads/writes
+  // workforce.category_id yet; that rewiring is a deliberate followup, not
+  // part of this pass (see migration 39's header).
+  async listWorkforceCategories(tenantId: string): Promise<WorkforceCategory[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('workforce_categories')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('is_system_default', { ascending: false })
+      .order('label', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching workforce categories:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async createWorkforceCategory(adminCode: string, categoryKey: string, label: string, description: string): Promise<WorkforceCategory> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_create_workforce_category', {
+      p_admin_code: adminCode,
+      p_category_key: categoryKey,
+      p_label: label,
+      p_description: description,
+    });
+
+    if (error) {
+      console.warn('Error creating workforce category:', error);
+      throw error;
+    }
+    return data as WorkforceCategory;
+  },
+
+  async updateWorkforceCategory(adminCode: string, categoryId: string, label: string, description: string): Promise<WorkforceCategory> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_update_workforce_category', {
+      p_admin_code: adminCode,
+      p_category_id: categoryId,
+      p_label: label,
+      p_description: description,
+    });
+
+    if (error) {
+      console.warn('Error updating workforce category:', error);
+      throw error;
+    }
+    return data as WorkforceCategory;
+  },
+
+  async deleteWorkforceCategory(adminCode: string, categoryId: string): Promise<boolean> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_delete_workforce_category', {
+      p_admin_code: adminCode,
+      p_category_id: categoryId,
+    });
+
+    if (error) {
+      console.warn('Error deleting workforce category:', error);
       throw error;
     }
     return !!data;
