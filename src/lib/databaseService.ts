@@ -25,7 +25,7 @@ import {
   ConsultantReview,
   ReviewTargetType,
   ReviewStatus,
-  SubadminRoleId,
+  OrgGroup,
   DelegatedRole,
   DissertationMilestoneWithContext,
   CaseReportWithWorkforce,
@@ -608,19 +608,19 @@ export const databaseService = {
     return data || [];
   },
 
-  async getUserRolesForWorkforce(workforceId: string): Promise<UserRole[]> {
+  async getUserRolesForWorkforce(workforceId: string): Promise<DelegatedRole[]> {
     checkSupabase();
 
     const { data, error } = await supabase!
       .from('user_roles')
-      .select('*')
+      .select('*, workforce(full_name, category), org_group:org_groups(*)')
       .eq('workforce_id', workforceId);
 
     if (error) {
       console.warn('Error fetching user roles:', error);
       throw error;
     }
-    return data || [];
+    return (data || []) as unknown as DelegatedRole[];
   },
 
   // --- ROTATIONS ---
@@ -1116,15 +1116,85 @@ export const databaseService = {
     }
   },
 
+  // --- ORG-DEFINED GROUPS (migration 36) ---
+  async listOrgGroups(tenantId: string): Promise<OrgGroup[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!
+      .from('org_groups')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('is_system_default', { ascending: false })
+      .order('label', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching org groups:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async createOrgGroup(adminCode: string, groupKey: string, label: string, description: string, grantsReviewApproval: boolean): Promise<OrgGroup> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_create_org_group', {
+      p_admin_code: adminCode,
+      p_group_key: groupKey,
+      p_label: label,
+      p_description: description,
+      p_grants_review_approval: grantsReviewApproval,
+    });
+
+    if (error) {
+      console.warn('Error creating org group:', error);
+      throw error;
+    }
+    return data as OrgGroup;
+  },
+
+  async updateOrgGroup(adminCode: string, groupId: string, label: string, description: string, grantsReviewApproval: boolean): Promise<OrgGroup> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_update_org_group', {
+      p_admin_code: adminCode,
+      p_group_id: groupId,
+      p_label: label,
+      p_description: description,
+      p_grants_review_approval: grantsReviewApproval,
+    });
+
+    if (error) {
+      console.warn('Error updating org group:', error);
+      throw error;
+    }
+    return data as OrgGroup;
+  },
+
+  async deleteOrgGroup(adminCode: string, groupId: string): Promise<boolean> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_delete_org_group', {
+      p_admin_code: adminCode,
+      p_group_id: groupId,
+    });
+
+    if (error) {
+      console.warn('Error deleting org group:', error);
+      throw error;
+    }
+    return !!data;
+  },
+
   // --- SUBADMIN ROLE DELEGATION (Chief-only, admin-code gated) ---
-  async getDelegatedRoles(): Promise<DelegatedRole[]> {
+  async getDelegatedRoles(tenantId: string): Promise<DelegatedRole[]> {
     checkSupabase();
 
     const { data, error } = await supabase!
       .from('user_roles')
-      .select('*, workforce(full_name, category)')
-      .in('role_id', ['hod', 'rtc', 'cme_coord', 'consultant'])
-      .order('role_id', { ascending: true });
+      .select('*, workforce!inner(full_name, category, tenant_id), org_group:org_groups(*)')
+      .eq('workforce.tenant_id', tenantId)
+      .not('org_group_id', 'is', null)
+      .order('created_at', { ascending: true });
 
     if (error) {
       console.warn('Error fetching delegated roles:', error);
@@ -1133,13 +1203,13 @@ export const databaseService = {
     return (data || []) as unknown as DelegatedRole[];
   },
 
-  async assignUserRole(adminCode: string, workforceId: string, roleId: SubadminRoleId): Promise<void> {
+  async assignUserRole(adminCode: string, workforceId: string, orgGroupId: string): Promise<void> {
     checkSupabase();
 
     const { error } = await supabase!.rpc('chief_assign_user_role', {
       p_admin_code: adminCode,
       p_workforce_id: workforceId,
-      p_role_id: roleId,
+      p_org_group_id: orgGroupId,
     });
 
     if (error) {

@@ -67,8 +67,6 @@ const SaaSOperatorConsoleView = lazy(() =>
   import('./components/SaaSOperatorConsoleView').then(m => ({ default: m.SaaSOperatorConsoleView }))
 );
 
-const SUBADMIN_ROLE_IDS = ['hod', 'rtc', 'cme_coord', 'consultant', 'super_admin'];
-
 // Silent backward-compatibility redirects for pre-rebrand URLs: any
 // bookmarked /resident/* (or /resident-form) path lands on its /workspace/*
 // equivalent with the query string preserved. See src/modules/shared/config/branding.ts
@@ -218,7 +216,12 @@ function MainAppContent() {
   const refreshSubadminRoles = async (resident: ResidentSession) => {
     try {
       const roles = await databaseService.getUserRolesForWorkforce(resident.id);
-      const subadminRoles = roles.map(r => r.role_id).filter(r => SUBADMIN_ROLE_IDS.includes(r));
+      // Migration 36: approval authority now comes from the org-defined
+      // group's own grants_review_approval flag (or the fixed
+      // super_admin platform role), not a hardcoded role_id list.
+      const subadminRoles = roles
+        .filter(r => r.role_id === 'super_admin' || r.org_group?.grants_review_approval === true)
+        .map(r => r.org_group?.label || r.role_id || 'authorized');
       const updated = { ...resident, subadminRoles };
       setCurrentResident(updated);
       localStorage.setItem('fm_session_resident', JSON.stringify(updated));

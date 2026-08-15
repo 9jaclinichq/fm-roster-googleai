@@ -31,18 +31,9 @@ const TenantCustomizationView = lazy(() =>
 const TemplateManagerView = lazy(() =>
   import('./dashboard/TemplateManagerView').then(m => ({ default: m.TemplateManagerView }))
 );
-import { Collection, WorkforceMember, SubmissionWithWorkforce, Category, Submission, Announcement, AnnouncementCategory, DelegatedRole, SubadminRoleId } from '../../../types';
+import { Collection, WorkforceMember, SubmissionWithWorkforce, Category, Submission, Announcement, AnnouncementCategory, DelegatedRole, OrgGroup } from '../../../types';
 import { useTerminology } from '../../shared/terminology';
 import { CheckCircle, X, RefreshCw } from 'lucide-react';
-
-// Kept in sync with the identical list in dashboard/RoleDelegationPanel.tsx —
-// needed here only for the assign-role success toast's role label lookup.
-const SUBADMIN_ROLES: { value: SubadminRoleId; label: string }[] = [
-  { value: 'hod', label: 'Head of Department' },
-  { value: 'rtc', label: 'Rotation/Training Coordinator' },
-  { value: 'cme_coord', label: 'CME Coordinator' },
-  { value: 'consultant', label: 'Consultant' },
-];
 
 interface ChiefDashboardViewProps {
   onLogout: () => void;
@@ -67,13 +58,21 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'settings'>('submissions');
 
-  // Role delegation state
+  // Role delegation state (migration 36 — org-defined groups, replacing the
+  // previously hardcoded 4-value subadmin role list)
   const [delegatedRoles, setDelegatedRoles] = useState<DelegatedRole[]>([]);
+  const [orgGroups, setOrgGroups] = useState<OrgGroup[]>([]);
   const [delegateWorkforceId, setDelegateWorkforceId] = useState<string>('');
-  const [delegateRole, setDelegateRole] = useState<SubadminRoleId>('hod');
-  const [delegateRoleFilter, setDelegateRoleFilter] = useState<SubadminRoleId | 'All'>('All');
+  const [delegateRole, setDelegateRole] = useState<string>('');
+  const [delegateRoleFilter, setDelegateRoleFilter] = useState<string>('All');
   const [delegateError, setDelegateError] = useState<string>('');
   const [isDelegating, setIsDelegating] = useState<boolean>(false);
+  const [newGroupKey, setNewGroupKey] = useState<string>('');
+  const [newGroupLabel, setNewGroupLabel] = useState<string>('');
+  const [newGroupDescription, setNewGroupDescription] = useState<string>('');
+  const [newGroupGrantsApproval, setNewGroupGrantsApproval] = useState<boolean>(false);
+  const [newGroupError, setNewGroupError] = useState<string>('');
+  const [isCreatingGroup, setIsCreatingGroup] = useState<boolean>(false);
 
   // Announcements admin state
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -173,8 +172,14 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
       const ann = await databaseService.getAnnouncements(tid);
       setAnnouncements(ann);
 
-      // 6. Get delegated subadmin roles
-      const roles = await databaseService.getDelegatedRoles();
+      // 6. Get org-defined groups + delegated subadmin roles (migration 36)
+      const groups = await databaseService.listOrgGroups(tid);
+      setOrgGroups(groups);
+      if (!delegateRole && groups.length > 0) {
+        setDelegateRole(groups.find(g => g.group_key === 'hod')?.id || groups[0].id);
+      }
+
+      const roles = await databaseService.getDelegatedRoles(tid);
       setDelegatedRoles(roles);
 
       if (adminCode) {
@@ -535,22 +540,26 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
       setDelegateError('Please select a workforce member.');
       return;
     }
-    if (delegatedRoles.some(r => r.workforce_id === delegateWorkforceId && r.role_id === delegateRole)) {
-      setDelegateError('This member already holds that role.');
+    if (!delegateRole) {
+      setDelegateError('Please select a group.');
+      return;
+    }
+    if (delegatedRoles.some(r => r.workforce_id === delegateWorkforceId && r.org_group_id === delegateRole)) {
+      setDelegateError('This member already holds that group.');
       return;
     }
 
     setIsDelegating(true);
     try {
       await databaseService.assignUserRole(adminCode, delegateWorkforceId, delegateRole);
-      const roles = await databaseService.getDelegatedRoles();
+      const roles = await databaseService.getDelegatedRoles(tenantId ?? DEFAULT_TENANT_ID);
       setDelegatedRoles(roles);
       const member = workforce.find(w => w.id === delegateWorkforceId);
-      triggerSuccess(`${member?.full_name || 'Member'} delegated as ${SUBADMIN_ROLES.find(r => r.value === delegateRole)?.label}.`);
+      triggerSuccess(`${member?.full_name || 'Member'} delegated as ${orgGroups.find(g => g.id === delegateRole)?.label}.`);
       setDelegateWorkforceId('');
     } catch (err) {
       console.warn(err);
-      setDelegateError('Failed to assign role.');
+      setDelegateError(err instanceof Error ? err.message : 'Failed to assign role.');
     } finally {
       setIsDelegating(false);
     }
@@ -562,9 +571,44 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
     try {
       await databaseService.removeUserRole(adminCode, role.id);
       setDelegatedRoles(prev => prev.filter(r => r.id !== role.id));
-      triggerSuccess(`Revoked ${role.role_id} role from ${role.workforce?.full_name || 'member'}.`);
+      triggerSuccess(`Revoked ${role.org_group?.label || role.role_id} from ${role.workforce?.full_name || 'member'}.`);
     } catch (err) {
       console.warn(err);
+    }
+  };
+
+  // Org Groups: Create a custom group (migration 36)
+  const handleCreateOrgGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setNewGroupError('');
+
+    if (!adminCode) {
+      setNewGroupError('Session expired. Please log in again.');
+      return;
+    }
+    if (!newGroupKey.trim() || !/^[a-z0-9_]{2,32}$/.test(newGroupKey.trim())) {
+      setNewGroupError('Group key must be 2-32 lowercase letters, numbers, or underscores.');
+      return;
+    }
+    if (!newGroupLabel.trim()) {
+      setNewGroupError('Label is required.');
+      return;
+    }
+
+    setIsCreatingGroup(true);
+    try {
+      const created = await databaseService.createOrgGroup(adminCode, newGroupKey.trim(), newGroupLabel.trim(), newGroupDescription.trim(), newGroupGrantsApproval);
+      setOrgGroups(prev => [...prev, created].sort((a, b) => (a.is_system_default === b.is_system_default ? a.label.localeCompare(b.label) : a.is_system_default ? -1 : 1)));
+      setNewGroupKey('');
+      setNewGroupLabel('');
+      setNewGroupDescription('');
+      setNewGroupGrantsApproval(false);
+      triggerSuccess(`Group "${created.label}" created.`);
+    } catch (err) {
+      console.warn(err);
+      setNewGroupError(err instanceof Error ? err.message : 'Failed to create group.');
+    } finally {
+      setIsCreatingGroup(false);
     }
   };
 
@@ -1014,6 +1058,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         {activeTab === 'roles' && (
           <RoleDelegationPanel
             delegatedRoles={delegatedRoles}
+            orgGroups={orgGroups}
             delegateRoleFilter={delegateRoleFilter}
             setDelegateRoleFilter={setDelegateRoleFilter}
             workforce={workforce}
@@ -1025,6 +1070,17 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
             isDelegating={isDelegating}
             handleAssignRole={handleAssignRole}
             handleRevokeRole={handleRevokeRole}
+            newGroupKey={newGroupKey}
+            setNewGroupKey={setNewGroupKey}
+            newGroupLabel={newGroupLabel}
+            setNewGroupLabel={setNewGroupLabel}
+            newGroupDescription={newGroupDescription}
+            setNewGroupDescription={setNewGroupDescription}
+            newGroupGrantsApproval={newGroupGrantsApproval}
+            setNewGroupGrantsApproval={setNewGroupGrantsApproval}
+            newGroupError={newGroupError}
+            isCreatingGroup={isCreatingGroup}
+            handleCreateOrgGroup={handleCreateOrgGroup}
           />
         )}
 

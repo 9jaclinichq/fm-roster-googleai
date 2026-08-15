@@ -95,8 +95,28 @@ export interface UserRole {
   id: string;
   auth_user_id: string | null;
   workforce_id: string | null;
-  role_id: RoleId;
+  // Nullable since migration 36 — a role assignment carries EITHER the
+  // fixed platform-level role_id ('resident'/'super_admin') OR a
+  // tenant-scoped org_group_id, never neither (see the DB CHECK
+  // constraint). Delegated subadmin-style roles now use org_group_id.
+  role_id: RoleId | null;
+  org_group_id: string | null;
   email: string | null;
+  created_at: string;
+}
+
+// Org-defined group vocabulary (migration 36) — replaces the previously
+// hardcoded global 4-value subadmin role list. Seeded per-tenant with the
+// 4 legacy labels (is_system_default: true, editable but not deletable);
+// a Chief can also create fully custom groups for their own org structure.
+export interface OrgGroup {
+  id: string;
+  tenant_id: string;
+  group_key: string;
+  label: string;
+  description: string | null;
+  grants_review_approval: boolean;
+  is_system_default: boolean;
   created_at: string;
 }
 
@@ -260,7 +280,6 @@ export interface VivaVignette {
 
 export type ReviewTargetType = 'dissertation_milestone' | 'case_report';
 export type ReviewStatus = 'approved' | 'revisions_requested';
-export type SubadminRoleId = Exclude<RoleId, 'super_admin' | 'resident'>;
 
 export interface ConsultantReview {
   id: string;
@@ -376,6 +395,7 @@ export interface DelegatedRole extends UserRole {
     full_name: string;
     category: Category;
   } | null;
+  org_group: OrgGroup | null;
 }
 
 export interface DissertationMilestoneWithContext extends DissertationMilestone {
