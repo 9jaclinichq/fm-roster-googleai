@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { ShieldAlert, AlertCircle, Key, RefreshCw } from 'lucide-react';
-import { useTerminology } from '../lib/terminology';
+import { useTerminology } from '../modules/shared/terminology';
 
 interface ChiefLoginViewProps {
   onLoginSuccess: (adminCode: string, tenantId: string, tenantName: string) => void;

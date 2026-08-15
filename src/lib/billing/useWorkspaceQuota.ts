@@ -6,13 +6,13 @@ import {
   AI_QUOTA_WINDOW_DAYS,
   WORKSPACE_TIERS,
   WorkspaceTier,
-} from '../../config/tiers';
+} from '../../modules/shared/config/tiers';
 
 // Client-side AI Copilot quota state for one workforce member: counts the
 // member's Research/Casebook AI actions (ai_action_logs) over the rolling
 // window and resolves their tier from user_subscriptions. UI-layer gating
 // only — the tenant-level quota RPC inside the copilot Edge Functions
-// remains the authoritative backstop (see src/config/tiers.ts).
+// remains the authoritative backstop (see src/modules/shared/config/tiers.ts).
 
 export interface WorkspaceQuotaState {
   loading: boolean;

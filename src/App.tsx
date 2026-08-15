@@ -1,8 +1,8 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { Navbar } from './components/Navbar';
-import { DevHelper } from './components/DevHelper';
-import { LoadingShell } from './components/LoadingShell';
+import { Navbar } from './modules/shared/ui/Navbar';
+import { DevHelper } from './modules/shared/ui/DevHelper';
+import { LoadingShell } from './modules/shared/ui/LoadingShell';
 import { ResidentLoginView } from './components/ResidentLoginView';
 import { ResidentFormView } from './components/ResidentFormView';
 import { AnnouncementBoardView } from './components/AnnouncementBoardView';
@@ -12,8 +12,8 @@ import { DoctorHomeView } from './components/DoctorHomeView';
 import { AdminPortalChooserView } from './components/AdminPortalChooserView';
 import { CreateOrganizationView } from './components/CreateOrganizationView';
 import { databaseService, DEFAULT_TENANT_ID } from './lib/databaseService';
-import { TerminologyProvider } from './lib/terminology';
-import { getActiveBrand, getFooterBrand } from './config/branding';
+import { TerminologyProvider } from './modules/shared/terminology';
+import { getActiveBrand, getFooterBrand } from './modules/shared/config/branding';
 import { WorkforceMember } from './types';
 
 // Code-split the heavier resident views — each pulls its own weight in
@@ -70,7 +70,7 @@ const SUBADMIN_ROLE_IDS = ['hod', 'rtc', 'cme_coord', 'consultant', 'super_admin
 
 // Silent backward-compatibility redirects for pre-rebrand URLs: any
 // bookmarked /resident/* (or /resident-form) path lands on its /workspace/*
-// equivalent with the query string preserved. See src/config/branding.ts
+// equivalent with the query string preserved. See src/modules/shared/config/branding.ts
 // for the rebrand context.
 function LegacyResidentRedirect() {
   const location = useLocation();
@@ -116,7 +116,7 @@ function MainAppContent() {
   const brand = getActiveBrand();
 
   // Keep the tab title in sync with the active brand profile (B2C
-  // independent-doctor vs. B2B institutional — see src/config/branding.ts).
+  // independent-doctor vs. B2B institutional — see src/modules/shared/config/branding.ts).
   useEffect(() => {
     document.title = brand.productName;
   }, [brand.productName]);

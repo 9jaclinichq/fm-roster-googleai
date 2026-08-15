@@ -1,8 +1,8 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Stethoscope, ChevronRight } from 'lucide-react';
-import { getActiveBrand } from '../config/branding';
-import { useTerminology } from '../lib/terminology';
+import { getActiveBrand } from '../modules/shared/config/branding';
+import { useTerminology } from '../modules/shared/terminology';
 
 // Landing chooser between the two, independent identity tracks this app
 // supports — see supabase/migrations/18_individual_doctor_identity.sql:
@@ -10,7 +10,7 @@ import { useTerminology } from '../lib/terminology';
 //   - Individual doctor: new self-service email+password flow.
 // Since the doc.*/workspace.* domain split was retired, this is now the
 // ONLY place that split is decided — no hostname-based pre-highlighting,
-// both paths are presented neutrally (see src/config/branding.ts).
+// both paths are presented neutrally (see src/modules/shared/config/branding.ts).
 export const AuthLandingView: React.FC = () => {
   const navigate = useNavigate();
   const brand = getActiveBrand();

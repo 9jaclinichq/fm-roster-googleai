@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { WorkforceMember, Tenant } from '../types';
 import { KeyRound, User, ChevronDown, Sparkles, Check, AlertCircle, Building2, Mail } from 'lucide-react';
-import { useTerminology } from '../lib/terminology';
+import { useTerminology } from '../modules/shared/terminology';
 
 interface ResidentLoginViewProps {
   onLoginSuccess: (resident: { id: string; name: string; category: string; tenant_id?: string }) => void;

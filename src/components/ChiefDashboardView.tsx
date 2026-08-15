@@ -1,6 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
-import { LoadingShell } from './LoadingShell';
+import { LoadingShell } from '../modules/shared/ui/LoadingShell';
 
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
 // only needed when the Chief actually opens the Knowledge Packs tab.
@@ -24,7 +24,7 @@ const TemplateManagerView = lazy(() =>
   import('./TemplateManagerView').then(m => ({ default: m.TemplateManagerView }))
 );
 import { Collection, WorkforceMember, SubmissionWithWorkforce, Category, Submission, Announcement, AnnouncementCategory, DelegatedRole, SubadminRoleId } from '../types';
-import { useTerminology } from '../lib/terminology';
+import { useTerminology } from '../modules/shared/terminology';
 import {
   Users,
   Clock,

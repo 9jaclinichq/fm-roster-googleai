@@ -139,7 +139,7 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ ow
 
   // AI Copilot feature gating — free tier gets a rolling-window allowance,
   // exhaustion opens the Paystack/Flutterwave upgrade checkout instead of
-  // running the action (see src/config/tiers.ts).
+  // running the action (see src/modules/shared/config/tiers.ts).
   const quota = useWorkspaceQuota(owner.id);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 

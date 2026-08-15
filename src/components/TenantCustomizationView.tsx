@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { Tenant, CallDutyRule, TenantAiAdaptationRule } from '../types';
-import { TERMINOLOGY_DEFAULTS } from '../lib/terminology';
+import { TERMINOLOGY_DEFAULTS } from '../modules/shared/terminology';
 import { Settings2, Sliders, Tag, Sparkles, RefreshCw, Plus } from 'lucide-react';
 
 // Integrated into ChiefDashboardView as a tab. Operates on the Chief's own
@@ -182,7 +182,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
           <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-100">
             <div>
               <p className="text-sm font-semibold text-slate-800">Required Case Reports Count</p>
-              <p className="text-xs text-slate-500">Note: CasebookBuilderView UI still hardcodes 15 — this setting is stored but not yet read there.</p>
+              <p className="text-xs text-slate-500">Clamped to 1–15 in CasebookBuilderView (case_reports.case_number has a DB-level CHECK BETWEEN 1 AND 15).</p>
             </div>
             <div className="flex items-center gap-2">
               <input type="number" value={caseReportsRequired} onChange={e => setCaseReportsRequired(e.target.value)} className="w-16 px-2 py-1.5 border border-slate-200 rounded-lg text-sm text-center" />
@@ -215,7 +215,8 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
       <div className="bg-white rounded-2xl border border-slate-200 p-4">
         <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-1"><Tag size={16} /> Local Terminology</h3>
         <p className="text-xs text-slate-500 mb-3">
-          Applies only to newly-built tenant-aware views in this pass, not the whole app yet — see TerminologyProvider's scope note.
+          Applies across the login flow, main navigation, Chief dashboard, roster editor, and review flow — see
+          src/modules/shared/terminology.tsx's header for exact current coverage.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
           {TERMINOLOGY_KEYS.map(key => (

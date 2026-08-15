@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { databaseService, DEFAULT_TENANT_ID } from './databaseService';
+import { databaseService, DEFAULT_TENANT_ID } from '../../lib/databaseService';
 
 // Tenant-configurable vocabulary so the same underlying schema/UI can serve
 // a residency program, a university department, or another hierarchy

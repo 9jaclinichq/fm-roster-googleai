@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { databaseService } from '../lib/databaseService';
-import { WORKSPACE_TIERS, AI_QUOTA_WINDOW_DAYS, DEFAULT_PAYMENT_PROVIDER } from '../config/tiers';
+import { WORKSPACE_TIERS, AI_QUOTA_WINDOW_DAYS, DEFAULT_PAYMENT_PROVIDER } from '../modules/shared/config/tiers';
 import { PaymentProvider } from '../types';
 import { X, Sparkles, CreditCard, RefreshCw, ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
 
@@ -136,7 +136,7 @@ export const UpgradeCheckoutModal: React.FC<UpgradeCheckoutModalProps> = ({
                 />
               </div>
               {/* Provider ordering/prominence follows DEFAULT_PAYMENT_PROVIDER
-                  (src/config/tiers.ts) — currently Flutterwave-first, with
+                  (src/modules/shared/config/tiers.ts) — currently Flutterwave-first, with
                   the other provider as a low-key secondary option. */}
               <div className="space-y-2">
                 {(

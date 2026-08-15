@@ -1,8 +1,9 @@
 # PrivyDoc Workspace — Modularization Architecture
 
-Status: **proposal / roadmap**, grounded in the actual codebase as of 2026-08-15. Nothing in this
-document has been executed yet — see "Rollout phases" for how to apply it safely, since this repo
-has no automated test suite to catch a broken mechanical refactor.
+Status: **in progress**, grounded in the actual codebase as of 2026-08-15. Phases 1 (backend
+renames) and 2 (`shared/` extraction) are done — see "Rollout phases" for exactly what shipped in
+each and how the remaining phases apply safely, since this repo has no automated test suite to
+catch a broken mechanical refactor.
 
 ## Why this exists
 
@@ -257,6 +258,21 @@ order, each phase independently shippable and manually browser-verified before t
    unrenamed — see `CLAUDE.md`'s AI/Edge Functions section for why.
 2. **`shared/` extraction** — move `Navbar`, `LoadingShell`, `DevHelper`, `branding.ts`, `tiers.ts`,
    `terminology.tsx` verbatim into `modules/shared/`; update imports. No logic changes.
+   **DONE (2026-08-15)**: all 6 files moved via `git mv` (rename-tracked) to
+   `src/modules/shared/ui/{Navbar,LoadingShell,DevHelper}.tsx`,
+   `src/modules/shared/config/{branding,tiers}.ts`, and `src/modules/shared/terminology.tsx`. Every
+   importer updated (13 files: `App.tsx`, 10 components, `useWorkspaceQuota.ts`, plus the 3 moved
+   files' own internal cross-imports to each other/`databaseService.ts`/`types.ts`), including one
+   same-directory-style import (`ChiefDashboardView.tsx`'s `'./LoadingShell'`) a first grep sweep
+   missed and a second sweep caught before it reached commit. Stale path references in comments
+   updated too. Found and fixed two genuinely stale UI claims in `TenantCustomizationView.tsx`'s
+   Local Terminology / Required Case Reports Count panels while browser-verifying this phase (one
+   said terminology only applied to 3 components — true before the later retrofit pass, not now;
+   one said `CasebookBuilderView` still hardcodes 15 — also since fixed) — unrelated to the file
+   move itself, just adjacent staleness noticed along the way. `tsc --noEmit` and `npm run build`
+   both clean. Live-verified in a real browser: resident login → dashboard nav (Navbar +
+   terminology + DevHelper) → Chief login → dashboard → Customization tab → Multi-Roster Manager
+   tab, no console errors, no broken imports.
 3. **One module at a time, smallest first**: `announcements` → `doctors` → `billing` →
    `knowledge-packs` → `roster-engine` → `dissertation` → `exam-readiness` → `viva-simulator` →
    `consultant-review` → `form` → `research` → `casebook-logbook` → `auth` → `org-admin` last

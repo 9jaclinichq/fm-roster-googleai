@@ -296,7 +296,7 @@ export interface Tenant {
   paystack_subaccount_code: string | null;
   // Tenant-configurable label overrides (e.g. {"resident": "Trainee"}) so
   // the same app can serve orgs beyond medical residency without a
-  // code-level rename. Read via src/lib/terminology.tsx. NOT yet applied
+  // code-level rename. Read via src/modules/shared/terminology.tsx. NOT yet applied
   // to most existing components — see that file's header for scope.
   terminology_overrides: Record<string, string>;
   // Granular module toggles/overrides, e.g.

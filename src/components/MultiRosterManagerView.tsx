@@ -29,7 +29,7 @@ import {
   Sparkles,
   User,
 } from 'lucide-react';
-import { useTerminology } from '../lib/terminology';
+import { useTerminology } from '../modules/shared/terminology';
 
 const EMPTY_GOP: GopClinicGrid = { slots: [], unparsed_notes: [] };
 const EMPTY_EMERGENCY: EmergencyCallGrid = { shifts: [], unparsed_notes: [] };

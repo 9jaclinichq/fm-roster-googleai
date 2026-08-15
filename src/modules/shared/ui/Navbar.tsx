@@ -1,7 +1,7 @@
 import React from 'react';
-import { databaseService } from '../lib/databaseService';
+import { databaseService } from '../../../lib/databaseService';
 import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
-import { useTerminology } from '../lib/terminology';
+import { useTerminology } from '../terminology';
 import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope } from 'lucide-react';
 
 interface NavbarProps {

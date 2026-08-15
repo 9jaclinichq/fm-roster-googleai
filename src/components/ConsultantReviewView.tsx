@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
 import { DissertationMilestoneWithContext, CaseReportWithWorkforce, ReviewTargetType } from '../types';
-import { useTerminology } from '../lib/terminology';
+import { useTerminology } from '../modules/shared/terminology';
 import {
   ShieldCheck,
   RefreshCw,

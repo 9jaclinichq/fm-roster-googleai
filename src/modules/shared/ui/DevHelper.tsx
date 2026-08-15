@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { WorkforceMember } from '../types';
+import { databaseService } from '../../../lib/databaseService';
+import { WorkforceMember } from '../../../types';
 import { Eye, EyeOff, Users, Sparkles } from 'lucide-react';
 
 interface DevHelperProps {

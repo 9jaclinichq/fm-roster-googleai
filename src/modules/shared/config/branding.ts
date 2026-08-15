@@ -16,7 +16,7 @@
 // it never depended on hostname to begin with.
 //
 // This complements — not replaces — the tenant terminology system in
-// src/lib/terminology.tsx: terminology.tsx handles ROLE vocabulary
+// src/modules/shared/terminology.tsx: terminology.tsx handles ROLE vocabulary
 // ("Resident", "Chief Resident", "Rotation"...) per tenant, while this file
 // handles PRODUCT branding. Role words are deliberately untouched here.
 //

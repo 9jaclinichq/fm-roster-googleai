@@ -125,7 +125,7 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ ow
   const [parsedSource, setParsedSource] = useState<CasebookCopilotSource | null>(null);
 
   // AI Copilot feature gating — same free-tier rolling-window allowance and
-  // upgrade checkout as the Research Engine (see src/config/tiers.ts).
+  // upgrade checkout as the Research Engine (see src/modules/shared/config/tiers.ts).
   const quota = useWorkspaceQuota(owner.id);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
