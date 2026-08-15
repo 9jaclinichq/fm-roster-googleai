@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { databaseService } from '../../../lib/databaseService';
 import { WorkforceMember, Tenant } from '../../../types';
 import { KeyRound, User, ChevronDown, Sparkles, Check, AlertCircle, Building2, Mail } from 'lucide-react';
@@ -15,6 +16,18 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
   onNavigateToChief,
   presetResident
 }) => {
+  const location = useLocation();
+  // Carried forward from TenantSelectorView (/workspace/select-org), the new
+  // tenant-first login step — see that component's header comment. Falls
+  // back to a query param (`?tenant=<id>`, mirroring this app's existing
+  // `?src=` convention) for bookmarkability, and to nothing at all for any
+  // old link straight into /workspace/login: the effect below then falls
+  // back to the first active tenant, same as before this change, so no
+  // existing bookmarked/legacy link into this page breaks.
+  const incomingTenantId =
+    (location.state as { tenantId?: string } | null)?.tenantId ||
+    new URLSearchParams(location.search).get('tenant') ||
+    '';
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState<string>('');
   const [isTenantDropdownOpen, setIsTenantDropdownOpen] = useState<boolean>(false);
@@ -42,13 +55,22 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
         const data = await databaseService.getTenants();
         const active = data.filter((tn) => tn.status === 'active');
         setTenants(active);
-        if (active.length > 0) setSelectedTenantId(active[0].id);
+        // Prefer the tenant already chosen on TenantSelectorView, as long as
+        // it's still a real active tenant; otherwise fall back to the first
+        // active one (the pre-selector default behavior, preserved for any
+        // legacy link straight into this page).
+        if (incomingTenantId && active.some((tn) => tn.id === incomingTenantId)) {
+          setSelectedTenantId(incomingTenantId);
+        } else if (active.length > 0) {
+          setSelectedTenantId(active[0].id);
+        }
       } catch (err) {
         console.warn('Error loading organizations:', err);
         setError('Failed to fetch organization list from server.');
       }
     }
     loadTenants();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -159,10 +181,12 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
           )}
 
           {/* Organization picker (migration 26) — only shown once there's
-              more than one active organization to choose between; with
-              today's single-tenant reality it would otherwise just be a
-              disabled dropdown nobody needs to touch. */}
-          {tenants.length > 1 && (
+              more than one active organization to choose between, AND the
+              tenant wasn't already picked on TenantSelectorView just now
+              (re-showing it here would be a redundant second selection).
+              With today's single-tenant reality it would otherwise just be
+              a disabled dropdown nobody needs to touch. */}
+          {tenants.length > 1 && !incomingTenantId && (
             <div className="space-y-1.5 relative">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
                 Select Your Organization

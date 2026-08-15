@@ -11,6 +11,12 @@ import { useTerminology } from '../../shared/terminology';
 // Since the doc.*/workspace.* domain split was retired, this is now the
 // ONLY place that split is decided — no hostname-based pre-highlighting,
 // both paths are presented neutrally (see src/modules/shared/config/branding.ts).
+//
+// The institutional path now leads to TenantSelectorView (/workspace/select-org)
+// first, not straight to ResidentLoginView — "select your institution" before
+// name+code entry, per the tenant-first login-order backlog item. The
+// individual-doctor path stays a single hop to /doctor/login, and is also
+// re-offered at the top level of TenantSelectorView itself.
 export const AuthLandingView: React.FC = () => {
   const navigate = useNavigate();
   const brand = getActiveBrand();
@@ -29,7 +35,7 @@ export const AuthLandingView: React.FC = () => {
         <div className="p-6 sm:p-8 space-y-4">
           <button
             type="button"
-            onClick={() => navigate('/workspace/login')}
+            onClick={() => navigate('/workspace/select-org')}
             className="w-full flex items-center justify-between px-5 py-4 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition cursor-pointer"
           >
             <span className="flex items-center space-x-3">
