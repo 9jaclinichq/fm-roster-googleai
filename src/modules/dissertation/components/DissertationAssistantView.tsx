@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { academicCopilot, AcademicCopilotSource } from '../lib/ai/academicCopilot';
-import { Dissertation, DissertationMilestone, DissertationStage, WACP_DISSERTATION_STAGES } from '../types';
+import { databaseService } from '../../../lib/databaseService';
+import { academicCopilot, AcademicCopilotSource } from '../lib/academicCopilot';
+import { Dissertation, DissertationMilestone, DissertationStage, WACP_DISSERTATION_STAGES } from '../../../types';
 import {
   GraduationCap,
   CheckCircle2,

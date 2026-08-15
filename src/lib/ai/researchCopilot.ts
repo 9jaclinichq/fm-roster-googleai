@@ -4,7 +4,7 @@ import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../r
 
 // Client-side provider for the Universal Research Engine's AI Copilot
 // Panel (ResearchWorkspaceView.tsx). Same "Edge-Function-first, heuristic-
-// fallback-always" architecture as src/lib/ai/academicCopilot.ts — every
+// fallback-always" architecture as src/modules/dissertation/lib/academicCopilot.ts — every
 // method tries supabase/functions/research-copilot first, and falls back
 // to a deterministic local implementation if the function isn't deployed,
 // has no provider secret configured, or fails for any reason. The UI never

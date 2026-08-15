@@ -1,5 +1,5 @@
-import { databaseService, supabase, DEFAULT_TENANT_ID } from '../databaseService';
-import { AiActionType } from '../../types';
+import { databaseService, supabase, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
+import { AiActionType } from '../../../types';
 
 // Client-side academic support actions for the Dissertation Assistant and
 // Casebook Builder. Each action tries the `dissertation-copilot` Supabase

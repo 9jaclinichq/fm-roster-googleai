@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { databaseService } from '../lib/databaseService';
-import { GuestReviewInvitePublic, DissertationMilestoneWithContext, CaseReportWithWorkforce } from '../types';
+import { databaseService } from '../../../lib/databaseService';
+import { GuestReviewInvitePublic, DissertationMilestoneWithContext, CaseReportWithWorkforce } from '../../../types';
 import { ShieldCheck, RefreshCw, AlertTriangle, Camera, CheckCircle2, XCircle, FileText, Sparkles } from 'lucide-react';
-import { useTerminology } from '../modules/shared/terminology';
+import { useTerminology } from '../../shared/terminology';
 
 // Public route (/guest-review/:token) — NOT gated by any login. Reachable
 // by anyone holding the token (an unguessable UUID shared as a link), same

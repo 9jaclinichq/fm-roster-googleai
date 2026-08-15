@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { databaseService, DEFAULT_TENANT_ID } from '../lib/databaseService';
-import { academicCopilot, AcademicCopilotSource } from '../lib/ai/academicCopilot';
+import { academicCopilot, AcademicCopilotSource } from '../modules/dissertation/lib/academicCopilot';
 import { CaseReport, CaseReportStatus } from '../types';
 import { ClipboardList, RefreshCw, FileText, UploadCloud, X, AlertTriangle, CheckCircle2, Clock, Sparkles, Link2, Copy, Check } from 'lucide-react';
 

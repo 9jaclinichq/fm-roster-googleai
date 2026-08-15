@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService } from '../lib/databaseService';
-import { ActivityMatrixDay } from '../types';
+import { databaseService } from '../../../lib/databaseService';
+import { ActivityMatrixDay } from '../../../types';
 import { Activity, RefreshCw } from 'lucide-react';
 
 interface ResidentActivityGraphProps {

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { databaseService } from '../lib/databaseService';
+import { databaseService } from '../../../lib/databaseService';
 import { ResidentActivityGraph } from './ResidentActivityGraph';
-import { ComplianceNudgesView } from './ComplianceNudgesView';
-import { Collection, Submission, Rotation } from '../types';
+import { ComplianceNudgesView } from '../../../components/ComplianceNudgesView';
+import { Collection, Submission, Rotation } from '../../../types';
 import { 
   ClipboardList, 
   Calendar, 

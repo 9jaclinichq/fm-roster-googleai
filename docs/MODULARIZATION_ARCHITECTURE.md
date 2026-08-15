@@ -297,6 +297,21 @@ order, each phase independently shippable and manually browser-verified before t
    Library, Exam Readiness, Viva Simulator all render with real data) and Chief routes (Knowledge
    Packs and Multi-Roster Manager tabs both load, the latter confirming the relocated roster
    parser's import resolves), no console errors.
+   **`dissertation`/`consultant-review`/`form` DONE (2026-08-15)**, second batch: 
+   `DissertationAssistantView.tsx` → `modules/dissertation/components/` + `academicCopilot.ts` →
+   `modules/dissertation/lib/` (still shared with the legacy `CasebookBuilderView.tsx`, which stays
+   in `src/components/` until the `casebook-logbook` module's turn — its import updated to point at
+   the new location); `ConsultantReviewView.tsx`/`GuestReviewView.tsx` →
+   `modules/consultant-review/components/`; `ResidentFormView.tsx`/`ResidentActivityGraph.tsx` →
+   `modules/form/components/`. One deliberate cross-module import left as-is, not "fixed": 
+   `ResidentFormView.tsx` renders `ComplianceNudgesView.tsx`, which belongs to `org-admin` per the
+   module map and hasn't moved yet — Phase 3 is pure relocation, not a redesign of genuine
+   cross-module UI composition, so this is flagged rather than silently special-cased; revisit once
+   `org-admin` moves. `tsc --noEmit` and `npm run build` both clean, identical bundle shape.
+   Live-verified: resident login → My Form (activity graph + compliance nudges both render) →
+   Dissertation (create flow renders) → the public `/guest-review/:token` route (renders its real
+   "invalid token" error state, not a broken-import crash) — no console errors beyond the expected
+   "invite not found" warning for the deliberately-fake test token.
 4. **`databaseService.ts` split**, module-by-module, following the same order — each module's
    service slice extracted only after that module's components have already moved, so the diff per
    step stays reviewable.

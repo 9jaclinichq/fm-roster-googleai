@@ -4,7 +4,7 @@ import { Navbar } from './modules/shared/ui/Navbar';
 import { DevHelper } from './modules/shared/ui/DevHelper';
 import { LoadingShell } from './modules/shared/ui/LoadingShell';
 import { ResidentLoginView } from './components/ResidentLoginView';
-import { ResidentFormView } from './components/ResidentFormView';
+import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
 import { AuthLandingView } from './components/AuthLandingView';
 import { DoctorAuthView } from './components/DoctorAuthView';
@@ -32,7 +32,7 @@ const ChiefDashboardView = lazy(() =>
   import('./components/ChiefDashboardView').then(m => ({ default: m.ChiefDashboardView }))
 );
 const DissertationAssistantView = lazy(() =>
-  import('./components/DissertationAssistantView').then(m => ({ default: m.DissertationAssistantView }))
+  import('./modules/dissertation/components/DissertationAssistantView').then(m => ({ default: m.DissertationAssistantView }))
 );
 const KnowledgeLibraryView = lazy(() =>
   import('./modules/knowledge-packs/components/KnowledgeLibraryView').then(m => ({ default: m.KnowledgeLibraryView }))
@@ -47,7 +47,7 @@ const OralExamSimulatorView = lazy(() =>
   import('./modules/viva-simulator/components/OralExamSimulatorView').then(m => ({ default: m.OralExamSimulatorView }))
 );
 const ConsultantReviewView = lazy(() =>
-  import('./components/ConsultantReviewView').then(m => ({ default: m.ConsultantReviewView }))
+  import('./modules/consultant-review/components/ConsultantReviewView').then(m => ({ default: m.ConsultantReviewView }))
 );
 const ResearchWorkspaceView = lazy(() =>
   import('./components/ResearchWorkspaceView').then(m => ({ default: m.ResearchWorkspaceView }))
@@ -60,7 +60,7 @@ const CasebookWorkspaceView = lazy(() =>
 // holding a review token (a capability URL); SaaSOperatorConsoleView
 // handles its own separate login gate internally (see that file).
 const GuestReviewView = lazy(() =>
-  import('./components/GuestReviewView').then(m => ({ default: m.GuestReviewView }))
+  import('./modules/consultant-review/components/GuestReviewView').then(m => ({ default: m.GuestReviewView }))
 );
 const SaaSOperatorConsoleView = lazy(() =>
   import('./components/SaaSOperatorConsoleView').then(m => ({ default: m.SaaSOperatorConsoleView }))
