@@ -876,10 +876,16 @@ export interface FormInstanceSchema {
   fields: FormFieldDefinition[];
 }
 
-// Mirrors form_instances (migration 35).
+// Mirrors form_instances (migration 35). tenant_id/doctor_id: exactly one
+// is set, never both — an institutional (Chief-authored) instance has
+// tenant_id set and doctor_id null; a personal, doctor-owned instance
+// (migration 40) has doctor_id set and tenant_id null. See migration 40's
+// header for the full doctor-ownership rationale (mirrors migration 25's
+// research_workspaces/casebook_workspaces pattern).
 export interface FormInstance {
   id: string;
-  tenant_id: string;
+  tenant_id: string | null;
+  doctor_id: string | null;
   name: string;
   description: string | null;
   schema: FormInstanceSchema;
@@ -888,11 +894,15 @@ export interface FormInstance {
   created_at: string;
 }
 
-// Mirrors form_entries (migration 35).
+// Mirrors form_entries (migration 35). tenant_id is nullable as of
+// migration 40 — an entry against a doctor-owned (tenant_id-NULL)
+// form_instances row must itself be able to carry a NULL tenant_id.
+// No doctor_id column here by design — see migration 40's header;
+// ownership is derived via instance_id -> form_instances.doctor_id.
 export interface FormEntry {
   id: string;
   instance_id: string;
-  tenant_id: string;
+  tenant_id: string | null;
   submitted_by_workforce_id: string | null;
   payload: Record<string, unknown>;
   status: string;
