@@ -1,14 +1,30 @@
 import React, { useEffect, useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
 import { supabase } from '../../../lib/databaseService';
-import { runSubmissionChaser, getActiveInsights, dismissInsight, InsightRow } from '../lib/submissionChaserAgent';
+import {
+  runSubmissionChaser,
+  getActiveInsights,
+  dismissInsight,
+  InsightRow,
+  SUBMISSION_CHASER_AGENT_KEY,
+} from '../lib/submissionChaserAgent';
+import { runMeetingActionChaser, MEETING_ACTION_CHASER_AGENT_KEY } from '../lib/meetingActionAgent';
 
 interface InsightsStripProps {
   tenantId: string;
 }
 
-// L4/L5 face for the L1 Submission Chaser agent (see
-// src/modules/shared/lib/submissionChaserAgent.ts). Per
+// Display label per producing agent — falls back to the raw agent_key for
+// any future agent this strip hasn't been updated to recognize yet, rather
+// than silently mislabeling it as "Submission Chaser."
+const AGENT_LABELS: Record<string, string> = {
+  [SUBMISSION_CHASER_AGENT_KEY]: 'Submission Chaser',
+  [MEETING_ACTION_CHASER_AGENT_KEY]: 'Meeting Action Chaser',
+};
+
+// L4/L5 face for this app's rung-1 agents (see
+// src/modules/shared/lib/submissionChaserAgent.ts,
+// src/modules/shared/lib/meetingActionAgent.ts). Per
 // docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md §7's Dashboard module row
 // ("insight strips, module tiles, tenant switcher"), this is meant to sit
 // near the top of the org-admin dashboard, above the tab switcher.
@@ -16,12 +32,14 @@ interface InsightsStripProps {
 // Wired into ChiefDashboardView.tsx, between the KPI cards and the tab
 // switcher.
 //
-// FAILS GRACEFULLY: both the agent run and the read are best-effort. If
-// `insights`/`agent_manifests`/`event_log` don't exist yet (migration 37 not
-// applied) or the Supabase client isn't configured, this renders nothing —
-// no error boundary needed, no loading spinner, no visible failure state.
-// An admin should never see a broken widget for a feature they don't know
-// exists yet.
+// FAILS GRACEFULLY: every agent run and the read are best-effort and
+// independent of each other — one agent failing (e.g. its table missing)
+// never blocks another agent's run or the read of whatever insights already
+// exist. If `insights`/`agent_manifests`/`event_log` don't exist yet
+// (migration 37 not applied) or the Supabase client isn't configured, this
+// renders nothing — no error boundary needed, no loading spinner, no visible
+// failure state. An admin should never see a broken widget for a feature
+// they don't know exists yet.
 export const InsightsStrip: React.FC<InsightsStripProps> = ({ tenantId }) => {
   const [insights, setInsights] = useState<InsightRow[]>([]);
   const [dismissingIds, setDismissingIds] = useState<Set<string>>(new Set());
@@ -31,13 +49,20 @@ export const InsightsStrip: React.FC<InsightsStripProps> = ({ tenantId }) => {
     let cancelled = false;
 
     const load = async () => {
-      // Fire-and-forget: run the agent, but don't block the read on it —
-      // if the agent run fails (e.g. table missing, no open collection),
-      // still attempt to show whatever insights already exist.
+      // Fire-and-forget: run each agent, but don't block the read (or each
+      // other) on it — if one agent's run fails (e.g. table missing, no open
+      // collection/no overdue actions), still attempt to show whatever
+      // insights already exist, and still let the other agent run.
       try {
         await runSubmissionChaser(supabase!, tenantId);
       } catch (err) {
         console.warn('InsightsStrip: runSubmissionChaser failed (non-fatal)', err);
+      }
+
+      try {
+        await runMeetingActionChaser(supabase!, tenantId);
+      } catch (err) {
+        console.warn('InsightsStrip: runMeetingActionChaser failed (non-fatal)', err);
       }
 
       try {
@@ -92,7 +117,7 @@ export const InsightsStrip: React.FC<InsightsStripProps> = ({ tenantId }) => {
             <p className="text-xs font-semibold text-slate-800 leading-snug">{insight.text}</p>
             <div className="mt-2 flex items-center justify-between">
               <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">
-                Submission Chaser
+                {AGENT_LABELS[insight.agent_key] ?? insight.agent_key}
               </span>
               <button
                 onClick={() => handleDismiss(insight.id)}
