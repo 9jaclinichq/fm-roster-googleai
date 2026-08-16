@@ -2,6 +2,7 @@ import { useState, useEffect, lazy, Suspense } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Navbar } from './modules/shared/ui/Navbar';
 import { UnifiedRecordView } from './modules/shared/ui/UnifiedRecordView';
+import { IntelligenceHarnessHome } from './modules/shared/ui/IntelligenceHarnessHome';
 import { DevHelper } from './modules/shared/ui/DevHelper';
 import { LoadingShell } from './modules/shared/ui/LoadingShell';
 import { OfflineBanner } from './modules/shared/ui/OfflineBanner';
@@ -239,6 +240,7 @@ function MainAppContent() {
     if (path.startsWith('/chief')) return 'chief-login';
     if (path.startsWith('/admin-portal')) return 'chief-login';
     if (path.startsWith('/organization/new')) return 'chief-login';
+    if (path.startsWith('/workspace/home')) return 'resident-home';
     if (path.startsWith('/workspace/announcements')) return 'resident-announcements';
     if (path.startsWith('/workspace/dissertation')) return 'resident-dissertation';
     if (path.startsWith('/workspace/casebook')) return 'resident-casebook';
@@ -351,6 +353,7 @@ function MainAppContent() {
         onNavigateToResearch={() => navigate('/workspace/research')}
         onNavigateToCasebookLogbook={() => navigate('/workspace/casebook-logbook')}
         onNavigateToMyRecord={() => navigate('/workspace/my-record')}
+        onNavigateToHome={() => navigate('/workspace/home')}
         currentView={getCurrentViewName()}
       />
 
@@ -461,6 +464,24 @@ function MainAppContent() {
                   resident={currentResident}
                   onLogout={handleResidentLogout}
                 />
+              ) : (
+                <Navigate to="/workspace/login" replace />
+              )
+            }
+          />
+
+          {/* Intelligence Harness Home — mobile-first resident dashboard
+              landing (see IntelligenceHarnessHome.tsx's own header for the
+              full rationale). Additive alongside /workspace/form, not a
+              replacement of the post-login redirect in handleResidentLogin
+              above — switching the default landing to this screen is a real
+              behavior change for every existing session and is deliberately
+              left as a follow-up decision, not made silently here. */}
+          <Route
+            path="/workspace/home"
+            element={
+              currentResident ? (
+                <IntelligenceHarnessHome resident={currentResident} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )

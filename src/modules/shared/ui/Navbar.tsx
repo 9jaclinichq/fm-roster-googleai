@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { databaseService } from '../../../lib/databaseService';
 import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
 import { useTerminology } from '../terminology';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard, Home } from 'lucide-react';
 
 // Minimal event typing for the non-standard `beforeinstallprompt` event —
 // not part of the DOM lib TypeScript ships with.
@@ -31,7 +31,9 @@ interface NavbarProps {
   onNavigateToResearch: () => void;
   onNavigateToCasebookLogbook: () => void;
   onNavigateToMyRecord: () => void;
+  onNavigateToHome: () => void;
   currentView:
+    | 'resident-home'
     | 'resident'
     | 'resident-announcements'
     | 'resident-dissertation'
@@ -53,6 +55,7 @@ interface NavbarProps {
 }
 
 const RESIDENT_VIEWS = [
+  'resident-home',
   'resident',
   'resident-announcements',
   'resident-dissertation',
@@ -86,6 +89,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigateToResearch,
   onNavigateToCasebookLogbook,
   onNavigateToMyRecord,
+  onNavigateToHome,
   currentView
 }) => {
   const brand = getActiveBrand();
@@ -259,6 +263,17 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Resident sub-navigation */}
         {currentResident && RESIDENT_VIEWS.includes(currentView) && (
           <div className="flex items-center space-x-4 border-t border-slate-100 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 overflow-x-auto">
+            <button
+              onClick={onNavigateToHome}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
+                currentView === 'resident-home'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Home size={13} />
+              <span>Home</span>
+            </button>
             <button
               onClick={onNavigateToResidentForm}
               className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
