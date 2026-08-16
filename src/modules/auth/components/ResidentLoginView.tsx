@@ -11,6 +11,17 @@ interface ResidentLoginViewProps {
   presetResident?: WorkforceMember | null;
 }
 
+// A connection-level network failure (offline, DNS failure) can leave the
+// underlying fetch() never settling — unlike an HTTP-level error, which
+// supabase-js already surfaces cleanly as {error}. Bounds any promise to a
+// max wait so callers always reach their catch block instead of hanging.
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Request timed out')), ms)),
+  ]);
+}
+
 export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
   onLoginSuccess,
   onNavigateToChief,
@@ -50,10 +61,22 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
   // then defaults to the first one so single-tenant deployments (today's
   // reality — only UCH Family Medicine is seeded) don't force an extra
   // click, while still being ready for a second organization to appear.
+  //
+  // Found via adversarial QA (2026-08-17): a connection-level network
+  // failure (offline, DNS failure — not an HTTP error response, which
+  // supabase-js already surfaces cleanly via its own {error}) can leave the
+  // underlying fetch() never settling within any reasonable time, since
+  // nothing here ever bounded how long to wait. That left this effect's
+  // try/catch never reached at all, so selectedTenantId was never set,
+  // which in turn left the workforce-loading effect below permanently
+  // stuck on "Loading resident list..." with no error shown — the app's
+  // error UI was correct, it just never got a chance to run. withTimeout
+  // bounds both fetches so a hard network failure surfaces the same error
+  // state as an HTTP-level one, instead of hanging indefinitely.
   useEffect(() => {
     async function loadTenants() {
       try {
-        const data = await databaseService.getTenants();
+        const data = await withTimeout(databaseService.getTenants(), 15000);
         const active = data.filter((tn) => tn.status === 'active');
         setTenants(active);
         // Prefer the tenant already chosen on TenantSelectorView, as long as
@@ -67,7 +90,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
         }
       } catch (err) {
         console.warn('Error loading organizations:', err);
-        setError('Failed to fetch organization list from server.');
+        setError('Failed to fetch organization list from server. Check your connection and reload.');
       }
     }
     loadTenants();
@@ -79,11 +102,11 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
     async function loadWorkforce() {
       setIsLoading(true);
       try {
-        const data = await databaseService.getWorkforce(selectedTenantId);
+        const data = await withTimeout(databaseService.getWorkforce(selectedTenantId), 15000);
         setWorkforce(data.filter((w) => w.active));
       } catch (err) {
         console.warn('Error loading workforce:', err);
-        setError(`Failed to fetch ${t('member', 'resident').toLowerCase()} names from server.`);
+        setError(`Failed to fetch ${t('member', 'resident').toLowerCase()} names from server. Check your connection and reload.`);
       } finally {
         setIsLoading(false);
       }

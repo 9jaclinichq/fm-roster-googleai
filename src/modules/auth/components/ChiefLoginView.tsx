@@ -10,6 +10,20 @@ interface ChiefLoginViewProps {
   presetCode?: string;
 }
 
+// A connection-level network failure (offline, DNS failure) can leave the
+// underlying fetch() never settling — unlike an HTTP-level error, which
+// supabase-js already surfaces cleanly as {error}. Without this, a Chief
+// on a dropped connection would see "Verifying admin level..." forever
+// with no error and a permanently disabled submit button (found via
+// adversarial QA, 2026-08-17 — same root cause as ResidentLoginView's
+// identical withTimeout fix).
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Request timed out')), ms)),
+  ]);
+}
+
 export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
   onLoginSuccess,
   onNavigateToResident,
@@ -41,7 +55,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
     try {
       // Verified server-side — the admin_access_code column is never sent to the client.
       // Migration 23: the code itself resolves which tenant this Chief belongs to.
-      const verified = await databaseService.verifyChiefLogin(adminCode);
+      const verified = await withTimeout(databaseService.verifyChiefLogin(adminCode), 15000);
 
       if (verified) {
         onLoginSuccess(adminCode, verified.tenantId, verified.tenantName);
@@ -50,7 +64,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
       }
     } catch (err) {
       console.warn(err);
-      setError('An error occurred during verification. Please try again.');
+      setError('An error occurred during verification. Check your connection and try again.');
     } finally {
       setIsLoggingIn(false);
     }
