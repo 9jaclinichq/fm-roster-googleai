@@ -1712,6 +1712,15 @@ export const databaseService = {
       .single();
 
     if (error) {
+      // 23505 = unique_combined_master_roster_per_collection violated — two
+      // near-simultaneous callers (double-click, two open Chief tabs) both
+      // passed the "does one exist" check above before either insert
+      // landed. The other request won the race; return its row instead of
+      // surfacing a failure for a roster that already exists.
+      if (error.code === '23505') {
+        const raceWinner = await this.getMasterRosterForCollection(collectionId);
+        if (raceWinner) return raceWinner;
+      }
       console.warn('Error creating master roster:', error);
       throw error;
     }
@@ -3042,37 +3051,55 @@ export const databaseService = {
   // Appends a supervisor sign-off and bumps completed_count — read-modify-
   // write rather than a DB-side array append, consistent with this app's
   // client-computed-jsonb pattern elsewhere (e.g. syncComplianceNudges).
+  //
+  // Optimistic-concurrency guarded (found via adversarial QA, 2026-08-16):
+  // two near-simultaneous signoffs on the same logbook row (two supervisors,
+  // or a network retry) previously both read the same completed_count/array,
+  // and the second write silently clobbered the first — a real supervisor
+  // attestation vanishing with no error. The update's WHERE clause now also
+  // pins completed_count to the value just read; if a concurrent write beat
+  // us to it, zero rows match and we retry against the fresh state instead
+  // of silently overwriting it. Bounded to a few attempts — under real
+  // contention (not just two near-simultaneous clicks) this trades an error
+  // for correctness rather than retrying forever.
   async addLogbookSignoff(
     logbookId: string,
     signoff: { signed_by_workforce_id: string | null; signed_by_name: string; date: string; note?: string }
   ): Promise<ClinicalLogbook> {
     checkSupabase();
 
-    const { data: existing, error: fetchErr } = await supabase!
-      .from('clinical_logbooks')
-      .select('*')
-      .eq('id', logbookId)
-      .single();
-    if (fetchErr) {
-      console.warn('Error fetching logbook entry before signoff:', fetchErr);
-      throw fetchErr;
-    }
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { data: existing, error: fetchErr } = await supabase!
+        .from('clinical_logbooks')
+        .select('*')
+        .eq('id', logbookId)
+        .single();
+      if (fetchErr) {
+        console.warn('Error fetching logbook entry before signoff:', fetchErr);
+        throw fetchErr;
+      }
 
-    const { data, error } = await supabase!
-      .from('clinical_logbooks')
-      .update({
-        supervisor_signoffs: [...(existing.supervisor_signoffs || []), signoff],
-        completed_count: Math.min(existing.required_count, (existing.completed_count || 0) + 1),
-      })
-      .eq('id', logbookId)
-      .select()
-      .single();
+      const priorCompletedCount = existing.completed_count || 0;
+      const { data, error } = await supabase!
+        .from('clinical_logbooks')
+        .update({
+          supervisor_signoffs: [...(existing.supervisor_signoffs || []), signoff],
+          completed_count: Math.min(existing.required_count, priorCompletedCount + 1),
+        })
+        .eq('id', logbookId)
+        .eq('completed_count', priorCompletedCount)
+        .select()
+        .maybeSingle();
 
-    if (error) {
-      console.warn('Error recording logbook signoff:', error);
-      throw error;
+      if (error) {
+        console.warn('Error recording logbook signoff:', error);
+        throw error;
+      }
+      if (data) return data;
+      // completed_count moved under us since the read above — someone else's
+      // signoff landed in between; retry against the now-current row.
     }
-    return data;
+    throw new Error('Could not record signoff after multiple attempts — the logbook entry is being updated concurrently. Please try again.');
   },
 
   // --- ADMIN LOGBOOK PARSING QUEUE ---
