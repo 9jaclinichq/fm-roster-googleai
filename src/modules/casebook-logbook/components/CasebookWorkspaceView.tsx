@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService } from '../../../lib/databaseService';
+import { databaseService, supabase } from '../../../lib/databaseService';
 import { casebookCopilot, CasebookCopilotSource } from '../lib/casebookCopilot';
 import { useWorkspaceQuota } from '../../billing/lib/useWorkspaceQuota';
 import { UpgradeCheckoutModal } from '../../billing/components/UpgradeCheckoutModal';
+import { RubricInstanceForm } from '../../shared/ui/RubricInstanceForm';
+import { listRubricInstancesForSubject } from '../../shared/lib/scoredRubricEngine';
 import {
   createGenogramTemplate, addGenogramNode, updateGenogramNode,
   calculateFamilyApgar, FAMILY_APGAR_INTERPRETATION_LABELS,
@@ -87,6 +89,99 @@ const Gauge: React.FC<{ label: string; result: { valid: boolean; message: string
     <p className={`text-[11px] font-semibold mt-0.5 ${result.valid ? 'text-emerald-700' : 'text-rose-700'}`}>{result.message}</p>
   </div>
 );
+
+// Official WACP Self-Assessment — wires the generic Scored Rubric primitive
+// (src/modules/shared/lib/scoredRubricEngine.ts, src/modules/shared/ui/
+// RubricInstanceForm.tsx) against the single real WACP Casebook/PMR
+// rubric_templates row seeded live by migration 46. Matched by exact name
+// since `clinical_case_reports`/`casebook_workspaces` carry no
+// rubric_template_id FK — additive wiring only, no schema change. Distinct
+// from "Real-Time WACP Scorecard" above, this file's own independent
+// client-side checker (`../lib/caseRubricEngine.ts`) — not the official
+// scored instrument, and left completely untouched by this addition.
+//
+// KNOWN FIRST-SLICE IMPERFECTION (flagged, not engineered around): this
+// template's "Preliminary Pages" section is conceptually a whole-casebook
+// checklist (title page, declaration, table of contents, etc.), not a
+// per-case one, but RubricInstanceForm renders a template's full section
+// list with no way to filter sections in this pass. Rendering it once per
+// case (subject_ref is per clinical_case_reports row) means Preliminary
+// Pages gets asked about multiple times across a candidate's cases — real
+// but minor UX roughness, not a data-correctness bug: each case's
+// rubric_instance is a separate row, nothing is shared/corrupted. A future
+// pass may split Preliminary Pages into its own single casebook-level
+// assessment; RubricInstanceForm/compute_rubric_totals() are deliberately
+// NOT modified here to work around this.
+const WACP_CASEBOOK_RUBRIC_TEMPLATE_NAME = 'WACP Family Medicine Casebook/PMR Assessment Tool (v4.0, Nov 2021)';
+
+const OfficialWacpCaseSelfAssessment: React.FC<{
+  caseReportId: string;
+  tenantId: string;
+  assessorWorkforceId: string | null;
+  assessorDoctorId: string | null;
+}> = ({ caseReportId, tenantId, assessorWorkforceId, assessorDoctorId }) => {
+  const [rubricTemplateId, setRubricTemplateId] = useState<string | null>(null);
+  const [existingInstanceId, setExistingInstanceId] = useState<string | undefined>(undefined);
+  const [isResolving, setIsResolving] = useState(true);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+
+  // Per migration 46's own header: this template represents the PER-CASE
+  // assessment shape, so subject_ref is keyed to the case, not the workspace.
+  const subjectRef = `clinical_case_report:${caseReportId}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsResolving(true);
+    setResolveError(null);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('rubric_templates')
+          .select('id, name')
+          .eq('name', WACP_CASEBOOK_RUBRIC_TEMPLATE_NAME)
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          if (!cancelled) { setRubricTemplateId(null); setIsResolving(false); }
+          return;
+        }
+        // Resume an existing instance rather than creating a new blank one
+        // every time this section is opened.
+        const existing = await listRubricInstancesForSubject(supabase, subjectRef, data.id);
+        if (cancelled) return;
+        setRubricTemplateId(data.id);
+        setExistingInstanceId(existing[0]?.id);
+      } catch (err) {
+        if (!cancelled) setResolveError(err instanceof Error ? err.message : 'Failed to load the official WACP rubric.');
+      } finally {
+        if (!cancelled) setIsResolving(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [subjectRef]);
+
+  if (isResolving) {
+    return <p className="text-xs text-slate-400">Loading official WACP rubric...</p>;
+  }
+  if (resolveError) {
+    return <p className="text-xs text-red-600">{resolveError}</p>;
+  }
+  if (!rubricTemplateId) {
+    return <p className="text-xs text-rose-600">Official WACP Casebook/PMR rubric template not found — contact the platform operator.</p>;
+  }
+
+  return (
+    <RubricInstanceForm
+      supabaseClient={supabase}
+      rubricTemplateId={rubricTemplateId}
+      instanceId={existingInstanceId}
+      tenantId={tenantId}
+      subjectRef={subjectRef}
+      assessorWorkforceId={assessorWorkforceId}
+      assessorDoctorId={assessorDoctorId}
+    />
+  );
+};
 
 export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ owner, canManageLogbooks }) => {
   const [workspaces, setWorkspaces] = useState<CasebookWorkspace[]>([]);
@@ -688,6 +783,31 @@ export const CasebookWorkspaceView: React.FC<CasebookWorkspaceViewProps> = ({ ow
               <Gauge label="Reference Formatting" result={referenceCheck} />
               <Gauge label="Sentence Formatting" result={figureCheck} />
             </div>
+
+            {/* Official WACP Self-Assessment — the real, official rubric,
+                distinct from the automated checks in the Real-Time WACP
+                Scorecard above. Only for the 2 WACP framework tracks, and
+                only once this case has an actual saved row to score. */}
+            {(activeWorkspace.framework_type === 'WACP_PMR_10' || activeWorkspace.framework_type === 'WACP_CASEBOOK_15') && activeCase && (
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                <div className="flex items-center space-x-1.5">
+                  <ClipboardList className="text-slate-500" size={16} />
+                  <h3 className="font-bold text-slate-900 text-sm">Official WACP Self-Assessment</h3>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  Score this case right now against the real, official WACP-approved Casebook/PMR
+                  instrument — separate from the automated checks in the Scorecard above. This scores
+                  each case individually, including the whole-casebook Preliminary Pages checklist — a
+                  future pass may split Preliminary Pages into a single casebook-level assessment.
+                </p>
+                <OfficialWacpCaseSelfAssessment
+                  caseReportId={activeCase.id}
+                  tenantId={owner.tenantId}
+                  assessorWorkforceId={owner.kind === 'workforce' ? owner.id : null}
+                  assessorDoctorId={owner.kind === 'doctor' ? owner.id : null}
+                />
+              </div>
+            )}
 
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
