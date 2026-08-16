@@ -125,6 +125,22 @@ export const GuestReviewView: React.FC = () => {
     );
   }
 
+  // Expiry isn't reflected in `status` (submit_guest_review only checks it
+  // at submit time) — without this check, a guest on an expired-but-still-
+  // "pending" link would see the full form, write feedback, and only learn
+  // it failed after submitting. Catch it upfront instead.
+  if (new Date(invite.expires_at) < new Date()) {
+    return (
+      <div className="max-w-lg mx-auto my-16 px-4">
+        <div className="bg-white border border-amber-200 rounded-2xl shadow-sm p-6 text-center space-y-2">
+          <AlertTriangle className="text-amber-500 mx-auto" size={28} />
+          <p className="text-sm font-semibold text-amber-700">This review link has expired.</p>
+          <p className="text-xs text-slate-500">Please ask for a new review link.</p>
+        </div>
+      </div>
+    );
+  }
+
   if (submitted) {
     return (
       <div className="max-w-lg mx-auto my-16 px-4 space-y-4">
