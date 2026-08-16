@@ -1,0 +1,54 @@
+-- ====================================================================
+-- FM Roster - Migration 52: fix missing column-level GRANT on
+-- workforce.category_id (found via live browser QA, 2026-08-16)
+-- ====================================================================
+-- PREREQUISITE: migrations 01-51 already applied.
+--
+-- SEVERITY: HIGH -- this is a live production regression, not a cosmetic
+-- gap. Confirmed via real browser network-request inspection: every
+-- Supabase REST request touching workforce.category_id (directly via
+-- WORKFORCE_PUBLIC_COLUMNS in databaseService.ts's getWorkforce(), or via
+-- the workforce!inner(...) embed in getSubmissions()/getDelegatedRoles())
+-- returns 401, while sibling requests against insights/collections in the
+-- exact same session succeed (200) -- ruling out an anon-key/auth problem
+-- and pointing squarely at a column-level privilege gap on this one column.
+--
+-- ROOT CAUSE: migration 39 added workforce.category_id and backfilled it,
+-- but -- unlike every other column ever added to this table -- never
+-- granted anon/authenticated SELECT on it. This table has used a
+-- column-level allowlist (not select *) since migration 02, specifically
+-- so the locked-down resident_code column stays inaccessible; every other
+-- addition to that allowlist got its own GRANT in the same migration that
+-- added the column:
+--   migration 02: id, full_name, category, active, created_at
+--   migration 10: on_floor
+--   migration 11: tenant_id
+--   migration 18: doctor_id
+-- category_id was the one column added (migration 39) without a matching
+-- GRANT -- confirmed by grepping every GRANT ... ON workforce statement in
+-- this repo's migration history and finding no match for category_id.
+--
+-- BLAST RADIUS: any client code selecting category_id from workforce (which
+-- is now WORKFORCE_PUBLIC_COLUMNS' default shape, so essentially all of
+-- them) has been silently failing with a Postgres/PostgREST permission
+-- error since the category_id rewiring pass merged this session --
+-- including databaseService.getWorkforce() itself, which backs
+-- ResidentLoginView's own name picker. This was not caught by tsc (a
+-- runtime/DB-privilege issue, not a type error) or by the rewiring task's
+-- own worktree-agent verification (which correctly confirmed tsc clean and
+-- correct application code, but had no DB access to catch a live grant
+-- gap) -- only caught here via real browser network-request inspection
+-- against the live database.
+--
+-- FIX: grant SELECT (category_id) on workforce to anon, authenticated,
+-- matching the exact GRANT syntax every prior column addition used.
+--
+-- Applied live via .tmp-run-migration.cjs immediately after being written,
+-- given the severity -- not left pending.
+-- ====================================================================
+
+GRANT SELECT (category_id) ON workforce TO anon, authenticated;
+
+-- ====================================================================
+-- END OF MIGRATION 52
+-- ====================================================================
