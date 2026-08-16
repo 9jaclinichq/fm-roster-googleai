@@ -219,16 +219,20 @@ export async function runSubmissionChaser(
     subject_ref: subjectRefFor(collection.id, w.id),
   }));
 
-  // Upsert against the partial unique index (migration 38) instead of a
-  // plain insert: two near-simultaneous runs (e.g. a fast page reload
-  // remounting InsightsStrip before the first run's insert is visible to
-  // the second run's dedup SELECT) previously raced past the in-app dedup
-  // check and created duplicate rows for the same member/collection.
-  // ignoreDuplicates makes the second racer's redundant row a silent no-op
-  // at the database level instead of a duplicate insight.
+  // Upsert against the partial unique index (migration 38, widened by
+  // migration 49 to include doctor_id once insights became multi-scope)
+  // instead of a plain insert: two near-simultaneous runs (e.g. a fast page
+  // reload remounting InsightsStrip before the first run's insert is
+  // visible to the second run's dedup SELECT) previously raced past the
+  // in-app dedup check and created duplicate rows for the same member/
+  // collection. ignoreDuplicates makes the second racer's redundant row a
+  // silent no-op at the database level instead of a duplicate insight.
+  // This agent only ever inserts org-scoped rows (doctor_id always null
+  // here, per the rowsToInsert shape above) -- doctor_id is included in the
+  // conflict target only because it's part of the table's unique index now.
   const { error: insertErr } = await supabaseClient
     .from('insights')
-    .upsert(rowsToInsert, { onConflict: 'tenant_id,agent_key,subject_ref', ignoreDuplicates: true });
+    .upsert(rowsToInsert, { onConflict: 'tenant_id,doctor_id,agent_key,subject_ref', ignoreDuplicates: true });
   if (insertErr) throw insertErr;
 
   // One batched event for the whole run rather than one per insight — this

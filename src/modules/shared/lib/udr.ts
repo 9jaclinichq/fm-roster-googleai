@@ -21,10 +21,13 @@
 //     submissionChaserAgent.ts), started writing real rows there once it was
 //     wired into InsightsStrip.tsx. This function does NOT run that agent
 //     itself (still a pure read, no writes) — it only surfaces whatever
-//     insights already exist for this workforce member. Scoped by
-//     `workforce_id`, matching how insights are actually keyed today;
-//     unlinked doctors (no workforce row) always get `insights: []`, since
-//     nothing in this app raises insights against a bare doctor_id yet.
+//     insights already exist. Scoped by `workforce_id` when a workforce row
+//     is present; a genuinely unlinked doctor (migration 49 — insights.
+//     doctor_id — made this possible) is scoped by `doctor_id` instead, via
+//     fetchInsightsForDoctor(). Still returns `[]` for every doctor today,
+//     but now because no agent WRITES a doctor-scoped insight yet, not
+//     because the schema/read-path can't represent one — see migration 49's
+//     own header for the distinction.
 //   - `entries[]` covers `submissions` (monthly roster entries) and
 //     `case_reports` (the original 15-slot Casebook Builder MVP) plus
 //     `dissertation_milestones` — the three genuinely flat "one entry per
@@ -324,6 +327,31 @@ async function fetchInsights(client: SupabaseClient, workforceId: string): Promi
   }));
 }
 
+// Doctor-scoped counterpart, added by migration 49 once `insights` stopped
+// requiring a tenant_id and gained a nullable doctor_id column. No agent in
+// this app writes a doctor-scoped insight yet (Submission Chaser remains
+// org-only) — this function exists so that gap is a "nothing produces one
+// yet" state, not a "the read path can't even surface one if it existed"
+// state, matching migration 49's own header note on why both were fixed
+// together.
+async function fetchInsightsForDoctor(client: SupabaseClient, doctorId: string): Promise<UdrInsight[]> {
+  const { data, error } = await client
+    .from('insights')
+    .select('id, agent_key, rung, text, action, created_at')
+    .eq('doctor_id', doctorId)
+    .is('dismissed_at', null)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return ((data as InsightRow[] | null) ?? []).map((row) => ({
+    id: row.id,
+    agentKey: row.agent_key,
+    rung: row.rung,
+    text: row.text,
+    action: row.action ?? {},
+    createdAt: row.created_at,
+  }));
+}
+
 async function fetchActiveSubscription(client: SupabaseClient, workforceId: string): Promise<UserSubscription | null> {
   const { data, error } = await client
     .from('user_subscriptions')
@@ -442,6 +470,14 @@ export async function getUnifiedDoctorRecord(
     examReadiness = await fetchExamReadiness(supabaseClient, workforceRow.id);
     activeSubscription = await fetchActiveSubscription(supabaseClient, workforceRow.id);
     insights = await fetchInsights(supabaseClient, workforceRow.id);
+  } else if (doctorRow) {
+    // Genuinely unlinked doctor (no workforce row at all) — entries/
+    // academic/billing stay empty (those tables have no doctor_id path,
+    // per this file's own header note), but insights now can be non-empty
+    // since migration 49 added insights.doctor_id. Will still return []
+    // today since no agent writes one yet — see fetchInsightsForDoctor's
+    // own comment.
+    insights = await fetchInsightsForDoctor(supabaseClient, doctorRow.id);
   }
 
   entries.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
