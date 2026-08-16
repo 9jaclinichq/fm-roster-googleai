@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Hourglass, LogOut, FlaskConical, Stethoscope, ChevronRight, IdCard } from 'lucide-react';
+import { Hourglass, LogOut, FlaskConical, Stethoscope, ChevronRight, IdCard, Timer, Smile, ListTodo } from 'lucide-react';
 import { useTerminology } from '../../shared/terminology';
 import { DoctorIntegrationsPanel } from './DoctorIntegrationsPanel';
 import { DoctorFormsBuilderPanel } from './DoctorFormsBuilderPanel';
@@ -92,6 +92,48 @@ export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout
                 <span>
                   <span className="block text-sm font-bold text-slate-800">My Unified Record</span>
                   <span className="block text-[11px] text-slate-500 mt-0.5">Identity, workspaces, entries, academic & billing summary</span>
+                </span>
+              </span>
+              <ChevronRight size={16} className="text-slate-400 shrink-0" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/doctor/focus')}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition cursor-pointer"
+            >
+              <span className="flex items-center space-x-3">
+                <Timer size={16} className="text-blue-600 shrink-0" />
+                <span>
+                  <span className="block text-sm font-bold text-slate-800">Focus Mode</span>
+                  <span className="block text-[11px] text-slate-500 mt-0.5">Pomodoro-style deep-work timer</span>
+                </span>
+              </span>
+              <ChevronRight size={16} className="text-slate-400 shrink-0" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/doctor/wellbeing')}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition cursor-pointer"
+            >
+              <span className="flex items-center space-x-3">
+                <Smile size={16} className="text-blue-600 shrink-0" />
+                <span>
+                  <span className="block text-sm font-bold text-slate-800">Wellbeing</span>
+                  <span className="block text-[11px] text-slate-500 mt-0.5">Mood check-in and sleep tracking</span>
+                </span>
+              </span>
+              <ChevronRight size={16} className="text-slate-400 shrink-0" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/doctor/tasks')}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition cursor-pointer"
+            >
+              <span className="flex items-center space-x-3">
+                <ListTodo size={16} className="text-blue-600 shrink-0" />
+                <span>
+                  <span className="block text-sm font-bold text-slate-800">Tasks</span>
+                  <span className="block text-[11px] text-slate-500 mt-0.5">Your personal to-do list</span>
                 </span>
               </span>
               <ChevronRight size={16} className="text-slate-400 shrink-0" />

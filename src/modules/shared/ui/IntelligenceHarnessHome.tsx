@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, X, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic,
   ShieldCheck, FlaskConical, Stethoscope, IdCard, Clock, CheckCircle2, ChevronRight,
+  Timer, Smile, ListTodo, UsersRound,
 } from 'lucide-react';
 import { supabase, databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
 import { getActiveInsights, dismissInsight, InsightRow, SUBMISSION_CHASER_AGENT_KEY } from '../lib/submissionChaserAgent';
@@ -177,6 +178,10 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
     { label: 'Viva Simulator', icon: Mic, path: '/workspace/viva-simulator', accent: 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-100' },
     { label: 'Review Workspace', icon: ShieldCheck, path: '/workspace/consultant-review', accent: 'bg-teal-50 text-teal-600 border-teal-100' },
     { label: 'My Record', icon: IdCard, path: '/workspace/my-record', accent: 'bg-slate-100 text-slate-600 border-slate-200' },
+    { label: 'Focus Mode', icon: Timer, path: '/workspace/focus', accent: 'bg-sky-50 text-sky-600 border-sky-100' },
+    { label: 'Wellbeing', icon: Smile, path: '/workspace/wellbeing', accent: 'bg-pink-50 text-pink-600 border-pink-100' },
+    { label: 'Tasks', icon: ListTodo, path: '/workspace/tasks', accent: 'bg-lime-50 text-lime-600 border-lime-100' },
+    { label: 'Team Directory', icon: UsersRound, path: '/workspace/team', accent: 'bg-yellow-50 text-yellow-700 border-yellow-100' },
   ];
 
   return (
