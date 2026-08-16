@@ -163,6 +163,40 @@ export async function createFormInstanceForDoctor(
   return data;
 }
 
+// Doctor-owned equivalent of createFormEntry below, for a personal
+// (tenant_id-NULL, doctor_id-set) form_instances row (migration 40). No
+// tenantId/submittedByWorkforceId params — a bare doctor has neither; RLS
+// on form_entries derives ownership by joining instance_id back to
+// form_instances.doctor_id (see migration 40's header), so the row itself
+// needs no owner column. Powers DoctorFormsBuilderPanel.tsx's fill-in-and-
+// submit flow. Deliberately a separate function rather than an optional-arg
+// overload of createFormEntry, so the org-side call sites (currently none
+// yet, but the dual-write path is analogous) keep their existing required
+// signature unchanged.
+export async function createFormEntryForDoctor(
+  instanceId: string,
+  payload: Record<string, unknown>
+): Promise<FormEntry> {
+  checkSupabase();
+
+  const { data, error } = await supabase!
+    .from('form_entries')
+    .insert({
+      instance_id: instanceId,
+      tenant_id: null,
+      submitted_by_workforce_id: null,
+      payload,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.warn('Error creating doctor form entry:', error);
+    throw error;
+  }
+  return data;
+}
+
 // Inserts one form_entries row. Used by the ResidentFormView.tsx dual-write
 // to mirror a real submissions write into the generic Forms scaffold —
 // callers are expected to wrap this in their own try/catch and treat any

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { listFormInstancesForDoctor, createFormInstanceForDoctor } from '../../form/lib/formService';
-import { FormInstance, FormFieldDefinition } from '../../../types';
-import { ClipboardList, Plus, Trash2, FileText } from 'lucide-react';
+import { listFormInstancesForDoctor, createFormInstanceForDoctor, createFormEntryForDoctor, getFormEntries } from '../../form/lib/formService';
+import { FormInstance, FormFieldDefinition, FormEntry } from '../../../types';
+import { ClipboardList, Plus, Trash2, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 
 // Doctor-scoped sibling of
 // src/modules/org-admin/components/dashboard/FormsBuilderPanel.tsx —
@@ -13,11 +13,19 @@ import { ClipboardList, Plus, Trash2, FileText } from 'lucide-react';
 // as its own entry point rather than reusing FormsBuilderPanel directly
 // (a doctor has no tenantId to pass it).
 //
-// SCOPE — same as the org-side panel: create + list only, no edit/delete/
-// entries-viewer, no pipeline configuration UI. No AI Copilot integration
-// (out of scope per this task, same limitation CLAUDE.md documents for
-// doctor-owned research/casebook workspaces — no quota model exists for
-// bare doctors yet).
+// SCOPE — create + list, same as the org-side panel, PLUS an actual
+// fill-in-and-submit flow and a simple past-submissions list for the
+// doctor's own entries (the org-side panel only ever views entries
+// submitted by others; here the doctor IS the submitter, via
+// createFormEntryForDoctor — see formService.ts). Still no edit/delete of
+// instances or entries, no pipeline configuration UI. `file`-type fields
+// render a disabled placeholder with an explanatory note rather than a
+// working upload — this app has no generic Storage upload plumbing wired
+// into this module, and wiring one is out of scope here; a required file
+// field never blocks submission of the rest of the form. No AI Copilot
+// integration (out of scope per this task, same limitation CLAUDE.md
+// documents for doctor-owned research/casebook workspaces — no quota model
+// exists for bare doctors yet).
 //
 // Wired into DoctorHomeView.tsx as a third personal-instance entry point,
 // alongside the Research/Casebook workspace cards and the
@@ -72,6 +80,19 @@ export const DoctorFormsBuilderPanel: React.FC<DoctorFormsBuilderPanelProps> = (
   const [draftName, setDraftName] = useState('');
   const [draftFields, setDraftFields] = useState<DraftField[]>([emptyDraftField()]);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Expand-in-place fill/submit + past-submissions state, one instance open
+  // at a time (mirrors this file's own showCreateForm pattern rather than
+  // the org-side panel's fully independent per-row state, since a doctor
+  // only ever needs to look at one of their own forms at a time).
+  const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
+  const [entriesByInstance, setEntriesByInstance] = useState<Record<string, FormEntry[]>>({});
+  const [entriesLoading, setEntriesLoading] = useState<Record<string, boolean>>({});
+  const [entriesError, setEntriesError] = useState<Record<string, string>>({});
+  const [draftPayload, setDraftPayload] = useState<Record<string, unknown>>({});
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [isSubmittingEntry, setIsSubmittingEntry] = useState(false);
+  const [entrySubmitMessage, setEntrySubmitMessage] = useState('');
 
   const load = async () => {
     setIsLoading(true);
@@ -143,6 +164,174 @@ export const DoctorFormsBuilderPanel: React.FC<DoctorFormsBuilderPanelProps> = (
     }
   };
 
+  const loadEntries = (instanceId: string) => {
+    setEntriesLoading(prev => ({ ...prev, [instanceId]: true }));
+    setEntriesError(prev => ({ ...prev, [instanceId]: '' }));
+    getFormEntries(instanceId)
+      .then(rows => {
+        setEntriesByInstance(prev => ({ ...prev, [instanceId]: rows }));
+      })
+      .catch(err => {
+        console.warn(err);
+        setEntriesError(prev => ({ ...prev, [instanceId]: 'Could not load your past submissions.' }));
+      })
+      .finally(() => {
+        setEntriesLoading(prev => ({ ...prev, [instanceId]: false }));
+      });
+  };
+
+  const toggleExpandInstance = (instanceId: string) => {
+    if (expandedInstanceId === instanceId) {
+      setExpandedInstanceId(null);
+      return;
+    }
+    setExpandedInstanceId(instanceId);
+    setDraftPayload({});
+    setFieldErrors({});
+    setEntrySubmitMessage('');
+    if (entriesByInstance[instanceId] === undefined) {
+      loadEntries(instanceId);
+    }
+  };
+
+  const updateDraftValue = (key: string, value: unknown) => {
+    setDraftPayload(prev => ({ ...prev, [key]: value }));
+  };
+
+  // Renders one entry's payload against the instance's own schema.fields —
+  // same simple boolean->Yes/No, everything-else->String(...) formatting
+  // FormsBuilderPanel.tsx's (org-side) entries viewer uses.
+  const formatEntryValue = (field: FormFieldDefinition, raw: unknown): string => {
+    if (raw === undefined || raw === null || raw === '') return '—';
+    if (field.type === 'boolean') return raw ? 'Yes' : 'No';
+    return String(raw);
+  };
+
+  const handleSubmitEntry = async (inst: FormInstance) => {
+    const fields = inst.schema?.fields ?? [];
+    const errors: Record<string, string> = {};
+    fields.forEach(field => {
+      // `file` fields are never validated as required — there is no working
+      // upload path for them yet (see this file's header note), so blocking
+      // submission on an unfillable field would be a dead end.
+      if (field.type === 'file' || !field.required) return;
+      const value = draftPayload[field.key];
+      if (value === undefined || value === null || value === '') {
+        errors[field.key] = 'Required';
+      }
+    });
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setEntrySubmitMessage('Please fill in all required fields.');
+      return;
+    }
+
+    setIsSubmittingEntry(true);
+    setEntrySubmitMessage('');
+    try {
+      const payload: Record<string, unknown> = {};
+      fields.forEach(field => {
+        if (field.type === 'file') return;
+        if (draftPayload[field.key] !== undefined) payload[field.key] = draftPayload[field.key];
+      });
+      await createFormEntryForDoctor(inst.id, payload);
+      setEntrySubmitMessage('Submitted.');
+      setDraftPayload({});
+      setFieldErrors({});
+      loadEntries(inst.id);
+    } catch (err) {
+      console.warn(err);
+      setEntrySubmitMessage('Failed to submit. Please try again.');
+    } finally {
+      setIsSubmittingEntry(false);
+    }
+  };
+
+  const renderFieldInput = (field: FormFieldDefinition) => {
+    const value = draftPayload[field.key];
+    const hasError = !!fieldErrors[field.key];
+    const baseClass = `mt-1 w-full border rounded-lg px-3 py-1.5 text-sm ${hasError ? 'border-rose-400' : 'border-slate-200'}`;
+
+    if (field.type === 'file') {
+      return (
+        <div>
+          <input type="file" disabled className={`${baseClass} bg-slate-100 text-slate-400 cursor-not-allowed`} />
+          <p className="text-[10px] text-amber-600 mt-1">File upload not yet supported in this form.</p>
+        </div>
+      );
+    }
+
+    if (field.type === 'textarea') {
+      return (
+        <textarea
+          value={typeof value === 'string' ? value : ''}
+          onChange={e => updateDraftValue(field.key, e.target.value)}
+          className={baseClass}
+          rows={3}
+        />
+      );
+    }
+
+    if (field.type === 'boolean') {
+      const boolValue = value === true ? 'yes' : value === false ? 'no' : '';
+      return (
+        <select
+          value={boolValue}
+          onChange={e => updateDraftValue(field.key, e.target.value === '' ? undefined : e.target.value === 'yes')}
+          className={baseClass}
+        >
+          <option value="">Select...</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      );
+    }
+
+    if (field.type === 'select') {
+      return (
+        <select
+          value={typeof value === 'string' ? value : ''}
+          onChange={e => updateDraftValue(field.key, e.target.value === '' ? undefined : e.target.value)}
+          className={baseClass}
+        >
+          <option value="">Select...</option>
+          {(field.options ?? []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      );
+    }
+
+    if (field.type === 'number') {
+      return (
+        <input
+          type="number"
+          value={typeof value === 'number' || typeof value === 'string' ? value : ''}
+          onChange={e => updateDraftValue(field.key, e.target.value === '' ? undefined : Number(e.target.value))}
+          className={baseClass}
+        />
+      );
+    }
+
+    if (field.type === 'date') {
+      return (
+        <input
+          type="date"
+          value={typeof value === 'string' ? value : ''}
+          onChange={e => updateDraftValue(field.key, e.target.value === '' ? undefined : e.target.value)}
+          className={baseClass}
+        />
+      );
+    }
+
+    return (
+      <input
+        type="text"
+        value={typeof value === 'string' ? value : ''}
+        onChange={e => updateDraftValue(field.key, e.target.value)}
+        className={baseClass}
+      />
+    );
+  };
+
   return (
     <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6 space-y-4">
       <div>
@@ -172,17 +361,92 @@ export const DoctorFormsBuilderPanel: React.FC<DoctorFormsBuilderPanelProps> = (
           <p className="text-xs text-slate-400">No personal forms yet — create one to get started.</p>
         )}
         <div className="space-y-2">
-          {instances.map(inst => (
-            <div key={inst.id} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-800 truncate">{inst.name}</p>
-                <p className="text-[10px] text-slate-500">
-                  {inst.schema?.fields?.length ?? 0} field{inst.schema?.fields?.length === 1 ? '' : 's'}
-                  {inst.is_active ? '' : ' • inactive'}
-                </p>
+          {instances.map(inst => {
+            const isExpanded = expandedInstanceId === inst.id;
+            const fields = inst.schema?.fields ?? [];
+            const entries = entriesByInstance[inst.id];
+            const isLoadingEntries = !!entriesLoading[inst.id];
+            const entryError = entriesError[inst.id];
+            return (
+              <div key={inst.id} className="bg-slate-50 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => toggleExpandInstance(inst.id)}
+                  className="w-full flex items-center justify-between px-3 py-2 text-left cursor-pointer hover:bg-slate-100"
+                >
+                  <div className="min-w-0 flex items-center gap-2">
+                    {isExpanded ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{inst.name}</p>
+                      <p className="text-[10px] text-slate-500">
+                        {fields.length} field{fields.length === 1 ? '' : 's'}
+                        {inst.is_active ? '' : ' • inactive'}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+
+                {isExpanded && (
+                  <div className="px-3 pb-3 space-y-4 border-t border-slate-200 pt-3">
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-bold text-slate-600">Fill In &amp; Submit</h4>
+                      {fields.length === 0 && <p className="text-xs text-slate-400">This form has no fields yet.</p>}
+                      {fields.map(field => (
+                        <div key={field.key}>
+                          <label className="text-xs font-semibold text-slate-600">
+                            {field.label}{field.required ? ' *' : ''}
+                          </label>
+                          {renderFieldInput(field)}
+                          {fieldErrors[field.key] && (
+                            <p className="text-[10px] text-rose-600 mt-0.5">{fieldErrors[field.key]}</p>
+                          )}
+                        </div>
+                      ))}
+                      {entrySubmitMessage && (
+                        <p className={`text-xs ${entrySubmitMessage === 'Submitted.' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {entrySubmitMessage}
+                        </p>
+                      )}
+                      {fields.length > 0 && (
+                        <button
+                          onClick={() => handleSubmitEntry(inst)}
+                          disabled={isSubmittingEntry}
+                          className="text-xs font-bold bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 cursor-pointer disabled:opacity-50"
+                        >
+                          {isSubmittingEntry ? 'Submitting...' : 'Submit'}
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="space-y-2 border-t border-slate-200 pt-3">
+                      <h4 className="text-xs font-bold text-slate-600">Your Past Submissions</h4>
+                      {isLoadingEntries && <p className="text-xs text-slate-400">Loading...</p>}
+                      {!isLoadingEntries && entryError && <p className="text-xs text-rose-600">{entryError}</p>}
+                      {!isLoadingEntries && !entryError && entries && entries.length === 0 && (
+                        <p className="text-xs text-slate-400">No submissions yet.</p>
+                      )}
+                      {!isLoadingEntries && !entryError && entries && entries.length > 0 && (
+                        <div className="space-y-2">
+                          {entries.map(entry => (
+                            <div key={entry.id} className="bg-white rounded-lg border border-slate-200 px-3 py-2">
+                              <div className="space-y-0.5">
+                                {fields.map(field => (
+                                  <p key={field.key} className="text-xs text-slate-700">
+                                    <span className="font-semibold text-slate-500">{field.label}:</span>{' '}
+                                    {formatEntryValue(field, entry.payload?.[field.key])}
+                                  </p>
+                                ))}
+                              </div>
+                              <p className="text-[10px] text-slate-400 mt-1">{new Date(entry.created_at).toLocaleString()}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
