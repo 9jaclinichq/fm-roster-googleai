@@ -257,24 +257,19 @@ export async function listMeetingActions(meetingId: string): Promise<MeetingActi
 // Creates a new action item against a meeting (the action-tracker
 // pipeline's write path, §7/§8.2).
 //
-// EVENT EMISSION — deliberate followup, not silently done: the spec's §6
-// vocabulary names `meeting.action.owed` for exactly this write. This
-// function does NOT call emitEvent(...) (src/modules/shared/lib/
-// eventBus.ts) — wiring it in here would be a one-line addition, but
-// eventBus.ts's own header documents that "nothing in this app currently
-// reads event_log back out" and every existing call site treats emission
-// as the caller's/a higher layer's decision (see submissionChaserAgent.ts
-// for the one real producer so far). Adding a spine-level side effect to
-// a first-slice, not-yet-wired-into-any-UI service felt like scope beyond
-// what this pass asked for. If/when this module is wired into the
-// dashboard, add here:
-//   if (dueDate) {
-//     await emitEvent(supabase!, {
-//       tenantId, eventType: 'meeting.action.owed',
-//       payload: { meeting_id: meetingId, description, due_date: dueDate },
-//       source: 'meetings_module',
-//     });
-//   }
+// EVENT EMISSION — this used to carry a dead, commented-out emitEvent(...,
+// 'meeting.action.owed', ...) call here, flagged as a deliberate followup.
+// Superseded, not activated as-is: firing 'meeting.action.owed' at CREATION
+// time (as the old draft called did) would mislabel every action with a
+// future due_date as already "owed," which isn't right — an action only
+// becomes overdue once its own due_date actually passes. That surfacing is
+// now handled by src/modules/shared/lib/meetingActionAgent.ts
+// (runMeetingActionChaser): it scans meeting_actions for rows genuinely past
+// due_date, raises a dismissible `insights` row per overdue action (visible
+// to both the Chief and the action's owner), and emits ONE batched
+// 'meeting.action.owed' event_log row per run — same pattern
+// submissionChaserAgent.ts established for the monthly-submission module.
+// This function itself stays a plain insert with no spine side effect.
 export async function createMeetingAction(
   meetingId: string,
   description: string,

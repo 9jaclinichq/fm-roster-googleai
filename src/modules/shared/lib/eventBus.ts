@@ -59,6 +59,11 @@ export type EventType =
   | 'meeting.scheduled'
   | 'meeting.completed'
   | 'meeting.cancelled'
+  // --- meeting actions (action-tracker pipeline, migration 45 §6 vocabulary
+  //     — 'meeting.item.raised' stays unreserved/unused, no producer yet;
+  //     'meeting.action.owed' is emitted by meetingActionAgent.ts's batched
+  //     run event) ---
+  | 'meeting.action.owed'
   // --- billing ---
   | 'billing.checkout_started'
   | 'billing.subscription_activated'
