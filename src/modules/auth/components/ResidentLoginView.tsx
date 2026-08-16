@@ -158,12 +158,18 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
   };
 
   const selectedResidentObj = workforce.find((w) => w.id === selectedId);
-  // Only meaningful when the org picker below is hidden (incomingTenantId
-  // set, i.e. arrived here already having chosen an org on
-  // TenantSelectorView) — otherwise the picker itself already shows this.
-  // Without it, this screen gave zero indication of which organization's
-  // login form was actually being shown.
   const selectedTenantName = tenants.find((tn) => tn.id === selectedTenantId)?.name;
+  // The org picker below only renders when there's genuinely a choice to
+  // make (more than one active tenant) AND it wasn't already made on
+  // TenantSelectorView. Whenever the picker is hidden for EITHER reason —
+  // not just the incomingTenantId case — this screen must show the org
+  // name some other way, or it gives zero indication of which
+  // organization's login form is being shown. This mirrors the picker's
+  // own condition exactly (negated) rather than only checking
+  // incomingTenantId, which missed today's actual reality: only one
+  // active tenant exists, so the picker is ALSO hidden on a direct/
+  // bookmarked visit with no carried-forward tenant state.
+  const isOrgPickerHidden = !(tenants.length > 1 && !incomingTenantId);
 
   return (
     <div className="max-w-md mx-auto my-12 px-4">
@@ -174,7 +180,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
             <KeyRound size={20} />
           </div>
           <h2 className="text-xl font-bold tracking-tight">{portalLabel}</h2>
-          {incomingTenantId && selectedTenantName && (
+          {isOrgPickerHidden && selectedTenantName && (
             <p className="flex items-center justify-center space-x-1.5 text-xs text-blue-100 mt-1.5 font-semibold">
               <Building2 size={12} className="shrink-0" />
               <span>{selectedTenantName}</span>
