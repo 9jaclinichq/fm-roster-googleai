@@ -26,7 +26,7 @@
 
 export interface BrandProfile {
   /** Stable key for the profile. */
-  key: 'b2c_independent' | 'b2b_institutional';
+  key: 'b2c_independent' | 'b2b_institutional' | 'neutral';
   /** Full product name, e.g. shown in the browser tab. */
   productName: string;
   /** Short product name for tight UI spots. */
@@ -58,6 +58,24 @@ export const B2B_UCH_BRAND: BrandProfile = {
 };
 
 /**
+ * No-session fallback for getFooterBrand() — nobody is signed in yet, so
+ * there is no organization or individual name to show. Deliberately
+ * carries neither an org name nor a personal-practice label, unlike either
+ * real profile above (bug fix, 2026-08-16: getFooterBrand previously fell
+ * back to getActiveBrand(), which is always the B2B/institutional profile,
+ * so the footer showed "PrivyDoc — UCH Family Medicine" even before login
+ * or after logout).
+ */
+export const NEUTRAL_BRAND: BrandProfile = {
+  key: 'neutral',
+  productName: 'PrivyDoc Workspace',
+  shortName: 'PrivyDoc Workspace',
+  logoInitials: 'PD',
+  orgLabel: '',
+  copyrightHolder: 'PrivyDoc Workspace',
+};
+
+/**
  * The brand active for session-agnostic UI (Navbar logo, tab title, login
  * screen chrome pre-authentication). Always the B2B/institutional profile —
  * the org-vs-individual choice lives at /login (AuthLandingView) and in
@@ -78,8 +96,9 @@ export function getActiveBrand(): BrandProfile {
  * Precedence: an institutional session (a resident/chief — including a
  * doctor account a Chief has linked to a workforce row, migration 18) is
  * always org-branded. An authenticated-but-unlinked individual doctor is
- * always personally-branded. With no session at all (pre-login screens),
- * falls back to getActiveBrand() since there's nothing else to go on yet.
+ * always personally-branded. With no session at all (pre-login screens, or
+ * after logout), falls back to NEUTRAL_BRAND — there is no org or personal
+ * name to show yet, so the footer reads just "PrivyDoc Workspace".
  */
 export function getFooterBrand(session: {
   hasInstitutionalSession: boolean;
@@ -87,5 +106,5 @@ export function getFooterBrand(session: {
 }): BrandProfile {
   if (session.hasInstitutionalSession) return B2B_UCH_BRAND;
   if (session.hasIndividualDoctorSession) return B2C_INDEPENDENT_BRAND;
-  return getActiveBrand();
+  return NEUTRAL_BRAND;
 }
