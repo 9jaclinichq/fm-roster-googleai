@@ -13,6 +13,7 @@ import { IntegrationsPanel } from './dashboard/IntegrationsPanel';
 import { CategoryManagerPanel } from './dashboard/CategoryManagerPanel';
 import { SchedulingBuilderView } from '../../scheduling/components/SchedulingBuilderView';
 import { MeetingsPanel } from '../../meetings/components/MeetingsPanel';
+import { ClinicalWritingPanel } from '../../clinical-writing/components/ClinicalWritingPanel';
 
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
 // only needed when the Chief actually opens the Knowledge Packs tab.
@@ -60,7 +61,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'categories' | 'scheduling' | 'meetings' | 'settings'>('submissions');
+  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'categories' | 'scheduling' | 'meetings' | 'clinical-writing' | 'settings'>('submissions');
 
   // Role delegation state (migration 36 — org-defined groups, replacing the
   // previously hardcoded 4-value subadmin role list)
@@ -976,6 +977,16 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           Meetings
         </button>
         <button
+          onClick={() => setActiveTab('clinical-writing')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'clinical-writing'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Clinical Writing
+        </button>
+        <button
           onClick={() => setActiveTab('settings')}
           className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === 'settings'
@@ -1172,6 +1183,11 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         {/* TAB 9e: MEETINGS (migration 45 — Meetings & Actions module) */}
         {activeTab === 'meetings' && (
           <MeetingsPanel tenantId={tenantId ?? DEFAULT_TENANT_ID} createdByWorkforceId={null} />
+        )}
+
+        {/* TAB 9f: CLINICAL WRITING (migration 48 — Clinical & Professional Writing module) */}
+        {activeTab === 'clinical-writing' && (
+          <ClinicalWritingPanel tenantId={tenantId ?? DEFAULT_TENANT_ID} createdByWorkforceId={null} />
         )}
 
         {/* TAB 10: SETTINGS & COLLECTIONS */}
