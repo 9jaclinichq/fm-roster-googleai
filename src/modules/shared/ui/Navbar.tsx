@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { databaseService } from '../../../lib/databaseService';
 import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
 import { useTerminology } from '../terminology';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard } from 'lucide-react';
 
 // Minimal event typing for the non-standard `beforeinstallprompt` event —
 // not part of the DOM lib TypeScript ships with.
@@ -30,6 +30,7 @@ interface NavbarProps {
   onNavigateToConsultantReview: () => void;
   onNavigateToResearch: () => void;
   onNavigateToCasebookLogbook: () => void;
+  onNavigateToMyRecord: () => void;
   currentView:
     | 'resident'
     | 'resident-announcements'
@@ -41,6 +42,7 @@ interface NavbarProps {
     | 'resident-consultant-review'
     | 'resident-research'
     | 'resident-casebook-logbook'
+    | 'resident-my-record'
     | 'chief'
     | 'resident-login'
     | 'chief-login'
@@ -61,6 +63,7 @@ const RESIDENT_VIEWS = [
   'resident-consultant-review',
   'resident-research',
   'resident-casebook-logbook',
+  'resident-my-record',
 ];
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -82,6 +85,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigateToConsultantReview,
   onNavigateToResearch,
   onNavigateToCasebookLogbook,
+  onNavigateToMyRecord,
   currentView
 }) => {
   const brand = getActiveBrand();
@@ -364,6 +368,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Stethoscope size={13} />
               <span>Casebook & Logbook</span>
+            </button>
+            <button
+              onClick={onNavigateToMyRecord}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
+                currentView === 'resident-my-record'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <IdCard size={13} />
+              <span>My Record</span>
             </button>
           </div>
         )}

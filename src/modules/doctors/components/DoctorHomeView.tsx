@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Hourglass, LogOut, FlaskConical, Stethoscope, ChevronRight } from 'lucide-react';
+import { Hourglass, LogOut, FlaskConical, Stethoscope, ChevronRight, IdCard } from 'lucide-react';
 import { useTerminology } from '../../shared/terminology';
 import { DoctorIntegrationsPanel } from './DoctorIntegrationsPanel';
 import { DoctorFormsBuilderPanel } from './DoctorFormsBuilderPanel';
@@ -78,6 +78,20 @@ export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout
                 <span>
                   <span className="block text-sm font-bold text-slate-800">Personal Casebook</span>
                   <span className="block text-[11px] text-slate-500 mt-0.5">WACP/NPMCN case write-ups, family tools</span>
+                </span>
+              </span>
+              <ChevronRight size={16} className="text-slate-400 shrink-0" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/doctor/my-record')}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition cursor-pointer"
+            >
+              <span className="flex items-center space-x-3">
+                <IdCard size={16} className="text-blue-600 shrink-0" />
+                <span>
+                  <span className="block text-sm font-bold text-slate-800">My Unified Record</span>
+                  <span className="block text-[11px] text-slate-500 mt-0.5">Identity, workspaces, entries, academic & billing summary</span>
                 </span>
               </span>
               <ChevronRight size={16} className="text-slate-400 shrink-0" />

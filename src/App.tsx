@@ -1,6 +1,7 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Navbar } from './modules/shared/ui/Navbar';
+import { UnifiedRecordView } from './modules/shared/ui/UnifiedRecordView';
 import { DevHelper } from './modules/shared/ui/DevHelper';
 import { LoadingShell } from './modules/shared/ui/LoadingShell';
 import { OfflineBanner } from './modules/shared/ui/OfflineBanner';
@@ -247,6 +248,7 @@ function MainAppContent() {
     if (path.startsWith('/workspace/consultant-review')) return 'resident-consultant-review';
     if (path.startsWith('/workspace/research')) return 'resident-research';
     if (path.startsWith('/workspace/casebook-logbook')) return 'resident-casebook-logbook';
+    if (path.startsWith('/workspace/my-record')) return 'resident-my-record';
     if (path.startsWith('/workspace/form')) return 'resident';
     if (path === '/login') return 'auth-landing';
     if (path.startsWith('/doctor/register')) return 'doctor-register';
@@ -348,6 +350,7 @@ function MainAppContent() {
         onNavigateToConsultantReview={() => navigate('/workspace/consultant-review')}
         onNavigateToResearch={() => navigate('/workspace/research')}
         onNavigateToCasebookLogbook={() => navigate('/workspace/casebook-logbook')}
+        onNavigateToMyRecord={() => navigate('/workspace/my-record')}
         currentView={getCurrentViewName()}
       />
 
@@ -582,6 +585,19 @@ function MainAppContent() {
             }
           />
 
+          {/* Unified Doctor Record — first real caller of getUnifiedDoctorRecord()
+              (src/modules/shared/lib/udr.ts), see UnifiedRecordView's own header. */}
+          <Route
+            path="/workspace/my-record"
+            element={
+              currentResident ? (
+                <UnifiedRecordView owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce', tenantId: currentResident.tenant_id ?? DEFAULT_TENANT_ID }} />
+              ) : (
+                <Navigate to="/workspace/login" replace />
+              )
+            }
+          />
+
           {/* Unlinked individual-doctor personal workspaces (migration 25) —
               mirror the /workspace/* routes above but owner.kind: 'doctor'
               and no tenant/AI-Copilot access (see each view's owner.kind
@@ -610,6 +626,18 @@ function MainAppContent() {
                   owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor', tenantId: DEFAULT_TENANT_ID }}
                   canManageLogbooks={false}
                 />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+          <Route
+            path="/doctor/my-record"
+            element={
+              currentResident ? (
+                <Navigate to="/workspace/my-record" replace />
+              ) : currentDoctor ? (
+                <UnifiedRecordView owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor', tenantId: DEFAULT_TENANT_ID }} />
               ) : (
                 <Navigate to="/login" replace />
               )
