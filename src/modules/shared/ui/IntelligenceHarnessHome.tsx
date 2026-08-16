@@ -73,6 +73,17 @@ function greetingForNow(): string {
   return 'Good evening';
 }
 
+// A naive `name.split(' ')[0]` breaks when full_name includes an honorific
+// prefix (e.g. "Dr. Adebayo" -> "Dr."), a real case in this app's live data
+// — the greeting would show "Dr. 👋" with no actual name. Strips common
+// honorifics before taking the first remaining word.
+const HONORIFIC_PREFIXES = ['dr', 'dr.', 'prof', 'prof.', 'mr', 'mr.', 'mrs', 'mrs.', 'ms', 'ms.'];
+function firstNameFor(fullName: string): string {
+  const words = fullName.trim().split(/\s+/);
+  const firstReal = words.find((w) => !HONORIFIC_PREFIXES.includes(w.toLowerCase()));
+  return firstReal || words[0] || fullName;
+}
+
 interface TodaysFocusState {
   loading: boolean;
   collectionTitle: string | null;
@@ -189,7 +200,7 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
       {/* Greeting header */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{greetingForNow()}</p>
-        <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-0.5">{resident.name.split(' ')[0]} 👋</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-0.5">{firstNameFor(resident.name)} 👋</h1>
         <p className="text-xs text-slate-500 mt-1">{resident.category} &bull; {t('member', 'Resident')}</p>
       </div>
 

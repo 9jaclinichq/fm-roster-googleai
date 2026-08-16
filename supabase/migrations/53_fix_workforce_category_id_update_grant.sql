@@ -1,0 +1,32 @@
+-- ====================================================================
+-- FM Roster - Migration 53: fix missing column-level UPDATE grant on
+-- workforce.category_id (found via live browser QA, 2026-08-16)
+-- ====================================================================
+-- PREREQUISITE: migrations 01-52 already applied (migration 52 fixed the
+-- SELECT half of this same gap; this fixes the UPDATE half).
+--
+-- ROOT CAUSE: same as migration 52 -- migration 39 added
+-- workforce.category_id but never granted anon/authenticated UPDATE on it,
+-- unlike every other writable column added to this table (e.g. migration
+-- 10's `on_floor`, migration 11's `tenant_id`, both granted SELECT+UPDATE
+-- together). Confirmed via a direct information_schema.column_privileges
+-- query against the live database: category_id has SELECT (fixed by
+-- migration 52), INSERT, and REFERENCES, but no UPDATE, for either role.
+--
+-- BLAST RADIUS: databaseService.updateWorkforceMember(id, { category_id })
+-- -- called from ChiefDashboardView.tsx's handleEditWorkforceMember, i.e.
+-- every time a Chief edits an existing member's category via
+-- WorkforceRegistryPanel's edit form -- would 401 on this column, silently
+-- failing to persist the category change (the RPC-driven category TEXT
+-- column would still update correctly via chief_add_workforce_member's own
+-- path for NEW members, but editing an EXISTING member's category_id via
+-- direct .update() would fail).
+--
+-- FIX: grant UPDATE (category_id) on workforce to anon, authenticated.
+-- ====================================================================
+
+GRANT UPDATE (category_id) ON workforce TO anon, authenticated;
+
+-- ====================================================================
+-- END OF MIGRATION 53
+-- ====================================================================
