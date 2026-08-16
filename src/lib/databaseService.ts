@@ -95,7 +95,9 @@ function checkSupabase() {
 // is deliberately excluded — that column is locked down at the database
 // level (see supabase/migrations/01_rbac_and_rotations.sql) and only ever
 // returned by the chief_* RPCs below, which re-verify the admin code first.
-const WORKFORCE_PUBLIC_COLUMNS = 'id, full_name, category, active, on_floor, tenant_id, doctor_id, created_at';
+// category_id added (migration 39 rewiring) alongside the legacy `category`
+// text column — see WorkforceMember.category_id's comment in types.ts.
+const WORKFORCE_PUBLIC_COLUMNS = 'id, full_name, category, category_id, active, on_floor, tenant_id, doctor_id, created_at';
 
 // Fixed id of the UCH Family Medicine seed tenant (migration 11) — the
 // only tenant that exists today. Used as a fallback default; components
@@ -144,9 +146,11 @@ export const databaseService = {
     return (Array.isArray(data) ? data[0] : data) as WorkforceMember;
   },
 
-  // Updates non-code fields only (full_name, category, active, on_floor).
-  // Resident code changes must go through resetResidentAccessCode().
-  async updateWorkforceMember(id: string, updates: Partial<Pick<WorkforceMember, 'full_name' | 'category' | 'active' | 'on_floor'>>): Promise<WorkforceMember> {
+  // Updates non-code fields only (full_name, category, category_id, active,
+  // on_floor). Resident code changes must go through resetResidentAccessCode().
+  // category_id is a direct .update() on the already-permissive `workforce`
+  // table (migration 39) — not an RPC, so it needs no migration to widen.
+  async updateWorkforceMember(id: string, updates: Partial<Pick<WorkforceMember, 'full_name' | 'category' | 'category_id' | 'active' | 'on_floor'>>): Promise<WorkforceMember> {
     checkSupabase();
 
     const { data, error } = await supabase!
@@ -366,9 +370,13 @@ export const databaseService = {
     // a matching workforce row). tenantId defaults to DEFAULT_TENANT_ID for
     // resident-facing call sites; Chief-facing callers pass their resolved
     // tenant explicitly.
+    // category_id added (migration 39 rewiring) so callers (ChiefDashboardView's
+    // CSV export / category filter) can prefer a resolved org-category label
+    // over the legacy `category` text — see WorkforceMember.category_id's
+    // comment in types.ts.
     let query = supabase!
       .from('submissions')
-      .select('*, workforce!inner(full_name, category, tenant_id)')
+      .select('*, workforce!inner(full_name, category, category_id, tenant_id)')
       .eq('workforce.tenant_id', tenantId);
 
     if (collectionId) {
@@ -1261,9 +1269,11 @@ export const databaseService = {
   async getDelegatedRoles(tenantId: string): Promise<DelegatedRole[]> {
     checkSupabase();
 
+    // category_id added (migration 39 rewiring) so RoleDelegationPanel can
+    // prefer a resolved org-category label over the legacy `category` text.
     const { data, error } = await supabase!
       .from('user_roles')
-      .select('*, workforce!inner(full_name, category, tenant_id), org_group:org_groups(*)')
+      .select('*, workforce!inner(full_name, category, category_id, tenant_id), org_group:org_groups(*)')
       .eq('workforce.tenant_id', tenantId)
       .not('org_group_id', 'is', null)
       .order('created_at', { ascending: true });

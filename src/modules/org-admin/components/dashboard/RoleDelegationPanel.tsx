@@ -1,11 +1,16 @@
 import React from 'react';
-import { DelegatedRole, OrgGroup, WorkforceMember } from '../../../../types';
+import { DelegatedRole, OrgGroup, WorkforceCategory, WorkforceMember } from '../../../../types';
 import { ShieldCheck, UserPlus, AlertTriangle, FolderPlus } from 'lucide-react';
 import { useTerminology } from '../../../shared/terminology';
 
 interface RoleDelegationPanelProps {
   delegatedRoles: DelegatedRole[];
   orgGroups: OrgGroup[];
+  // Tenant's own live category vocabulary (migration 39 rewiring) — used to
+  // resolve a display label for the 2 read-only category sites below,
+  // preferring category_id when set and falling back to the legacy
+  // free-text `category` column. Pure display here, not editable.
+  workforceCategories: WorkforceCategory[];
   delegateRoleFilter: string;
   setDelegateRoleFilter: (value: string) => void;
   workforce: WorkforceMember[];
@@ -43,6 +48,7 @@ interface RoleDelegationPanelProps {
 export const RoleDelegationPanel: React.FC<RoleDelegationPanelProps> = ({
   delegatedRoles,
   orgGroups,
+  workforceCategories,
   delegateRoleFilter,
   setDelegateRoleFilter,
   workforce,
@@ -67,6 +73,18 @@ export const RoleDelegationPanel: React.FC<RoleDelegationPanelProps> = ({
   handleCreateOrgGroup,
 }) => {
   const { t } = useTerminology();
+
+  // Prefer the tenant's own (possibly renamed) live category label when
+  // category_id is set, falling back to the legacy free-text column.
+  const resolveCategoryLabel = (w: { category?: string; category_id?: string | null } | null | undefined): string => {
+    if (!w) return '';
+    if (w.category_id) {
+      const match = workforceCategories.find(c => c.id === w.category_id);
+      if (match) return match.label;
+    }
+    return w.category || '';
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* List of delegated roles */}
@@ -99,7 +117,7 @@ export const RoleDelegationPanel: React.FC<RoleDelegationPanelProps> = ({
                   <div className="min-w-0">
                     <div className="font-bold text-slate-900 text-sm truncate">{role.workforce?.full_name || 'Unknown member'}</div>
                     <div className="flex items-center space-x-2 mt-0.5">
-                      <span className="text-[10px] text-slate-500">{role.workforce?.category}</span>
+                      <span className="text-[10px] text-slate-500">{resolveCategoryLabel(role.workforce)}</span>
                       <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
                         {role.org_group?.label || role.role_id}
                       </span>
@@ -147,7 +165,7 @@ export const RoleDelegationPanel: React.FC<RoleDelegationPanelProps> = ({
               >
                 <option value="">Select a member...</option>
                 {workforce.map(w => (
-                  <option key={w.id} value={w.id}>{w.full_name} ({w.category})</option>
+                  <option key={w.id} value={w.id}>{w.full_name} ({resolveCategoryLabel(w)})</option>
                 ))}
               </select>
             </div>
