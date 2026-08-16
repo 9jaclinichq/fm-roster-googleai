@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#3730a3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background: fills the full square edge-to-edge (maskable-icon safe) -->
+  <rect x="0" y="0" width="512" height="512" rx="115" fill="url(#bg)"/>
+
+  <!-- Monogram, centered well within the maskable safe-zone circle -->
+  <text x="256" y="290" text-anchor="middle" dominant-baseline="central"
+        font-family="Arial, Helvetica, sans-serif" font-weight="800"
+        font-size="200" letter-spacing="-4" fill="#ffffff">PD</text>
+
+  <!-- "Intelligent workspace" sparkle accent, same 4-point twinkle motif
+       used throughout the app's own AI-feature UI (lucide-react Sparkles) -->
+  <path fill="#ffffff" d="M410,160 L387.1,167.1 L380,190 L372.9,167.1 L350,160 L372.9,152.9 L380,130 L387.1,152.9 Z"/>
+</svg>
