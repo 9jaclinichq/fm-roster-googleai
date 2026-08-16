@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/databaseService';
 import { getUnifiedDoctorRecord, UnifiedDoctorRecord, UdrInstanceType, UdrEntryType } from '../lib/udr';
+import { runRubricComplianceChaserForDoctor } from '../lib/rubricComplianceAgent';
 import {
   RefreshCw, IdCard, Building2, FolderKanban, History, GraduationCap, CreditCard, Sparkles, ChevronRight,
 } from 'lucide-react';
@@ -56,16 +57,38 @@ export const UnifiedRecordView: React.FC<UnifiedRecordViewProps> = ({ owner }) =
     let cancelled = false;
     setIsLoading(true);
     setError(null);
-    getUnifiedDoctorRecord(supabase, owner.kind === 'workforce' ? { workforceId: owner.id } : { doctorId: owner.id })
-      .then((result) => {
+
+    const load = async () => {
+      // Doctor-scoped sweep of the Rubric Compliance Chaser agent (see
+      // src/modules/shared/lib/rubricComplianceAgent.ts) runs FIRST, awaited,
+      // so a freshly-raised insight is committed before the UDR read below —
+      // otherwise it wouldn't show up until a second visit. Best-effort/
+      // non-fatal, same pattern as InsightsStrip.tsx's own
+      // runSubmissionChaser call: a failure here must never block the record
+      // from loading. The workforce-owned org-wide sweep is a separate
+      // concern wired into InsightsStrip.tsx elsewhere, not here.
+      if (owner.kind === 'doctor') {
+        try {
+          await runRubricComplianceChaserForDoctor(supabase, owner.id);
+        } catch (err) {
+          console.warn('UnifiedRecordView: runRubricComplianceChaserForDoctor failed (non-fatal)', err);
+        }
+      }
+
+      try {
+        const result = await getUnifiedDoctorRecord(
+          supabase,
+          owner.kind === 'workforce' ? { workforceId: owner.id } : { doctorId: owner.id }
+        );
         if (!cancelled) setRecord(result);
-      })
-      .catch((err) => {
+      } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load your Unified Record.');
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setIsLoading(false);
-      });
+      }
+    };
+
+    load();
     return () => {
       cancelled = true;
     };
