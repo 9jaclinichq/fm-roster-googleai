@@ -33,7 +33,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
     setError('');
 
     if (!adminCode) {
-      setError('Please enter the Admin Access Code.');
+      setError(`Please enter the ${t('admin', 'Chief Resident')} Access Code.`);
       return;
     }
 
@@ -66,7 +66,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
           </div>
           <h2 className="text-xl font-bold tracking-tight">{t('admin', 'Chief Resident')} Portal</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            Department administrative login & workspace management
+            Organizational administrative login & workspace management
           </p>
         </div>
 
@@ -81,7 +81,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
           {/* Admin Code Input */}
           <div className="space-y-1.5">
             <label htmlFor="admin-code" className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-              Admin Access Code
+              {t('admin', 'Chief Resident')} Access Code
             </label>
             <div className="relative">
               <input
@@ -92,12 +92,12 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
                   setAdminCode(e.target.value);
                   setError('');
                 }}
-                placeholder="Enter Admin Access Code"
+                placeholder={`Enter ${t('admin', 'Chief Resident')} Access Code`}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400"
               />
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-              Input the Department administrative code to access management grids, reset {t('member', 'resident').toLowerCase()} codes, export reports, and adjust deadlines.
+              Input the {t('admin', 'Chief Resident').toLowerCase()} access code to access management grids, reset {t('member', 'resident').toLowerCase()} codes, export reports, and adjust deadlines.
             </p>
           </div>
 
@@ -113,7 +113,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
                 <span>Verifying admin level...</span>
               </>
             ) : (
-              <span>Verify Administrative Access</span>
+              <span>Verify {t('admin', 'Chief Resident')} Access</span>
             )}
           </button>
         </form>

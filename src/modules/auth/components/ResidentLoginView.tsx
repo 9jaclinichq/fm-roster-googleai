@@ -105,7 +105,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
     setError('');
 
     if (!selectedId) {
-      setError('Please select your name from the workforce list.');
+      setError(`Please select your name from the ${t('members', 'Residents').toLowerCase()} list.`);
       return;
     }
 
