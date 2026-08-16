@@ -158,6 +158,12 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
   };
 
   const selectedResidentObj = workforce.find((w) => w.id === selectedId);
+  // Only meaningful when the org picker below is hidden (incomingTenantId
+  // set, i.e. arrived here already having chosen an org on
+  // TenantSelectorView) — otherwise the picker itself already shows this.
+  // Without it, this screen gave zero indication of which organization's
+  // login form was actually being shown.
+  const selectedTenantName = tenants.find((tn) => tn.id === selectedTenantId)?.name;
 
   return (
     <div className="max-w-md mx-auto my-12 px-4">
@@ -168,6 +174,12 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
             <KeyRound size={20} />
           </div>
           <h2 className="text-xl font-bold tracking-tight">{portalLabel}</h2>
+          {incomingTenantId && selectedTenantName && (
+            <p className="flex items-center justify-center space-x-1.5 text-xs text-blue-100 mt-1.5 font-semibold">
+              <Building2 size={12} className="shrink-0" />
+              <span>{selectedTenantName}</span>
+            </p>
+          )}
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
             Access your medical workspace
           </p>

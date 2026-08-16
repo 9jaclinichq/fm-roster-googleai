@@ -20,6 +20,15 @@ interface NavbarProps {
   onDoctorLogout: () => void;
   onNavigateToChief: () => void;
   onNavigateToResident: () => void;
+  // Distinct from onNavigateToResident (which the "Resident Portal"
+  // quick-switch button below still legitimately uses to jump straight to
+  // /workspace/login from e.g. the Chief login screen). The brand logo/name
+  // block is a universal "go home" affordance and should route through the
+  // app's own root path so it re-resolves by session state (signed-in
+  // resident/doctor -> their workspace; nobody signed in -> the org/
+  // individual chooser) instead of hardcoding straight into one specific
+  // organization's resident login page.
+  onLogoClick: () => void;
   onNavigateToResidentForm: () => void;
   onNavigateToAnnouncements: () => void;
   onNavigateToDissertation: () => void;
@@ -78,6 +87,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onDoctorLogout,
   onNavigateToChief,
   onNavigateToResident,
+  onLogoClick,
   onNavigateToResidentForm,
   onNavigateToAnnouncements,
   onNavigateToDissertation,
@@ -142,7 +152,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header id="app-header" className="bg-white border-b border-slate-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16 flex-wrap md:flex-nowrap gap-4 py-2 md:py-0">
-          <div className="flex items-center space-x-3 cursor-pointer shrink-0" onClick={onNavigateToResident}>
+          <div className="flex items-center space-x-3 cursor-pointer shrink-0" onClick={onLogoClick}>
             <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-base shadow-sm">
               {brand.logoInitials}
             </div>

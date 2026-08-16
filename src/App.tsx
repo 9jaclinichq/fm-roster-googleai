@@ -146,9 +146,24 @@ function MainAppContent() {
   // tenant-agnostic — see ResidentSession.tenant_id's own comment), so it
   // falls through to the default like every other tenant-less path in
   // this file (e.g. the doctor-owner ResearchWorkspaceView calls below).
+  // Pre-login, no session exists yet to read a tenant_id from — but a
+  // tenant may already have been picked on TenantSelectorView
+  // (/workspace/select-org) just before landing on ResidentLoginView, which
+  // carries it forward the same way ResidentLoginView's own
+  // `incomingTenantId` does (location.state, falling back to a `?tenant=`
+  // query param). Without this, a non-UCH org's login screen would render
+  // with UCH's terminology_overrides (e.g. "Resident") instead of that
+  // org's own (e.g. "Doctor"), since activeTenantId would otherwise always
+  // bottom out at DEFAULT_TENANT_ID until after login.
+  const incomingLoginTenantId =
+    (location.state as { tenantId?: string } | null)?.tenantId ||
+    new URLSearchParams(location.search).get('tenant') ||
+    null;
+
   const activeTenantId =
     currentResident?.tenant_id ||
     (isChiefAuthenticated ? localStorage.getItem('fm_chief_tenant_id') : null) ||
+    incomingLoginTenantId ||
     DEFAULT_TENANT_ID;
 
   // DevHelper Preset triggers
@@ -342,6 +357,7 @@ function MainAppContent() {
         onDoctorLogout={handleDoctorLogout}
         onNavigateToChief={() => navigate('/admin-portal')}
         onNavigateToResident={() => navigate('/workspace/login')}
+        onLogoClick={() => navigate('/')}
         onNavigateToResidentForm={() => navigate('/workspace/form')}
         onNavigateToAnnouncements={() => navigate('/workspace/announcements')}
         onNavigateToDissertation={() => navigate('/workspace/dissertation')}
