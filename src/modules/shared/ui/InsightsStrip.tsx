@@ -9,6 +9,7 @@ import {
   SUBMISSION_CHASER_AGENT_KEY,
 } from '../lib/submissionChaserAgent';
 import { runMeetingActionChaser, MEETING_ACTION_CHASER_AGENT_KEY } from '../lib/meetingActionAgent';
+import { runRubricComplianceChaserForTenant, RUBRIC_COMPLIANCE_AGENT_KEY } from '../lib/rubricComplianceAgent';
 
 interface InsightsStripProps {
   tenantId: string;
@@ -20,11 +21,15 @@ interface InsightsStripProps {
 const AGENT_LABELS: Record<string, string> = {
   [SUBMISSION_CHASER_AGENT_KEY]: 'Submission Chaser',
   [MEETING_ACTION_CHASER_AGENT_KEY]: 'Meeting Action Chaser',
+  [RUBRIC_COMPLIANCE_AGENT_KEY]: 'Rubric Compliance Chaser',
 };
 
 // L4/L5 face for this app's rung-1 agents (see
 // src/modules/shared/lib/submissionChaserAgent.ts,
-// src/modules/shared/lib/meetingActionAgent.ts). Per
+// src/modules/shared/lib/meetingActionAgent.ts,
+// src/modules/shared/lib/rubricComplianceAgent.ts — the last of which also
+// has a doctor-scoped sweep, run separately from UnifiedRecordView.tsx, not
+// from here). Per
 // docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md §7's Dashboard module row
 // ("insight strips, module tiles, tenant switcher"), this is meant to sit
 // near the top of the org-admin dashboard, above the tab switcher.
@@ -63,6 +68,12 @@ export const InsightsStrip: React.FC<InsightsStripProps> = ({ tenantId }) => {
         await runMeetingActionChaser(supabase!, tenantId);
       } catch (err) {
         console.warn('InsightsStrip: runMeetingActionChaser failed (non-fatal)', err);
+      }
+
+      try {
+        await runRubricComplianceChaserForTenant(supabase!, tenantId);
+      } catch (err) {
+        console.warn('InsightsStrip: runRubricComplianceChaserForTenant failed (non-fatal)', err);
       }
 
       try {
