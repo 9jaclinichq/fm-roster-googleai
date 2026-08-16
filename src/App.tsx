@@ -178,11 +178,19 @@ function MainAppContent() {
   useEffect(() => {
     const residentSession = localStorage.getItem('fm_session_resident');
     if (residentSession) {
-      const parsed: ResidentSession = JSON.parse(residentSession);
-      setCurrentResident(parsed);
-      // Re-check roles on every restore (not just at login) so a role the
-      // Chief delegates/revokes mid-session takes effect on next refresh.
-      refreshSubadminRoles(parsed);
+      // A corrupted/malformed value here (bad manual edit, storage
+      // corruption, an old app version's shape) must not white-screen the
+      // whole app — fall back to a clean logged-out state instead.
+      try {
+        const parsed: ResidentSession = JSON.parse(residentSession);
+        setCurrentResident(parsed);
+        // Re-check roles on every restore (not just at login) so a role the
+        // Chief delegates/revokes mid-session takes effect on next refresh.
+        refreshSubadminRoles(parsed);
+      } catch (err) {
+        console.warn('Discarding corrupted fm_session_resident:', err);
+        localStorage.removeItem('fm_session_resident');
+      }
     }
 
     const chiefSession = localStorage.getItem('fm_session_chief');

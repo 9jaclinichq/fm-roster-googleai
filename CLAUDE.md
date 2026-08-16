@@ -108,12 +108,16 @@ before treating this as a real access-control boundary.
 
 ## Security Notes (read before touching auth/RLS/DevHelper)
 
-- **`DevHelper.tsx` is mounted unconditionally in `App.tsx`** (no `import.meta.env.DEV`
-  guard, no build-mode check). It fetches and displays **every active resident's
-  6-digit code plus the Chief Resident's admin code**, live from Supabase, to
-  any visitor on the public site. This is the single highest-priority finding
-  from the Phase 0 audit — treat it as a production credential leak, not a
-  cosmetic dev tool, until it's gated or removed.
+- **`DevHelper.tsx` — RESOLVED, previously the single highest-priority Phase 0
+  finding.** As of a browser QA pass on 2026-08-16, both halves of the original
+  gap are confirmed fixed in current code (fixed sometime between the Phase 0
+  audit and this pass — not attributed to a specific session): `App.tsx:390`
+  now gates its mount behind `import.meta.env.DEV`, and `DevHelper.tsx` no
+  longer fetches or displays any actual resident/admin codes — it's a
+  name-picker convenience only, with copy pointing to the Supabase SQL editor
+  for codes. Verified live via `npm run dev` + browser screenshot. If this
+  regresses, treat it as a production credential leak again, not a cosmetic
+  dev-tool bug.
 - **RLS policies in `schema.sql` are effectively "allow all" for `public`**
   (`USING (true) WITH CHECK (true)` on `workforce`, `collections`, `submissions`,
   `settings`, and `storage.objects`). The anon key can read/write/delete
