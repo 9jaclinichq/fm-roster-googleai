@@ -373,8 +373,18 @@ reachable at `/workspace/casebook-logbook` (formerly `/resident/casebook-logbook
   case-distribution, a scoring rubric (10 WACP domains summing to 100 points, or the PMR's 7-step
   pass/fail checklist), and formatting rules (Vancouver references, min count, max age, no
   figures starting sentences). Seeded with 4 global templates.
-- **`casebook_workspaces`**: one candidate's portfolio per resident, with a `page_count_target`
+- **`casebook_workspaces`**: a candidate's portfolio, with a `page_count_target`
   stamped from the framework (PMR: 80-120p; 15-Casebook tracks: 80-140p).
+  **Correction (2026-08-16, found via adversarial QA)**: despite this
+  section's original "one candidate's portfolio per resident" phrasing, the
+  live `CasebookWorkspaceView.tsx`/`ResearchWorkspaceView.tsx` UI genuinely
+  supports **multiple** workspaces per resident/doctor — both fetch an
+  array, let the user pick which is "active," and "Create Workspace" always
+  appends a new one rather than reusing an existing row. No dedup/uniqueness
+  constraint exists on `workforce_id`/`doctor_id` for either table, and
+  none should be added — that's the intended multi-workspace design, not a
+  gap. Two browser tabs racing to create a workspace just produces two
+  separate, valid rows, exactly as the feature is meant to work.
 - **`clinical_case_reports`**: one row per case (1-15) — full clinical write-up (demographics,
   history, examination, PCCM/biopsychosocial formulation, family tools data, management plan,
   discussion, references) plus AI-generated `rubric_scores` and `defense_questions`.
@@ -455,7 +465,8 @@ from migration 13:
   fork any template into a personal (`is_public=false`) or department-wide (`is_public=true`,
   `tenant_id` set) custom copy and edit its word caps, rubric items, referencing style, and custom
   AI prompt rules — see `src/lib/research/templateEngine.ts`.
-- **`research_workspaces`**: one research project per resident, linked to an active template, with
+- **`research_workspaces`**: a research project (a resident/doctor may have more than
+  one — see the casebook_workspaces correction note below), linked to an active template, with
   a `pico_framework` jsonb (currently just the proposal title), a `status` lifecycle
   (`proposal_draft` -> `proposal_approved` -> `data_collection` -> `thesis_writeup` -> `completed`),
   and a `folder_tree` jsonb stamped at creation time from the fixed 7-folder Drive taxonomy in
