@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { listFormInstances, createFormInstance } from '../../../form/lib/formService';
-import { FormInstance, FormFieldDefinition } from '../../../../types';
-import { ClipboardList, Plus, Trash2, FileText } from 'lucide-react';
+import { listFormInstances, createFormInstance, getFormEntries } from '../../../form/lib/formService';
+import { databaseService } from '../../../../lib/databaseService';
+import { FormInstance, FormFieldDefinition, FormEntry } from '../../../../types';
+import { ClipboardList, Plus, Trash2, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 
 // Forms module generalization — first slice of the builder UI described in
 // PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md §7/§10 ("Forms module currently
@@ -15,7 +16,9 @@ import { ClipboardList, Plus, Trash2, FileText } from 'lucide-react';
 //     "Monthly Rotation & Leave Schedule Form" once migration 35 is applied).
 //   - A basic "create new form instance" form: name + add/remove field
 //     rows (label + type + required).
-//   - No edit/delete/entries-viewer yet, no pipeline configuration UI.
+//   - Each instance row expands (click) to a read-only entries viewer,
+//     fetched on-demand via formService.getFormEntries — no edit/delete of
+//     entries, no filtering/pagination/CSV export, no pipeline config UI.
 //
 // Wired into ChiefDashboardView.tsx's "Forms Builder" tab.
 //
@@ -80,6 +83,71 @@ export const FormsBuilderPanel: React.FC<FormsBuilderPanelProps> = ({ tenantId, 
   const [draftDescription, setDraftDescription] = useState('');
   const [draftFields, setDraftFields] = useState<DraftField[]>([emptyDraftField()]);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Entries-viewer state (expand-to-view, fetched on demand per instance —
+  // not eagerly loaded for every instance on initial mount).
+  const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
+  const [entriesByInstance, setEntriesByInstance] = useState<Record<string, FormEntry[]>>({});
+  const [entriesLoading, setEntriesLoading] = useState<Record<string, boolean>>({});
+  const [entriesError, setEntriesError] = useState<Record<string, string>>({});
+
+  // submitted_by_workforce_id -> full_name lookup. getFormEntries's own
+  // select is a plain `select('*')` with no workforce join (see
+  // formService.ts), so this resolves names via a second, already-existing
+  // read (databaseService.getWorkforce) rather than adding a new query path
+  // or touching the RPC. Loaded lazily, once, the first time any instance is
+  // expanded — never eagerly on mount.
+  const [workforceNames, setWorkforceNames] = useState<Record<string, string>>({});
+  const [workforceNamesLoaded, setWorkforceNamesLoaded] = useState(false);
+
+  const ensureWorkforceNames = async () => {
+    if (workforceNamesLoaded) return;
+    try {
+      const members = await databaseService.getWorkforce(tenantId);
+      const map: Record<string, string> = {};
+      members.forEach(m => { map[m.id] = m.full_name; });
+      setWorkforceNames(map);
+    } catch (err) {
+      // Non-fatal: entries still render, just fall back to "Submitted"
+      // instead of a resolved name.
+      console.warn('Could not load workforce names for entry attribution:', err);
+    } finally {
+      setWorkforceNamesLoaded(true);
+    }
+  };
+
+  const toggleExpandInstance = (instanceId: string) => {
+    if (expandedInstanceId === instanceId) {
+      setExpandedInstanceId(null);
+      return;
+    }
+    setExpandedInstanceId(instanceId);
+    if (entriesByInstance[instanceId] === undefined) {
+      setEntriesLoading(prev => ({ ...prev, [instanceId]: true }));
+      setEntriesError(prev => ({ ...prev, [instanceId]: '' }));
+      ensureWorkforceNames();
+      getFormEntries(instanceId)
+        .then(rows => {
+          setEntriesByInstance(prev => ({ ...prev, [instanceId]: rows }));
+        })
+        .catch(err => {
+          console.warn(err);
+          setEntriesError(prev => ({ ...prev, [instanceId]: 'Could not load entries for this form.' }));
+        })
+        .finally(() => {
+          setEntriesLoading(prev => ({ ...prev, [instanceId]: false }));
+        });
+    }
+  };
+
+  // Renders one entry's payload against the instance's own schema.fields, so
+  // labels (not raw jsonb keys) are shown. Type-aware formatting is kept
+  // deliberately simple — boolean -> Yes/No, everything else -> String(...).
+  const formatEntryValue = (field: FormFieldDefinition, raw: unknown): string => {
+    if (raw === undefined || raw === null || raw === '') return '—';
+    if (field.type === 'boolean') return raw ? 'Yes' : 'No';
+    return String(raw);
+  };
 
   const load = async () => {
     setIsLoading(true);
@@ -187,17 +255,66 @@ export const FormsBuilderPanel: React.FC<FormsBuilderPanelProps> = ({ tenantId, 
           <p className="text-xs text-slate-400">No form instances yet — create one to get started.</p>
         )}
         <div className="space-y-2">
-          {instances.map(inst => (
-            <div key={inst.id} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-800 truncate">{inst.name}</p>
-                <p className="text-[10px] text-slate-500">
-                  {inst.schema?.fields?.length ?? 0} field{inst.schema?.fields?.length === 1 ? '' : 's'}
-                  {inst.is_active ? '' : ' • inactive'}
-                </p>
+          {instances.map(inst => {
+            const isExpanded = expandedInstanceId === inst.id;
+            const entries = entriesByInstance[inst.id];
+            const isLoadingEntries = !!entriesLoading[inst.id];
+            const entryError = entriesError[inst.id];
+            return (
+              <div key={inst.id} className="bg-slate-50 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => toggleExpandInstance(inst.id)}
+                  className="w-full flex items-center justify-between px-3 py-2 text-left cursor-pointer hover:bg-slate-100"
+                >
+                  <div className="min-w-0 flex items-center gap-2">
+                    {isExpanded ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{inst.name}</p>
+                      <p className="text-[10px] text-slate-500">
+                        {inst.schema?.fields?.length ?? 0} field{inst.schema?.fields?.length === 1 ? '' : 's'}
+                        {inst.is_active ? '' : ' • inactive'}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+
+                {isExpanded && (
+                  <div className="px-3 pb-3 space-y-2 border-t border-slate-200 pt-2">
+                    {isLoadingEntries && <p className="text-xs text-slate-400">Loading entries...</p>}
+                    {!isLoadingEntries && entryError && (
+                      <p className="text-xs text-rose-600">{entryError}</p>
+                    )}
+                    {!isLoadingEntries && !entryError && entries && entries.length === 0 && (
+                      <p className="text-xs text-slate-400">No entries yet for this form.</p>
+                    )}
+                    {!isLoadingEntries && !entryError && entries && entries.length > 0 && (
+                      <div className="space-y-2">
+                        {entries.map(entry => (
+                          <div key={entry.id} className="bg-white rounded-lg border border-slate-200 px-3 py-2">
+                            <div className="space-y-0.5">
+                              {(inst.schema?.fields ?? []).map(field => (
+                                <p key={field.key} className="text-xs text-slate-700">
+                                  <span className="font-semibold text-slate-500">{field.label}:</span>{' '}
+                                  {formatEntryValue(field, entry.payload?.[field.key])}
+                                </p>
+                              ))}
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-1">
+                              {entry.submitted_by_workforce_id && workforceNames[entry.submitted_by_workforce_id]
+                                ? `Submitted by ${workforceNames[entry.submitted_by_workforce_id]}`
+                                : 'Submitted'}
+                              {' • '}
+                              {new Date(entry.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
