@@ -55,56 +55,36 @@ function applyOwnerFilter(query: any, owner: WellbeingOwnerRef) {
 }
 
 // Finds or creates today's entry for the given owner and applies `updates`
-// to it, returning the resulting row either way.
+// to it, returning the resulting row either way. A real atomic upsert
+// against the partial unique index on (owner, entry_date) (migration 54) —
+// not a select-then-branch — so two near-simultaneous saves (double-click,
+// a flaky-network retry) can't silently create duplicate rows for the same
+// day; the second write lands as an update of the first instead.
 export async function upsertTodaysEntry(
   owner: WellbeingOwnerRef,
   updates: { mood?: MoodValue; sleep_hours?: number | null; journal_note?: string | null }
 ): Promise<WellbeingEntryRow> {
   checkSupabase();
   const today = todayIso();
-
-  let existingQuery = supabase!
-    .from('wellbeing_entries')
-    .select('id')
-    .eq('entry_date', today);
-  existingQuery = applyOwnerFilter(existingQuery, owner);
-
-  const { data: existing, error: findError } = await existingQuery.maybeSingle();
-
-  if (findError) {
-    console.warn('Error checking for existing wellbeing entry:', findError);
-    throw findError;
-  }
-
-  if (existing) {
-    const { data, error } = await supabase!
-      .from('wellbeing_entries')
-      .update(updates)
-      .eq('id', existing.id)
-      .select()
-      .single();
-
-    if (error) {
-      console.warn('Error updating wellbeing entry:', error);
-      throw error;
-    }
-    return data;
-  }
+  const onConflict = owner.workforceId ? 'workforce_id,entry_date' : 'doctor_id,entry_date';
 
   const { data, error } = await supabase!
     .from('wellbeing_entries')
-    .insert({
-      workforce_id: owner.workforceId ?? null,
-      doctor_id: owner.doctorId ?? null,
-      tenant_id: owner.workforceId ? (owner.tenantId ?? null) : null,
-      entry_date: today,
-      ...updates,
-    })
+    .upsert(
+      {
+        workforce_id: owner.workforceId ?? null,
+        doctor_id: owner.doctorId ?? null,
+        tenant_id: owner.workforceId ? (owner.tenantId ?? null) : null,
+        entry_date: today,
+        ...updates,
+      },
+      { onConflict }
+    )
     .select()
     .single();
 
   if (error) {
-    console.warn('Error creating wellbeing entry:', error);
+    console.warn('Error upserting wellbeing entry:', error);
     throw error;
   }
   return data;
