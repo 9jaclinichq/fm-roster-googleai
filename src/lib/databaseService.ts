@@ -808,6 +808,15 @@ export const databaseService = {
       .single();
 
     if (error) {
+      // 23505 = unique_dissertation_per_resident violated — DissertationAssistantView
+      // only shows "Start Dissertation" while no dissertation is loaded, with no
+      // re-check before this insert, so two near-simultaneous starts (two tabs)
+      // can both reach here. The other request won the race; return its row
+      // instead of surfacing a failure for a dissertation that already exists.
+      if (error.code === '23505') {
+        const existing = await this.getDissertationForWorkforce(workforceId);
+        if (existing) return existing;
+      }
       console.warn('Error creating dissertation:', error);
       throw error;
     }
@@ -995,17 +1004,28 @@ export const databaseService = {
     }
     if (data) return data;
 
+    // Upsert rather than a plain insert: two near-simultaneous callers (two
+    // tabs opening the Exam Readiness view) can both see no existing row
+    // above before either write lands. A plain insert would throw a raw
+    // 23505 on the loser (exam_readiness.workforce_id is UNIQUE — see
+    // upsertExamReadiness's onConflict target below); upserting on the same
+    // conflict target makes the loser just return the winner's row instead.
     const { data: created, error: createErr } = await supabase!
       .from('exam_readiness')
-      .insert([{ workforce_id: workforceId }])
+      .upsert([{ workforce_id: workforceId }], { onConflict: 'workforce_id', ignoreDuplicates: true })
       .select()
-      .single();
+      .maybeSingle();
 
     if (createErr) {
       console.warn('Error creating exam readiness record:', createErr);
       throw createErr;
     }
-    return created;
+    if (created) return created;
+
+    // ignoreDuplicates:true returns no row when another request already won
+    // the race — fetch what that request created.
+    const existing = await this.getOrCreateExamReadiness(workforceId);
+    return existing;
   },
 
   async upsertExamReadiness(
