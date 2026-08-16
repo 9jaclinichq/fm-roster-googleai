@@ -3,6 +3,7 @@ import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation
 import { Navbar } from './modules/shared/ui/Navbar';
 import { DevHelper } from './modules/shared/ui/DevHelper';
 import { LoadingShell } from './modules/shared/ui/LoadingShell';
+import { OfflineBanner } from './modules/shared/ui/OfflineBanner';
 import { ResidentLoginView } from './modules/auth/components/ResidentLoginView';
 import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
@@ -695,6 +696,11 @@ function MainAppContent() {
               URL; only the code itself gates access (see SaaSOperatorConsoleView). */}
         </div>
       </footer>
+
+      {/* Renders regardless of active route/view — see OfflineBanner's own
+          header for why this app can only be honest about offline state,
+          not offline-functional (docs/PWA_ADDITION_SCOPING.md §2.3). */}
+      <OfflineBanner />
     </div>
     </TerminologyProvider>
   );

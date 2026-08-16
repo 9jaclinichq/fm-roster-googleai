@@ -1,8 +1,15 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { databaseService } from '../../../lib/databaseService';
 import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
 import { useTerminology } from '../terminology';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download } from 'lucide-react';
+
+// Minimal event typing for the non-standard `beforeinstallprompt` event —
+// not part of the DOM lib TypeScript ships with.
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
 
 interface NavbarProps {
   currentResident: { id: string; name: string; category: string } | null;
@@ -79,6 +86,30 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const brand = getActiveBrand();
   const { t } = useTerminology();
+
+  // Basic install-prompt affordance (PWA first slice, see
+  // docs/PWA_ADDITION_SCOPING.md §7.2's last bullet). Browsers only fire
+  // `beforeinstallprompt` when the app actually meets install criteria and
+  // isn't already installed, so the button stays absent until that signal
+  // arrives rather than being always-present.
+  const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPromptEvent(event as BeforeInstallPromptEvent);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPromptEvent) return;
+    await installPromptEvent.prompt();
+    // The prompt can only be used once — clear it regardless of outcome so
+    // the button disappears until (if ever) the browser fires a fresh event.
+    setInstallPromptEvent(null);
+  };
   // Org label only appears once someone is actually signed into an
   // institution or as an individual doctor — review annotation: "the
   // institutional label only appears after login to an institution."
@@ -116,6 +147,20 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           <div className="flex items-center space-x-2 sm:space-x-4 ml-auto">
+            {/* Install-to-home-screen affordance — only rendered once the
+                browser has actually signaled installability (see the
+                beforeinstallprompt handling above). */}
+            {installPromptEvent && (
+              <button
+                onClick={handleInstallClick}
+                title="Install PrivyDoc Workspace"
+                aria-label="Install PrivyDoc Workspace"
+                className="flex items-center justify-center w-8 h-8 border border-slate-300 hover:bg-slate-50 text-slate-600 rounded-md shadow-sm transition cursor-pointer shrink-0"
+              >
+                <Download size={14} />
+              </button>
+            )}
+
             {/* Supabase Status Badge */}
             {!isLoginScreen && (
               <div
