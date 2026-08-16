@@ -6,6 +6,17 @@ export interface WorkforceMember {
   id: string;
   full_name: string;
   category: Category;
+  // Nullable FK into workforce_categories (migration 39) — additive
+  // alongside the legacy `category` text column. Present when explicitly
+  // selected (see WORKFORCE_PUBLIC_COLUMNS in databaseService.ts); null for
+  // any row that predates migration 39's backfill or falls outside its
+  // normalization match. Prefer resolving a display label via this id
+  // (against a fetched WorkforceCategory[]) and fall back to `category`
+  // text when null — see the "rewired" call sites this comment's own
+  // migration 39 header originally flagged as a followup:
+  // WorkforceRegistryPanel.tsx, ChiefDashboardView.tsx's CSV export/filter,
+  // RoleDelegationPanel.tsx.
+  category_id?: string | null;
   // Never present on the general workforce list (databaseService.getWorkforce()) —
   // the resident_code column is locked down at the database level and only
   // returned by the chief_* RPCs (see databaseService.ts).
@@ -82,6 +93,9 @@ export interface SubmissionWithWorkforce extends Submission {
   workforce: {
     full_name: string;
     category: Category;
+    // Present since the migration-39 rewiring (getSubmissions' select now
+    // requests it) — see WorkforceMember.category_id's comment.
+    category_id?: string | null;
   };
 }
 
@@ -412,6 +426,9 @@ export interface DelegatedRole extends UserRole {
   workforce: {
     full_name: string;
     category: Category;
+    // Present since the migration-39 rewiring (getDelegatedRoles' select
+    // now requests it) — see WorkforceMember.category_id's comment.
+    category_id?: string | null;
   } | null;
   org_group: OrgGroup | null;
 }

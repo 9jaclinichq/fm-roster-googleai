@@ -1,10 +1,18 @@
 import React from 'react';
-import { Category, WorkforceMember } from '../../../../types';
+import { WorkforceCategory, WorkforceMember } from '../../../../types';
 import { Edit, RefreshCw, Unlink, Link2, X, UserPlus, AlertTriangle } from 'lucide-react';
 
 interface WorkforceRegistryPanelProps {
   t: (key: string, fallback?: string) => string;
   workforce: WorkforceMember[];
+  // Tenant's own live org-defined category vocabulary (migration 39) — the
+  // dropdowns below list these instead of the old hardcoded 3-value union.
+  // Fetched once in ChiefDashboardView (alongside orgGroups/delegatedRoles)
+  // rather than self-fetched here, since this panel is presentational only
+  // (state/databaseService calls stay in the shell, per this file's own
+  // header) and the parent's handleAddWorkforceMember/handleEditWorkforceMember
+  // also need the same list to resolve a category id back to its label.
+  workforceCategories: WorkforceCategory[];
   residentCodes: Record<string, string>;
   handleToggleActiveState: (member: WorkforceMember) => void;
   handleResetCode: (memberId: string) => void;
@@ -21,13 +29,16 @@ interface WorkforceRegistryPanelProps {
   setEditingMember: (member: WorkforceMember | null) => void;
   editMemberName: string;
   setEditMemberName: (value: string) => void;
-  editMemberCategory: Category;
-  setEditMemberCategory: (value: Category) => void;
+  // Now holds the selected workforce_categories.id (uuid string), not the
+  // legacy Category text union — see migration 39 rewiring note above.
+  editMemberCategory: string;
+  setEditMemberCategory: (value: string) => void;
   handleEditWorkforceMember: (e: React.FormEvent) => void;
   newMemberName: string;
   setNewMemberName: (value: string) => void;
-  newMemberCategory: Category;
-  setNewMemberCategory: (value: Category) => void;
+  // Same as editMemberCategory: a workforce_categories.id, not Category text.
+  newMemberCategory: string;
+  setNewMemberCategory: (value: string) => void;
   newMemberError: string;
   handleAddWorkforceMember: (e: React.FormEvent) => void;
 }
@@ -37,6 +48,7 @@ interface WorkforceRegistryPanelProps {
 export const WorkforceRegistryPanel: React.FC<WorkforceRegistryPanelProps> = ({
   t,
   workforce,
+  workforceCategories,
   residentCodes,
   handleToggleActiveState,
   handleResetCode,
@@ -63,6 +75,17 @@ export const WorkforceRegistryPanel: React.FC<WorkforceRegistryPanelProps> = ({
   newMemberError,
   handleAddWorkforceMember,
 }) => {
+  // Prefer the tenant's own (possibly renamed) live category label when
+  // category_id is set, falling back to the legacy free-text column for
+  // rows that predate migration 39's backfill or fall outside its match.
+  const resolveCategoryLabel = (member: WorkforceMember): string => {
+    if (member.category_id) {
+      const match = workforceCategories.find(c => c.id === member.category_id);
+      if (match) return match.label;
+    }
+    return member.category;
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Left side: Workforce Member Grid */}
@@ -89,7 +112,7 @@ export const WorkforceRegistryPanel: React.FC<WorkforceRegistryPanelProps> = ({
                 <React.Fragment key={member.id}>
                   <tr className="hover:bg-slate-50/50">
                     <td className="px-4 py-3 font-bold text-slate-900">{member.full_name}</td>
-                    <td className="px-4 py-3 text-slate-500">{member.category}</td>
+                    <td className="px-4 py-3 text-slate-500">{resolveCategoryLabel(member)}</td>
                     <td className="px-4 py-3">
                       <span className="font-mono font-extrabold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
                         {residentCodes[member.id] || '······'}
@@ -113,7 +136,12 @@ export const WorkforceRegistryPanel: React.FC<WorkforceRegistryPanelProps> = ({
                         onClick={() => {
                           setEditingMember(member);
                           setEditMemberName(member.full_name);
-                          setEditMemberCategory(member.category);
+                          // Prefer the member's own category_id; fall back to
+                          // matching the legacy text against the tenant's own
+                          // vocabulary for rows that predate the backfill.
+                          setEditMemberCategory(
+                            member.category_id || workforceCategories.find(c => c.label === member.category)?.id || ''
+                          );
                         }}
                         className="p-1 hover:bg-slate-100 text-slate-500 hover:text-slate-950 rounded transition cursor-pointer"
                         title="Edit Name/Category"
@@ -225,12 +253,13 @@ export const WorkforceRegistryPanel: React.FC<WorkforceRegistryPanelProps> = ({
                 <label className="text-xs font-bold text-slate-700 uppercase">Category</label>
                 <select
                   value={editMemberCategory}
-                  onChange={(e) => setEditMemberCategory(e.target.value as Category)}
+                  onChange={(e) => setEditMemberCategory(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-1 focus:ring-slate-950 cursor-pointer"
                 >
-                  <option value="Registrar">Registrar</option>
-                  <option value="Senior Registrar">Senior Registrar</option>
-                  <option value="Medical Officer">Medical Officer</option>
+                  {workforceCategories.length === 0 && <option value="">No categories yet</option>}
+                  {workforceCategories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -284,12 +313,13 @@ export const WorkforceRegistryPanel: React.FC<WorkforceRegistryPanelProps> = ({
                 <select
                   id="new-category"
                   value={newMemberCategory}
-                  onChange={(e) => setNewMemberCategory(e.target.value as Category)}
+                  onChange={(e) => setNewMemberCategory(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-1 focus:ring-slate-950 cursor-pointer"
                 >
-                  <option value="Registrar">Registrar</option>
-                  <option value="Senior Registrar">Senior Registrar</option>
-                  <option value="Medical Officer">Medical Officer</option>
+                  {workforceCategories.length === 0 && <option value="">No categories yet</option>}
+                  {workforceCategories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.label}</option>
+                  ))}
                 </select>
               </div>
 

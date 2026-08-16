@@ -36,7 +36,7 @@ const TenantCustomizationView = lazy(() =>
 const TemplateManagerView = lazy(() =>
   import('./dashboard/TemplateManagerView').then(m => ({ default: m.TemplateManagerView }))
 );
-import { Collection, WorkforceMember, SubmissionWithWorkforce, Category, Submission, Announcement, AnnouncementCategory, DelegatedRole, OrgGroup } from '../../../types';
+import { Collection, WorkforceMember, SubmissionWithWorkforce, Submission, Announcement, AnnouncementCategory, DelegatedRole, OrgGroup, WorkforceCategory } from '../../../types';
 import { useTerminology } from '../../shared/terminology';
 import { CheckCircle, X, RefreshCw } from 'lucide-react';
 
@@ -110,12 +110,21 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [editNotes, setEditNotes] = useState<string>('');
 
   // Workforce management state
+  // Migration 39 rewiring: newMemberCategory/editMemberCategory now hold a
+  // workforce_categories.id (uuid string), not the legacy Category text
+  // union — resolved to a label via workforceCategories below.
   const [newMemberName, setNewMemberName] = useState<string>('');
-  const [newMemberCategory, setNewMemberCategory] = useState<Category>('Registrar');
+  const [newMemberCategory, setNewMemberCategory] = useState<string>('');
   const [newMemberError, setNewMemberError] = useState<string>('');
   const [editingMember, setEditingMember] = useState<WorkforceMember | null>(null);
   const [editMemberName, setEditMemberName] = useState<string>('');
-  const [editMemberCategory, setEditMemberCategory] = useState<Category>('Registrar');
+  const [editMemberCategory, setEditMemberCategory] = useState<string>('');
+
+  // Tenant's own live category vocabulary (migration 39) — fetched once
+  // here (alongside orgGroups) since both WorkforceRegistryPanel's dropdowns
+  // AND this shell's own handleAddWorkforceMember/handleEditWorkforceMember/
+  // handleExportCSV/category filter need the same list.
+  const [workforceCategories, setWorkforceCategories] = useState<WorkforceCategory[]>([]);
 
   // Link a workforce row to an individual doctor's self-registered account
   // (migration 18) — see chief_link_doctor_by_email in databaseService.ts.
@@ -187,6 +196,15 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
       const roles = await databaseService.getDelegatedRoles(tid);
       setDelegatedRoles(roles);
 
+      // 7. Get org-defined workforce categories (migration 39 rewiring) —
+      // drives WorkforceRegistryPanel's dropdowns and this shell's own
+      // add/edit-member handlers, CSV export, and category filter below.
+      const cats = await databaseService.listWorkforceCategories(tid);
+      setWorkforceCategories(cats);
+      if (!newMemberCategory && cats.length > 0) {
+        setNewMemberCategory(cats.find(c => c.category_key === 'registrar')?.id || cats[0].id);
+      }
+
       if (adminCode) {
         try {
           const codes = await databaseService.getWorkforceCodes(adminCode);
@@ -218,6 +236,19 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
     setTimeout(() => setActionSuccessMessage(''), 4000);
   };
 
+  // Migration 39 rewiring: prefer the tenant's own (possibly renamed) live
+  // category label resolved via category_id, falling back to the legacy
+  // free-text `category` column for rows that predate the backfill or fall
+  // outside its match. Shared by the CSV export and the category filter
+  // below — both read from the same submission shape.
+  const resolveCategoryLabel = (workforce: { category: string; category_id?: string | null }): string => {
+    if (workforce.category_id) {
+      const match = workforceCategories.find(c => c.id === workforce.category_id);
+      if (match) return match.label;
+    }
+    return workforce.category;
+  };
+
   // CSV Export Logic
   const handleExportCSV = () => {
     if (!collection) return;
@@ -239,7 +270,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
     const rows = submissions.map(sub => [
       sub.workforce.full_name,
-      sub.workforce.category,
+      resolveCategoryLabel(sub.workforce),
       sub.current_rotation,
       sub.next_rotation,
       sub.taking_leave ? 'Yes' : 'No',
@@ -447,11 +478,33 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
       return;
     }
 
+    // newMemberCategory now holds a workforce_categories.id (migration 39
+    // rewiring) — resolve it back to its label for the RPC's text param.
+    const selectedCategory = workforceCategories.find(c => c.id === newMemberCategory);
+    if (!selectedCategory) {
+      setNewMemberError('Please select a category.');
+      return;
+    }
+
     try {
-      const newMember = await databaseService.addWorkforceMember(adminCode, {
+      let newMember = await databaseService.addWorkforceMember(adminCode, {
         full_name: newMemberName.trim(),
-        category: newMemberCategory,
+        category: selectedCategory.label,
       });
+
+      // chief_add_workforce_member only accepts the legacy text category
+      // (no category_id param — confirmed, RPC signature is off-limits for
+      // this pass). Persist category_id with a separate follow-up direct
+      // update so both columns stay in sync, per migration 39's own
+      // "additive, not destructive" header. Merge onto the RPC result
+      // rather than replacing it outright — updateWorkforceMember's select
+      // (WORKFORCE_PUBLIC_COLUMNS) never includes resident_code.
+      try {
+        const withCategoryId = await databaseService.updateWorkforceMember(newMember.id, { category_id: selectedCategory.id });
+        newMember = { ...newMember, category_id: withCategoryId.category_id, category: withCategoryId.category };
+      } catch (catErr) {
+        console.warn('Added member, but failed to persist category_id (category text was still saved):', catErr);
+      }
 
       setWorkforce(prev => [...prev, newMember].sort((a, b) => a.full_name.localeCompare(b.full_name)));
       if (newMember.resident_code) {
@@ -472,10 +525,15 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
     if (!editMemberName.trim()) return;
 
+    // editMemberCategory now holds a workforce_categories.id — resolve it
+    // back to its label so the legacy text column stays in sync too.
+    const selectedCategory = workforceCategories.find(c => c.id === editMemberCategory);
+
     try {
       const updated = await databaseService.updateWorkforceMember(editingMember.id, {
         full_name: editMemberName.trim(),
-        category: editMemberCategory,
+        category: selectedCategory ? selectedCategory.label : editingMember.category,
+        category_id: selectedCategory ? selectedCategory.id : editingMember.category_id ?? null,
       });
 
       setWorkforce(prev => prev.map(w => w.id === editingMember.id ? updated : w));
@@ -706,7 +764,11 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
                           sub.current_rotation.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           sub.next_rotation.toLowerCase().includes(searchQuery.toLowerCase());
     
-    const matchesCategory = categoryFilter === 'All' || sub.workforce.category === categoryFilter;
+    // SubmissionsPanel's own <select> options are still the 3 legacy text
+    // values (out of scope for this pass) — resolveCategoryLabel still
+    // matches correctly for any member on an unrenamed seeded default
+    // category, since its resolved label equals that legacy text exactly.
+    const matchesCategory = categoryFilter === 'All' || resolveCategoryLabel(sub.workforce) === categoryFilter;
     
     const matchesLeave = leaveFilter === 'All' || 
                          (leaveFilter === 'On Leave' && sub.taking_leave) ||
@@ -1055,6 +1117,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           <WorkforceRegistryPanel
             t={t}
             workforce={workforce}
+            workforceCategories={workforceCategories}
             residentCodes={residentCodes}
             handleToggleActiveState={handleToggleActiveState}
             handleResetCode={handleResetCode}
@@ -1107,6 +1170,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           <RoleDelegationPanel
             delegatedRoles={delegatedRoles}
             orgGroups={orgGroups}
+            workforceCategories={workforceCategories}
             delegateRoleFilter={delegateRoleFilter}
             setDelegateRoleFilter={setDelegateRoleFilter}
             workforce={workforce}
