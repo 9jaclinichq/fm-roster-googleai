@@ -448,6 +448,28 @@ export const databaseService = {
         .single();
 
       if (error) {
+        // 23505 = unique_resident_submission_per_collection violated — two
+        // near-simultaneous submits both passed the "does it exist" check
+        // above before either insert landed. The other request won the
+        // race; fall through to updating its row instead of surfacing a
+        // failure for a submission that actually succeeded.
+        if (error.code === '23505') {
+          const { data: raceWinner, error: refetchError } = await supabase!
+            .from('submissions')
+            .select('id')
+            .eq('workforce_id', submission.workforce_id)
+            .eq('collection_id', submission.collection_id)
+            .single();
+          if (!refetchError && raceWinner) {
+            const { data: updated, error: updateError } = await supabase!
+              .from('submissions')
+              .update({ ...submission, updated_at: new Date().toISOString() })
+              .eq('id', raceWinner.id)
+              .select()
+              .single();
+            if (!updateError) return updated;
+          }
+        }
         console.warn('Error inserting new submission:', error);
         throw error;
       }
