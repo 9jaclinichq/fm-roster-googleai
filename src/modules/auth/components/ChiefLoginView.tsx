@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { databaseService } from '../../../lib/databaseService';
 import { ShieldAlert, AlertCircle, Key, RefreshCw } from 'lucide-react';
 import { useTerminology } from '../../shared/terminology';
@@ -14,6 +15,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
   onNavigateToResident,
   presetCode
 }) => {
+  const navigate = useNavigate();
   const [adminCode, setAdminCode] = useState<string>('');
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
@@ -116,13 +118,20 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
           </button>
         </form>
 
-        <div className="bg-slate-50 border-t border-slate-100 p-4 text-center">
+        <div className="bg-slate-50 border-t border-slate-100 p-4 flex items-center justify-between text-xs">
+          <button
+            type="button"
+            onClick={() => navigate('/admin-portal')}
+            className="font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+          >
+            &larr; Back
+          </button>
           <button
             type="button"
             onClick={onNavigateToResident}
-            className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+            className="font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
           >
-            Go back to {t('member', 'Resident')} Dashboard &rarr;
+            Go to {t('member', 'Resident')} Dashboard &rarr;
           </button>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { databaseService } from '../../../lib/databaseService';
 import { WorkforceMember, Tenant } from '../../../types';
 import { KeyRound, User, ChevronDown, Sparkles, Check, AlertCircle, Building2, Mail } from 'lucide-react';
@@ -17,6 +17,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
   presetResident
 }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   // Carried forward from TenantSelectorView (/workspace/select-org), the new
   // tenant-first login step — see that component's header comment. Falls
   // back to a query param (`?tenant=<id>`, mirroring this app's existing
@@ -341,11 +342,18 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
           </button>
         </form>
 
-        <div className="bg-slate-50 border-t border-slate-100 p-4 text-center">
+        <div className="bg-slate-50 border-t border-slate-100 p-4 flex items-center justify-between text-xs">
+          <button
+            type="button"
+            onClick={() => navigate('/workspace/select-org')}
+            className="font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+          >
+            &larr; Back
+          </button>
           <button
             type="button"
             onClick={onNavigateToChief}
-            className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+            className="font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
           >
             Organizational Admin Portal &rarr;
           </button>
