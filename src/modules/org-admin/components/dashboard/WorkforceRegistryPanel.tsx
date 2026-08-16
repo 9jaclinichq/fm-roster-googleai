@@ -1,10 +1,13 @@
 import React from 'react';
 import { WorkforceCategory, WorkforceMember } from '../../../../types';
-import { Edit, RefreshCw, Unlink, Link2, X, UserPlus, AlertTriangle } from 'lucide-react';
+import { Edit, RefreshCw, Unlink, Link2, X, UserPlus, AlertTriangle, IdCard } from 'lucide-react';
 
 interface WorkforceRegistryPanelProps {
   t: (key: string, fallback?: string) => string;
   workforce: WorkforceMember[];
+  // Opens the member's Unified Record in a modal (see MemberRecordModal.tsx,
+  // rendered by the parent ChiefDashboardView shell).
+  onViewRecord: (member: WorkforceMember) => void;
   // Tenant's own live org-defined category vocabulary (migration 39) — the
   // dropdowns below list these instead of the old hardcoded 3-value union.
   // Fetched once in ChiefDashboardView (alongside orgGroups/delegatedRoles)
@@ -48,6 +51,7 @@ interface WorkforceRegistryPanelProps {
 export const WorkforceRegistryPanel: React.FC<WorkforceRegistryPanelProps> = ({
   t,
   workforce,
+  onViewRecord,
   workforceCategories,
   residentCodes,
   handleToggleActiveState,
@@ -132,6 +136,13 @@ export const WorkforceRegistryPanel: React.FC<WorkforceRegistryPanelProps> = ({
                       </button>
                     </td>
                     <td className="px-4 py-3 text-right space-x-2 shrink-0">
+                      <button
+                        onClick={() => onViewRecord(member)}
+                        className="p-1 hover:bg-slate-100 text-slate-500 hover:text-slate-950 rounded transition cursor-pointer"
+                        title="View Unified Record"
+                      >
+                        <IdCard size={13} />
+                      </button>
                       <button
                         onClick={() => {
                           setEditingMember(member);

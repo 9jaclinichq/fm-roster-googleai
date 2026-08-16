@@ -14,6 +14,9 @@ import { CategoryManagerPanel } from './dashboard/CategoryManagerPanel';
 import { SchedulingBuilderView } from '../../scheduling/components/SchedulingBuilderView';
 import { MeetingsPanel } from '../../meetings/components/MeetingsPanel';
 import { ClinicalWritingPanel } from '../../clinical-writing/components/ClinicalWritingPanel';
+import { AgentRegistryPanel } from './dashboard/AgentRegistryPanel';
+import { ActivityLogPanel } from './dashboard/ActivityLogPanel';
+import { MemberRecordModal } from '../../shared/ui/MemberRecordModal';
 
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
 // only needed when the Chief actually opens the Knowledge Packs tab.
@@ -61,7 +64,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'categories' | 'scheduling' | 'meetings' | 'clinical-writing' | 'settings'>('submissions');
+  const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'categories' | 'scheduling' | 'meetings' | 'clinical-writing' | 'agents' | 'activity' | 'settings'>('submissions');
 
   // Role delegation state (migration 36 — org-defined groups, replacing the
   // previously hardcoded 4-value subadmin role list)
@@ -125,6 +128,12 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   // AND this shell's own handleAddWorkforceMember/handleEditWorkforceMember/
   // handleExportCSV/category filter need the same list.
   const [workforceCategories, setWorkforceCategories] = useState<WorkforceCategory[]>([]);
+
+  // Chief-facing Unified Record lookup (see MemberRecordModal.tsx) — which
+  // workforce member's record is currently open, or null if the modal is
+  // closed. Lives here rather than inside WorkforceRegistryPanel since that
+  // panel is presentational-only per its own header.
+  const [viewingRecordMember, setViewingRecordMember] = useState<WorkforceMember | null>(null);
 
   // Link a workforce row to an individual doctor's self-registered account
   // (migration 18) — see chief_link_doctor_by_email in databaseService.ts.
@@ -1049,6 +1058,26 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           Clinical Writing
         </button>
         <button
+          onClick={() => setActiveTab('agents')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'agents'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          AI Agents
+        </button>
+        <button
+          onClick={() => setActiveTab('activity')}
+          className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
+            activeTab === 'activity'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Activity Log
+        </button>
+        <button
           onClick={() => setActiveTab('settings')}
           className={`pb-3 text-xs sm:text-sm font-bold border-b-2 px-1 transition whitespace-nowrap shrink-0 cursor-pointer ${
             activeTab === 'settings'
@@ -1118,6 +1147,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           <WorkforceRegistryPanel
             t={t}
             workforce={workforce}
+            onViewRecord={setViewingRecordMember}
             workforceCategories={workforceCategories}
             residentCodes={residentCodes}
             handleToggleActiveState={handleToggleActiveState}
@@ -1255,6 +1285,14 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           <ClinicalWritingPanel tenantId={tenantId ?? DEFAULT_TENANT_ID} createdByWorkforceId={null} />
         )}
 
+        {/* TAB 9g: AI AGENT REGISTRY — living-system spine transparency (agent_manifests) */}
+        {activeTab === 'agents' && <AgentRegistryPanel />}
+
+        {/* TAB 9h: ACTIVITY LOG — living-system spine transparency (event_log) */}
+        {activeTab === 'activity' && (
+          <ActivityLogPanel tenantId={tenantId ?? DEFAULT_TENANT_ID} />
+        )}
+
         {/* TAB 10: SETTINGS & COLLECTIONS */}
         {activeTab === 'settings' && (
           <CollectionSettingsPanel
@@ -1277,6 +1315,11 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           />
         )}
       </div>
+
+      <MemberRecordModal
+        member={viewingRecordMember}
+        onClose={() => setViewingRecordMember(null)}
+      />
     </div>
   );
 };
