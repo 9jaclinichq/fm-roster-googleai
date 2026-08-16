@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService } from '../../../lib/databaseService';
+import { databaseService, supabase } from '../../../lib/databaseService';
 import { loadAvailableTemplates, forkTemplate, editTemplate, TemplateEditPayload } from '../lib/templateEngine';
 import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../lib/rubricEngine';
 import { researchCopilot, DraftAuditResult, LiteratureMatrixResult, TableShellsResult, ResearchCopilotSource } from '../lib/researchCopilot';
 import { useWorkspaceQuota } from '../../billing/lib/useWorkspaceQuota';
 import { UpgradeCheckoutModal } from '../../billing/components/UpgradeCheckoutModal';
+import { RubricInstanceForm } from '../../shared/ui/RubricInstanceForm';
+import { listRubricInstancesForSubject } from '../../shared/lib/scoredRubricEngine';
 import {
   ResearchWorkspace,
   ResearchTemplate,
@@ -71,6 +73,95 @@ function computeFisherSampleSize(prevalencePct: number, precisionPct: number, zS
   const n = (zScore * zScore * p * (1 - p)) / (d * d);
   return Math.ceil(n);
 }
+
+// Official WACP Self-Assessment — wires the generic Scored Rubric primitive
+// (src/modules/shared/lib/scoredRubricEngine.ts, src/modules/shared/ui/
+// RubricInstanceForm.tsx) against the 2 real WACP rubric_templates rows
+// seeded live by migration 46 (`WACP Family Medicine Proposal Assessment
+// Tool` / `WACP Family Medicine Dissertation Assessment Guide`). Matched by
+// exact name since neither `research_templates` nor `research_workspaces`
+// carries a `rubric_template_id` FK — this pass is additive wiring only, not
+// a schema change. Distinct from the "Real-Time Rubric Scorecard" section
+// above, which is this file's own independent client-side PICO/word-count/
+// citation checker (`../lib/rubricEngine.ts`) — that one is NOT the official
+// WACP-scored instrument and is left completely untouched by this addition.
+const WACP_PROPOSAL_RUBRIC_TEMPLATE_NAME = 'WACP Family Medicine Proposal Assessment Tool (v5.0, May 2025)';
+const WACP_DISSERTATION_RUBRIC_TEMPLATE_NAME = 'WACP Family Medicine Dissertation Assessment Guide (v4.1, Aug 2022)';
+
+const OfficialWacpSelfAssessment: React.FC<{
+  workspaceId: string;
+  workspaceStatus: ResearchWorkspace['status'];
+  tenantId: string;
+  assessorWorkforceId: string | null;
+  assessorDoctorId: string | null;
+}> = ({ workspaceId, workspaceStatus, tenantId, assessorWorkforceId, assessorDoctorId }) => {
+  const [rubricTemplateId, setRubricTemplateId] = useState<string | null>(null);
+  const [existingInstanceId, setExistingInstanceId] = useState<string | undefined>(undefined);
+  const [isResolving, setIsResolving] = useState(true);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+
+  // proposal_draft/proposal_approved -> Proposal Assessment Tool;
+  // data_collection/thesis_writeup/completed -> Dissertation Assessment Guide.
+  const targetTemplateName = workspaceStatus === 'proposal_draft' || workspaceStatus === 'proposal_approved'
+    ? WACP_PROPOSAL_RUBRIC_TEMPLATE_NAME
+    : WACP_DISSERTATION_RUBRIC_TEMPLATE_NAME;
+
+  // Convention documented in migration 41's own header comment: '<concept>:<id>'.
+  const subjectRef = `research_workspace:${workspaceId}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsResolving(true);
+    setResolveError(null);
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('rubric_templates')
+          .select('id, name')
+          .eq('name', targetTemplateName)
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          if (!cancelled) { setRubricTemplateId(null); setIsResolving(false); }
+          return;
+        }
+        // Resume an existing instance rather than creating a new blank one
+        // every time this section is opened.
+        const existing = await listRubricInstancesForSubject(supabase, subjectRef, data.id);
+        if (cancelled) return;
+        setRubricTemplateId(data.id);
+        setExistingInstanceId(existing[0]?.id);
+      } catch (err) {
+        if (!cancelled) setResolveError(err instanceof Error ? err.message : 'Failed to load the official WACP rubric.');
+      } finally {
+        if (!cancelled) setIsResolving(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [targetTemplateName, subjectRef]);
+
+  if (isResolving) {
+    return <p className="text-xs text-slate-400">Loading official WACP rubric...</p>;
+  }
+  if (resolveError) {
+    return <p className="text-xs text-red-600">{resolveError}</p>;
+  }
+  if (!rubricTemplateId) {
+    return <p className="text-xs text-rose-600">Official WACP rubric template not found — contact the platform operator.</p>;
+  }
+
+  return (
+    <RubricInstanceForm
+      supabaseClient={supabase}
+      rubricTemplateId={rubricTemplateId}
+      instanceId={existingInstanceId}
+      tenantId={tenantId}
+      subjectRef={subjectRef}
+      assessorWorkforceId={assessorWorkforceId}
+      assessorDoctorId={assessorDoctorId}
+    />
+  );
+};
 
 const SOURCE_BADGE: Record<ResearchCopilotSource, { label: string; className: string }> = {
   edge_function: { label: 'AI-generated', className: 'bg-violet-50 text-violet-700 border-violet-200' },
@@ -632,6 +723,31 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ ow
               />
             </div>
           </div>
+
+          {/* Official WACP Self-Assessment — the real, official rubric,
+              distinct from the automated checks in the Rubric Scorecard
+              above. Only rendered when this workspace's active template is
+              a WACP one; migration 46 seeded no rubric for any other
+              organization_or_body. */}
+          {activeTemplate?.organization_or_body === 'WACP' && (
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+              <div className="flex items-center space-x-1.5">
+                <ClipboardCheck className="text-slate-500" size={16} />
+                <h3 className="font-bold text-slate-900 text-sm">Official WACP Self-Assessment</h3>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                Score your own work right now against the real, official WACP-approved instrument —
+                separate from the automated word-count/citation checks in the Rubric Scorecard above.
+              </p>
+              <OfficialWacpSelfAssessment
+                workspaceId={activeWorkspace.id}
+                workspaceStatus={activeWorkspace.status}
+                tenantId={owner.tenantId}
+                assessorWorkforceId={owner.kind === 'workforce' ? owner.id : null}
+                assessorDoctorId={owner.kind === 'doctor' ? owner.id : null}
+              />
+            </div>
+          )}
 
           {/* Synopsis of Corrections */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">

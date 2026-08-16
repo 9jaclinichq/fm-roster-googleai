@@ -299,6 +299,38 @@ export async function submitRubricScores(
 }
 
 // --------------------------------------------------------------------
+// listRubricInstancesForSubject
+// --------------------------------------------------------------------
+
+/**
+ * Lists rubric instances for a given subject_ref (see the migration header's
+ * '<concept>:<id>' convention, e.g. 'research_workspace:<uuid>'), optionally
+ * narrowed to one rubric_template_id, newest first. Lets a caller find an
+ * existing instance to resume (pass its id as RubricInstanceForm's
+ * instanceId prop) instead of creating a new blank instance every time a
+ * rubric section is opened.
+ */
+export async function listRubricInstancesForSubject(
+  supabaseClient: SupabaseClient,
+  subjectRef: string,
+  rubricTemplateId?: string
+): Promise<RubricInstance[]> {
+  let query = supabaseClient
+    .from('rubric_instances')
+    .select('*')
+    .eq('subject_ref', subjectRef)
+    .order('created_at', { ascending: false });
+
+  if (rubricTemplateId) {
+    query = query.eq('rubric_template_id', rubricTemplateId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as RubricInstance[];
+}
+
+// --------------------------------------------------------------------
 // updateRubricInstanceStatus — the human "confirms" step
 // --------------------------------------------------------------------
 
