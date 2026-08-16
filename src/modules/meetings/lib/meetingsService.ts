@@ -14,12 +14,11 @@ import { supabase } from '../../../lib/databaseService';
 // as formService.ts and every module under src/modules/ since the
 // Living-System initiative (migrations 32-40) — see CLAUDE.md.
 //
-// SCOPE: schema + service + a standalone panel only (see
-// MeetingsPanel.tsx). NOT wired into ChiefDashboardView.tsx, App.tsx, or
-// any navigation in this pass — that wiring is a deliberate followup,
-// flagged rather than silently done, same precedent as
-// FormsBuilderPanel.tsx/IntegrationsPanel.tsx/CategoryManagerPanel.tsx
-// each had before their own dashboard wiring landed.
+// SCOPE: schema + service + a standalone panel (see MeetingsPanel.tsx),
+// wired into ChiefDashboardView.tsx's "Meetings" tab — this header
+// originally flagged that wiring as a followup before it landed; it's
+// live now, updated here so this comment doesn't mislead a future reader
+// (see MeetingsPanel.tsx's own, correct header).
 //
 // OWNERSHIP: meeting_series follows the same three-way ownership shape as
 // form_instances (migration 42) — tenant-owned / doctor-owned (schema

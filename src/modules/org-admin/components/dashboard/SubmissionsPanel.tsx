@@ -1,5 +1,5 @@
 import React from 'react';
-import { SubmissionWithWorkforce } from '../../../../types';
+import { SubmissionWithWorkforce, WorkforceCategory } from '../../../../types';
 import { FileText, FileDown, Search, Filter, Calendar, Eye, Edit, X, AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface SubmissionsPanelProps {
@@ -10,6 +10,10 @@ interface SubmissionsPanelProps {
   setSearchQuery: (value: string) => void;
   categoryFilter: string;
   setCategoryFilter: (value: string) => void;
+  // Tenant's own live category vocabulary (migration 39 rewiring) — the
+  // filter dropdown below lists these instead of the old hardcoded 3-value
+  // union, matching WorkforceRegistryPanel/RoleDelegationPanel.
+  workforceCategories: WorkforceCategory[];
   leaveFilter: string;
   setLeaveFilter: (value: string) => void;
   handleExportCSV: () => void;
@@ -50,6 +54,7 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
   setSearchQuery,
   categoryFilter,
   setCategoryFilter,
+  workforceCategories,
   leaveFilter,
   setLeaveFilter,
   handleExportCSV,
@@ -120,9 +125,9 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 cursor-pointer"
             >
               <option value="All">All Categories</option>
-              <option value="Registrar">Registrars</option>
-              <option value="Senior Registrar">Senior Registrars</option>
-              <option value="Medical Officer">Medical Officers</option>
+              {workforceCategories.map(cat => (
+                <option key={cat.id} value={cat.label}>{cat.label}</option>
+              ))}
             </select>
           </div>
 

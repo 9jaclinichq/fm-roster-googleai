@@ -1072,6 +1072,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
             setSearchQuery={setSearchQuery}
             categoryFilter={categoryFilter}
             setCategoryFilter={setCategoryFilter}
+            workforceCategories={workforceCategories}
             leaveFilter={leaveFilter}
             setLeaveFilter={setLeaveFilter}
             handleExportCSV={handleExportCSV}
