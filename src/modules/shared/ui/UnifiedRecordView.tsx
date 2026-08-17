@@ -45,6 +45,8 @@ const ENTRY_TYPE_LABEL: Record<UdrEntryType, string> = {
   submission: 'Submission',
   case_report: 'Case Report',
   dissertation_milestone: 'Dissertation Milestone',
+  clinical_document: 'Clinical Document',
+  rubric_instance: 'Rubric Assessment',
 };
 
 export const UnifiedRecordView: React.FC<UnifiedRecordViewProps> = ({ owner }) => {

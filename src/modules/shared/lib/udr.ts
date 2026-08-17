@@ -45,6 +45,55 @@
 //     is always `{ activeSubscription: null }`. Org-wide (`scope='tenant'`)
 //     subscriptions are not surfaced here either, since they belong to the
 //     tenant, not to an individual doctor record.
+//   - EXTENDED 2026-08-17 (living-system re-audit, docs/LIVING_SYSTEM_GAP_AUDIT.md's
+//     addendum §5 finding) to cover migrations 41/44/45/48 (Scored Rubric,
+//     Scheduling, Meetings, Clinical Writing), which shipped after this file
+//     was first written and were never wired back in. Deliberately did NOT
+//     add `scheduling_instances`/`clinical_document_types` to `instances[]`
+//     despite being schema-shaped like one: unlike `research_workspaces`/
+//     `casebook_workspaces` (owned directly by one `workforce_id`/`doctor_id`
+//     — a genuinely personal track), a scheduling instance or a clinical
+//     document TYPE is a tenant-shared builder/template object (its
+//     `tenant_id`/`doctor_id` mean "visible to this org/doctor's scope", not
+//     "this is my personal thing") — folding every org-wide roster/document-
+//     type definition into one person's UDR would misrepresent shared config
+//     as personal records. The genuinely personal artifacts one level down
+//     (`clinical_documents.created_by_workforce_id`, a real per-person
+//     authorship column; `rubric_instances.assessor_workforce_id`/
+//     `assessor_doctor_id`, a real per-person assessor column) are surfaced
+//     in `entries[]` instead, matching that field's own "one entry per
+//     event tied to this person" definition exactly.
+//   - `meetings[]` (new): `meetings`/`meeting_series` are tenant/doctor-scoped
+//     builder+instance objects with no per-attendee column at all — the one
+//     genuinely personal link is `meeting_actions.owner_workforce_id` (who a
+//     specific action is owed by). Scoped to meetings where the caller owns
+//     at least one action, matching the spec's own §5 shape "(meeting_id,
+//     items raised, actions owed)" read as "meetings THIS person has a stake
+//     in", not "every meeting in the tenant". Live `meeting_actions` has 0
+//     rows today (Meetings module is scaffolded, not yet used beyond its one
+//     seed series) — this always returns `[]` right now, same "real path,
+//     no producer yet" state `fetchInsightsForDoctor` was already in before
+//     Submission Chaser started writing doctor-scoped insights.
+//   - `pipelines[]` (new): backed by `form_pipelines`/`scheduling_pipelines`
+//     (both migration-35/44-shaped: `instance_id`, `pipeline_type`, `config`,
+//     `created_at`). Scoped through the owning instance's `tenant_id`/
+//     `doctor_id` (pipelines themselves don't carry a per-person owner —
+//     they're config attached to a shared instance, not a personal one).
+//     `created_at` stands in for the spec's `ran_at` loosely: today's one
+//     real `form_pipelines` row (`schedule_to_roster`) documents a pipeline
+//     CONCEPT that's actually implemented directly in `ResidentFormView.tsx`/
+//     `databaseService.ts`, not a per-run execution log — there is no real
+//     per-execution `ran_at` timestamp anywhere in this schema yet. Flagged
+//     here rather than faked.
+//   - `audit[]` (new): **no real source exists.** `event_log` (migration 32)
+//     has no per-person actor column at all — only `tenant_id`/`event_type`/
+//     `payload`/`source`/`agent_ref`. Scoping it by the caller's tenant would
+//     misattribute every OTHER member's tenant-wide event as this person's
+//     own audit trail, which is worse than an honest gap. The field exists
+//     on `UnifiedDoctorRecord` (per spec §5) and always returns `[]` — this
+//     is the one field in this extension with no real backing data source
+//     at all, unlike `meetings[]`/`pipelines[]` above which have a real path
+//     that's simply unused so far.
 //   - An individual doctor identity (`doctor_profiles`, migration 18) can
 //     be *linked* to an institutional `workforce` row via
 //     `workforce.doctor_id`. When looked up by `doctorId` and a linked
@@ -107,7 +156,7 @@ export interface UdrInstance {
   createdAt: string;
 }
 
-export type UdrEntryType = 'submission' | 'case_report' | 'dissertation_milestone';
+export type UdrEntryType = 'submission' | 'case_report' | 'dissertation_milestone' | 'clinical_document' | 'rubric_instance';
 
 export interface UdrEntry {
   id: string;
@@ -139,6 +188,44 @@ export interface UdrInsight {
   createdAt: string;
 }
 
+// See this file's header (2026-08-17 extension note) for why meetings[] is
+// scoped to "meetings this person owes an action on", not every tenant
+// meeting.
+export interface UdrMeetingAction {
+  id: string;
+  description: string;
+  status: string;
+  dueDate: string | null;
+}
+
+export interface UdrMeeting {
+  id: string;
+  title: string;
+  scheduledAt: string | null;
+  status: string;
+  itemsRaised: string[];
+  actionsOwed: UdrMeetingAction[];
+}
+
+// See this file's header for why `ranAt` is really "defined/created at",
+// not a per-execution timestamp — no such data exists yet.
+export interface UdrPipeline {
+  id: string;
+  instanceId: string;
+  pipelineType: string;
+  ranAt: string;
+}
+
+// Always `[]` today — see this file's header note on why no real per-person
+// audit source exists yet. Shape kept per spec §5 so a future real source
+// (should one ever exist) doesn't need an interface change.
+export interface UdrAuditEntry {
+  who: string;
+  what: string;
+  when: string;
+  why: string | null;
+}
+
 export interface UnifiedDoctorRecord {
   identity: UdrIdentity;
   tenant: UdrTenant | null;
@@ -147,6 +234,9 @@ export interface UnifiedDoctorRecord {
   academic: UdrAcademic;
   billing: UdrBilling;
   insights: UdrInsight[];
+  meetings: UdrMeeting[];
+  pipelines: UdrPipeline[];
+  audit: UdrAuditEntry[];
 }
 
 interface WorkforceRow {
@@ -352,6 +442,152 @@ async function fetchInsightsForDoctor(client: SupabaseClient, doctorId: string):
   }));
 }
 
+interface ClinicalDocumentRow {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+}
+
+async function fetchClinicalDocuments(client: SupabaseClient, workforceId: string): Promise<UdrEntry[]> {
+  const { data, error } = await client
+    .from('clinical_documents')
+    .select('id, title, status, created_at')
+    .eq('created_by_workforce_id', workforceId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return ((data as ClinicalDocumentRow[] | null) ?? []).map((row) => ({
+    id: row.id,
+    type: 'clinical_document',
+    status: row.status,
+    summary: row.title,
+    createdAt: row.created_at,
+  }));
+}
+
+interface RubricInstanceRow {
+  id: string;
+  subject_ref: string | null;
+  created_at: string;
+}
+
+async function fetchRubricInstances(
+  client: SupabaseClient,
+  filter: { workforceId?: string; doctorId?: string }
+): Promise<UdrEntry[]> {
+  let query = client.from('rubric_instances').select('id, subject_ref, created_at');
+  if (filter.workforceId) {
+    query = query.eq('assessor_workforce_id', filter.workforceId);
+  } else if (filter.doctorId) {
+    query = query.eq('assessor_doctor_id', filter.doctorId);
+  } else {
+    return [];
+  }
+  const { data, error } = await query.order('created_at', { ascending: false });
+  if (error) throw error;
+  return ((data as RubricInstanceRow[] | null) ?? []).map((row) => ({
+    id: row.id,
+    type: 'rubric_instance',
+    status: null,
+    summary: row.subject_ref ? `Rubric assessment: ${row.subject_ref}` : 'Rubric assessment',
+    createdAt: row.created_at,
+  }));
+}
+
+interface MeetingActionRow {
+  id: string;
+  meeting_id: string;
+  description: string;
+  status: string;
+  due_date: string | null;
+}
+
+interface MeetingRow {
+  id: string;
+  title: string;
+  scheduled_at: string | null;
+  status: string;
+  agenda: { items?: { label?: string }[] } | null;
+}
+
+async function fetchMeetings(client: SupabaseClient, workforceId: string): Promise<UdrMeeting[]> {
+  const { data: actions, error: actionsError } = await client
+    .from('meeting_actions')
+    .select('id, meeting_id, description, status, due_date')
+    .eq('owner_workforce_id', workforceId);
+  if (actionsError) throw actionsError;
+  const actionRows = (actions as MeetingActionRow[] | null) ?? [];
+  if (actionRows.length === 0) return [];
+
+  const meetingIds = [...new Set(actionRows.map((a) => a.meeting_id))];
+  const { data: meetings, error: meetingsError } = await client
+    .from('meetings')
+    .select('id, title, scheduled_at, status, agenda')
+    .in('id', meetingIds);
+  if (meetingsError) throw meetingsError;
+
+  return ((meetings as MeetingRow[] | null) ?? []).map((m) => ({
+    id: m.id,
+    title: m.title,
+    scheduledAt: m.scheduled_at,
+    status: m.status,
+    itemsRaised: (m.agenda?.items ?? []).map((item) => item.label ?? '').filter(Boolean),
+    actionsOwed: actionRows
+      .filter((a) => a.meeting_id === m.id)
+      .map((a) => ({ id: a.id, description: a.description, status: a.status, dueDate: a.due_date })),
+  }));
+}
+
+interface PipelineRow {
+  id: string;
+  instance_id: string;
+  pipeline_type: string;
+  created_at: string;
+}
+
+async function fetchPipelines(client: SupabaseClient, tenantId: string): Promise<UdrPipeline[]> {
+  // See this file's header for why these are scoped through the owning
+  // instance's tenant, not a per-person owner column (pipelines don't have
+  // one — they're shared config attached to a shared instance).
+  const pipelines: UdrPipeline[] = [];
+
+  const { data: formInstanceIds, error: fiError } = await client
+    .from('form_instances')
+    .select('id')
+    .eq('tenant_id', tenantId);
+  if (fiError) throw fiError;
+  const formIds = (formInstanceIds ?? []).map((r: { id: string }) => r.id);
+  if (formIds.length > 0) {
+    const { data, error } = await client
+      .from('form_pipelines')
+      .select('id, instance_id, pipeline_type, created_at')
+      .in('instance_id', formIds);
+    if (error) throw error;
+    for (const row of (data as PipelineRow[] | null) ?? []) {
+      pipelines.push({ id: row.id, instanceId: row.instance_id, pipelineType: row.pipeline_type, ranAt: row.created_at });
+    }
+  }
+
+  const { data: schedInstanceIds, error: siError } = await client
+    .from('scheduling_instances')
+    .select('id')
+    .eq('tenant_id', tenantId);
+  if (siError) throw siError;
+  const schedIds = (schedInstanceIds ?? []).map((r: { id: string }) => r.id);
+  if (schedIds.length > 0) {
+    const { data, error } = await client
+      .from('scheduling_pipelines')
+      .select('id, instance_id, pipeline_type, created_at')
+      .in('instance_id', schedIds);
+    if (error) throw error;
+    for (const row of (data as PipelineRow[] | null) ?? []) {
+      pipelines.push({ id: row.id, instanceId: row.instance_id, pipelineType: row.pipeline_type, ranAt: row.created_at });
+    }
+  }
+
+  return pipelines;
+}
+
 async function fetchActiveSubscription(client: SupabaseClient, workforceId: string): Promise<UserSubscription | null> {
   const { data, error } = await client
     .from('user_subscriptions')
@@ -425,6 +661,8 @@ export async function getUnifiedDoctorRecord(
   let caseReportsCount = 0;
   let activeSubscription: UserSubscription | null = null;
   let insights: UdrInsight[] = [];
+  let meetings: UdrMeeting[] = [];
+  let pipelines: UdrPipeline[] = [];
 
   if (workforceRow) {
     const [submissions, caseReports] = await Promise.all([
@@ -470,14 +708,30 @@ export async function getUnifiedDoctorRecord(
     examReadiness = await fetchExamReadiness(supabaseClient, workforceRow.id);
     activeSubscription = await fetchActiveSubscription(supabaseClient, workforceRow.id);
     insights = await fetchInsights(supabaseClient, workforceRow.id);
+
+    const [clinicalDocs, rubricInstances, workforceMeetings] = await Promise.all([
+      fetchClinicalDocuments(supabaseClient, workforceRow.id),
+      fetchRubricInstances(supabaseClient, { workforceId: workforceRow.id }),
+      fetchMeetings(supabaseClient, workforceRow.id),
+    ]);
+    entries.push(...clinicalDocs, ...rubricInstances);
+    meetings = workforceMeetings;
+
+    if (workforceRow.tenant_id) {
+      pipelines = await fetchPipelines(supabaseClient, workforceRow.tenant_id);
+    }
   } else if (doctorRow) {
     // Genuinely unlinked doctor (no workforce row at all) — entries/
     // academic/billing stay empty (those tables have no doctor_id path,
     // per this file's own header note), but insights now can be non-empty
     // since migration 49 added insights.doctor_id. Will still return []
     // today since no agent writes one yet — see fetchInsightsForDoctor's
-    // own comment.
+    // own comment. rubric_instances DOES have a real assessor_doctor_id
+    // path (migration 41), so that one entry type can be non-empty for an
+    // unlinked doctor even though clinical_documents/meetings/pipelines
+    // cannot (no doctor_id-scoped path exists for those yet).
     insights = await fetchInsightsForDoctor(supabaseClient, doctorRow.id);
+    entries.push(...(await fetchRubricInstances(supabaseClient, { doctorId: doctorRow.id })));
   }
 
   entries.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -496,5 +750,10 @@ export async function getUnifiedDoctorRecord(
       activeSubscription,
     },
     insights,
+    meetings,
+    pipelines,
+    // Always [] — see this file's header note on why no real per-person
+    // audit source exists yet.
+    audit: [],
   };
 }
