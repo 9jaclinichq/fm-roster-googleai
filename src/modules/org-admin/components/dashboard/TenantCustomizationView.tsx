@@ -132,7 +132,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
       try {
         overrides = JSON.parse(newFeaturePrompt);
       } catch {
-        setStatusMessage('Prompt overrides must be valid JSON, e.g. {"extra_instructions": "Always cite NPMCN guidelines over WACP where the two differ."}.');
+        setStatusMessage('Prompt overrides must be valid JSON, e.g. {"extra_instructions": "Always cite our institution\'s own guidelines over external ones where the two differ."}.');
         return;
       }
     }
@@ -264,7 +264,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
         </div>
         <div className="space-y-2">
           <input value={newFeatureKey} onChange={e => setNewFeatureKey(e.target.value)} placeholder="feature key, e.g. academic_copilot" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" />
-          <textarea value={newFeaturePrompt} onChange={e => setNewFeaturePrompt(e.target.value)} placeholder='{"extra_instructions": "Prefer NPMCN over WACP guidance where they conflict."}' rows={2} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono" />
+          <textarea value={newFeaturePrompt} onChange={e => setNewFeaturePrompt(e.target.value)} placeholder='{"extra_instructions": "Prefer our own institutional guidance where sources conflict."}' rows={2} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono" />
           <button onClick={addAdaptationRule} className="flex items-center gap-1 text-xs font-bold bg-slate-900 text-white px-3 py-2 rounded-lg hover:bg-slate-800 cursor-pointer"><Plus size={14} /> Save Rule</button>
         </div>
       </div>

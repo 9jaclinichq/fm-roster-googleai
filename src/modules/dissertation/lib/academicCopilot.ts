@@ -157,7 +157,7 @@ class AcademicCopilotProviderImpl implements AcademicCopilotProvider {
         if (hits.length > 0) {
           kbNotes.push(`Related content found in the Knowledge Pack library: ${hits.slice(0, 3).map(h => `"${h.title}"`).join(', ')}.`);
         } else {
-          kbNotes.push('No related content found in the indexed Knowledge Packs yet — ask the Chief Resident to add relevant guideline documents.');
+          kbNotes.push('No related content found in the indexed Knowledge Packs yet — ask your organization admin to add relevant guideline documents.');
         }
       }
     } catch (err) {

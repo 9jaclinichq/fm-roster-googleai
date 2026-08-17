@@ -77,7 +77,7 @@ export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout
                 <Stethoscope size={16} className="text-blue-600 shrink-0" />
                 <span>
                   <span className="block text-sm font-bold text-slate-800">Personal Casebook</span>
-                  <span className="block text-[11px] text-slate-500 mt-0.5">WACP/NPMCN case write-ups, family tools</span>
+                  <span className="block text-[11px] text-slate-500 mt-0.5">Structured case write-ups, family tools</span>
                 </span>
               </span>
               <ChevronRight size={16} className="text-slate-400 shrink-0" />

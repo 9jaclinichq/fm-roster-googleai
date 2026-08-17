@@ -15,7 +15,7 @@ export function buildDefaultFolderTree(): FolderNode[] {
     { name: '03-Data-Collection', children: subfolders(['Cleaned-Data', 'Participant-Logs', 'Raw Data', 'DATA ENTRY TRACKER', 'RECRUITMENT LOG']) },
     { name: '04-Analysis', children: subfolders(['Results-Drafts', 'SPSS-Output', 'Statistical Notes']) },
     { name: '05-Writeup', children: subfolders(['Chapter-Drafts', 'Final-Submission', 'Supervisor-Feedback']) },
-    { name: '06-Guidelines-and-Resources', children: subfolders(['College-Guidelines', 'Reference-Papers', 'WACP Standards']) },
+    { name: '06-Guidelines-and-Resources', children: subfolders(['College-Guidelines', 'Reference-Papers', 'Framework-Standards']) },
     { name: '07-Admin', children: subfolders(['Ethics-Approval', 'Supervisor-Correspondence', 'Timeline']) },
   ];
 }

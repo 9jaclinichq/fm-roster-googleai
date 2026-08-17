@@ -323,7 +323,7 @@ export const KnowledgePackManagerView: React.FC<KnowledgePackManagerViewProps> =
               type="text"
               value={newPackTitle}
               onChange={(e) => setNewPackTitle(e.target.value)}
-              placeholder="Pack title (e.g. WACP Dissertation Guidelines)"
+              placeholder="Pack title (e.g. Dissertation Writing Guidelines)"
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-1 focus:ring-slate-950"
             />
             <select
