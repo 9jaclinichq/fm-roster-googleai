@@ -874,6 +874,13 @@ function MainAppContent() {
               component itself gates access behind a separate operator
               shared code (see SaaSOperatorConsoleView) */}
           <Route path="/saas-operator" element={<SaaSOperatorConsoleView />} />
+          {/* docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md §7/§11 names this route
+              /#admin. Redirect rather than rename outright — /saas-operator
+              is the long-established, real route (linked from CLAUDE.md,
+              deploy notes, and anyone who already knows the URL per the
+              footer comment above); this closes the spec-naming gap without
+              risking an existing bookmark/reference breaking. */}
+          <Route path="/admin" element={<Navigate to="/saas-operator" replace />} />
 
           {/* Catch-all route */}
           <Route path="*" element={<Navigate to="/" replace />} />
