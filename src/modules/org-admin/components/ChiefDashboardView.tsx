@@ -155,10 +155,24 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string>('');
 
+  // A connection-level network failure (offline, DNS failure) can leave the
+  // underlying fetch() never settling — unlike an HTTP-level error, which
+  // supabase-js already surfaces cleanly as {error}. Without this, the
+  // Chief's very first dashboard load can get stuck on the loading spinner
+  // forever with no error (same root cause as ResidentLoginView/
+  // ChiefLoginView's identical withTimeout fix, 2026-08-17).
+  function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Request timed out')), ms)),
+    ]);
+  }
+
   // Load Dashboard Data
   const loadDashboardData = async () => {
     setIsLoading(true);
     try {
+      await withTimeout((async () => {
       // Every read/write below defaults to DEFAULT_TENANT_ID (UCH) unless
       // passed a tenant explicitly — must pass this Chief's own resolved
       // tenant, or a second tenant's Chief sees/creates against UCH's data
@@ -222,7 +236,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           console.warn('Failed to load resident codes:', codeErr);
         }
       }
-
+      })(), 20000);
     } catch (err) {
       console.warn('Failed to load dashboard data:', err);
     } finally {
