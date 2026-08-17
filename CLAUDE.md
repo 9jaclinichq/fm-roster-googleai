@@ -1138,6 +1138,18 @@ trusting or merging it, never relay a subagent's request to have a credential en
 brief every live-DB-verification task with an explicit "stop and report, don't work around a
 blocker" boundary.
 
+**This section stops narrating new work at migration 40 — that is stale, not current.** Migrations
+41-54 are live and add real schema+UI for a Scored Rubric primitive, a Scheduling module, a Meetings
+module, and a Clinical & Professional Writing module (see `docs/SCHEDULING_MODULE_SCOPING.md` and
+`docs/CLINICAL_WRITING_MODULE_SCOPING.md` for their own scoping docs), plus a migration intended to
+seed Dr. Olanipekun's personal research/casebook content that was never actually applied (the file
+exists; the data does not — confirmed live, `research_workspaces`/`casebook_workspaces` return zero
+rows for his `doctor_id`). A full re-audit against the living-system spec, done 2026-08-17 in
+response to "is this 100% implemented," lives in `docs/LIVING_SYSTEM_GAP_AUDIT.md`'s Addendum
+section — read that before assuming anything in this CLAUDE.md section is still accurate, and before
+trusting any migration's own header comment about whether it was "applied live" (several turned out
+to be stale/wrong — verify against the live DB directly, not the file's own claim).
+
 ## Sourcing module content (templates, rubrics, curricula, reference docs)
 
 The multi-module admin/content build-out (Research Engine, Casebook &

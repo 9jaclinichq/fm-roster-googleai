@@ -292,3 +292,120 @@ document requires, sitting underneath every module that has any notion of
 "who can approve what" (Chief dashboard subadmin assignment, Consultant
 Review gating, Casebook logbook sign-off permissions all key off this exact
 fixed enum).
+
+---
+
+## Addendum (2026-08-17) — re-audit through migration 54, in response to "is this 100% implemented"
+
+This audit predates migrations 32-54 and is stale in specific, citable ways below. Re-verified
+directly against `main`'s live schema and code (not against this file's own earlier claims, and not
+against CLAUDE.md's summary either, which itself stops narrating new work at migration 40 despite
+migrations 41-54 being live). **Overall: roughly 45-60% of the spec is implemented, unevenly** —
+some areas are genuinely close to done, others (an event bus that's actually used, autonomous agents
+above rung 1, a real integrations layer) are still close to 0%.
+
+**Correction to a claim made earlier the same day this addendum was written**: `settings` was
+believed to still be a hard global singleton (`id integer CHECK (id=1)`), blocking any isolated
+per-tenant Chief credential. That was checking the base `supabase/schema.sql` file instead of the
+live migrated schema — migration 23 (`23_per_tenant_chief_admin_code.sql`) actually converted it to
+`id uuid PRIMARY KEY`, added `tenant_id uuid UNIQUE NOT NULL`, and gave `admin_access_code` its own
+`UNIQUE` constraint, all applied live and confirmed via `information_schema` + `verify_chief_login`'s
+real body (`SELECT s.tenant_id, t.name FROM settings s JOIN tenants t ... WHERE s.admin_access_code =
+p_code`). **Always check the live migrated schema/DB, never the base `schema.sql` file alone** — it
+does not reflect every later migration's `ALTER TABLE`.
+
+**§2 Tenancy — ~65%.** Settings correction above aside, `submissions` still has no `tenant_id`
+(unchanged). RLS is still `USING(true)` on the large majority of tables, including every table added
+by migrations 41-54 (`scheduling_*`, `meeting_*`, `clinical_document_types`, `rubric_*`) — only 4 real
+`auth.uid()`-scoped boundaries exist anywhere (doctor_profiles; research/casebook doctor-owned rows;
+form_instances/entries doctor-owned rows; personal_tasks/wellbeing_entries/focus_sessions doctor-owned
+rows). Spec §2's "RLS enforces it. No cross-tenant reads, ever" is not true today for the great
+majority of tables — this is the single largest security-shaped gap in the whole spec, not a cosmetic
+one.
+
+**§3 Five-layer anatomy — ~70%.** Structure genuinely maps to Faces/Organs; confirmed real
+"module imports module" violations (not Face-composing-Organs, which is fine): `CasebookWorkspaceView`/
+`ResearchWorkspaceView` import `billing/lib/useWorkspaceQuota` directly; `CasebookBuilderView` imports
+`dissertation/lib/academicCopilot` directly; `ResidentFormView` imports `org-admin/ComplianceNudgesView`
+directly; `DoctorFormsBuilderPanel` imports `form/lib/formService` directly. Small, fixable, not
+structural.
+
+**§4 Intelligence ladder — declared correctly, but the ladder has no upper rungs.** All 13 rows in
+`agent_manifests` are rung 0 or rung 1. Zero rung 2 (Acting), rung 3 (Deciding), or rung 4 (Learning)
+agents exist anywhere — no auto-actions, no approve/deny gate has ever actually been exercised, no
+policy-tuning loop. "Gates before autonomy" (working rule 7) is untested in practice, not violated —
+there's simply nothing above rung 1 yet to gate.
+
+**§5 UDR — ~50%.** `udr.ts`'s own header is candid: a deliberate read-only composition layer, not
+the spec's generic schema, to avoid a real data migration. Missing entirely: `udr.pipelines[]`,
+`udr.meetings[]` (despite a real `meetings` table existing since migration 45), `udr.audit[]`.
+`udr.instances[]`/`udr.entries[]` cover only the pre-41 modules (research/casebook workspaces,
+submissions, case reports) — never extended to cover `scheduling_*`, `meeting_*`,
+`clinical_document_types`, or `rubric_*` after those modules shipped. The spine was not kept in sync
+with the organs built on top of it.
+
+**§6 Event vocabulary — ~5%.** Live `event_log` has exactly 2 rows, both `insight.generated`. Of the
+~24 named events in the spec, only that one has ever actually fired. `eventBus.ts` exists as real,
+usable infrastructure; it is essentially not called from the real user-action paths that should be
+calling it.
+
+**§7 The 10 modules — ~55-65%, very uneven.** Forms & pipelines (~85%, genuinely generic — an org
+admin can create a second, different form instance today, confirmed in code), Billing & plans (~85%,
+mature), Research & academic tracks (~75-80%, real multi-template selection) are the most complete.
+Scheduling (~60%), Clinical & professional writing (~70%), Meetings & actions (~75%) exist as solid,
+real, additively-built org-side scaffolds (migrations 44/45/48) — but each coexists *alongside* an
+older hardcoded single-use-case system rather than replacing it (`MultiRosterManagerView`'s 5
+UCH-specific roster parsers are untouched; two parallel research/casebook flows still exist). **Learning
+& development is 0% — does not exist at all**, no table, no component, no concept. Messages &
+broadcasts and Profile & memberships are mid-progress, matching this file's earlier sections above.
+The 3 newest modules (Scheduling/Meetings/Clinical Writing) have zero individual-doctor-side builder
+UI — org-admin-only today, confirmed via grep (no references from `DoctorHomeView`'s tree).
+
+**Customisation tooling — not unified.** Implemented as N separate per-module builder components
+(`FormsBuilderPanel`, `TemplateManagerView`, `SchedulingBuilderView`, `MeetingsPanel`,
+`ClinicalWritingPanel`), not the spec's "one customisation engine, exposed with different scopes."
+Each is internally reasonable; there is no shared abstraction across them.
+
+**Integrations layer — ~10%.** `integrations_catalog` is genuinely seeded (8 rows, exceeds the spec's
+5). `integrations_connections` has zero rows and zero UI referencing it anywhere in `src/` — no
+connect/disconnect flow exists for any of the 8 catalog entries. Flutterwave is wired directly into
+billing, not through this model at all. This is the component furthest from spec.
+
+**§8.1 Scored Rubric primitive — schema+UI done, ~0% real usage, and NOT replacing the old
+hardcoded engines it was meant to generalize.** `rubric_templates/sections/items/instances` +
+`compute_rubric_totals()` exist live (migration 41) with a real 3-state ownership model
+(global/tenant/doctor) and 3 seeded WACP templates (exceeds the spec's ask of 2), wired into real UI
+(`RubricInstanceForm.tsx`). But `rubric_instances` has 0 rows — never used by a real assessor yet.
+Worse: `caseRubricEngine.ts` and `rubricEngine.ts` still contain hardcoded
+`framework_type === 'WACP_PMR_10'`-style branches and a hardcoded `AFRICAN_LITERATURE_ORGS` set,
+un-replaced — the generic primitive was built *additively*, violating working rule 9's "never
+hard-code a use case" for these two specific files.
+
+**§8.2 Global seed template library — done for Forms/Clinical Writing/Meetings, not done for
+Scheduling.** Forms & pipelines has all 5 spec'd generic templates seeded and marked
+`is_system_default`. Clinical Writing has 3. Meetings has 1 (minimal but present). **Scheduling has
+none** — `scheduling_instances` contains exactly one row, literally named "Wiring verification test."
+The table/UI shipped; the actual seed-content task for this module was never completed.
+
+**§8.3 Personal instances for Dr. Olanipekun — not done, despite a migration file named for
+exactly this purpose.** `47_seed_olanipekun_real_workspace_content.sql` exists in the migrations
+folder; his `doctor_profiles` row is real and live; but `research_workspaces`/`casebook_workspaces`
+both return **zero rows** for his `doctor_id`. None of the described content (the dissertation title,
+the stroke-case casebook entry) was ever actually inserted. Concrete, easily-closeable gap.
+
+**Working rule 10 (no hardcoded vocabulary) — 28 files still contain literal
+`Resident`/`WACP`/`NPMCN` strings.** Most are `t('member', 'Resident')`-style terminology-wrapped
+fallback defaults, which is the accepted pattern from this session's earlier terminology retrofit —
+but the two rubric-engine files above are genuine hardcoded domain branches, a real violation. The
+terminology system's own *un-overridden default* vocabulary is also still resident-centric, which
+would show through unchanged to any brand-new non-hospital tenant that never sets overrides.
+
+**One concrete spec deviation found**: §7/§11 call for the platform operator panel at `/#admin`; the
+actual live route is `/saas-operator`. Cosmetic, but worth a conscious decision (rename the route, or
+update the spec) rather than leaving the mismatch unflagged.
+
+**Scale note for whoever reads this next**: closing every gap above is not a single session's work.
+The RLS-tightening item alone touches dozens of tables and needs careful per-table verification to
+avoid breaking the live app (see this file's own RLS findings above and CLAUDE.md's Security Notes on
+why RLS changes have historically required explicit user sign-off). Rungs 2-4 autonomous agents are
+close to greenfield work. Recommend phasing rather than attempting all of this in one pass.
