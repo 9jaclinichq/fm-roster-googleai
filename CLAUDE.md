@@ -922,6 +922,56 @@ Deployment below).
   and exercising the flow) is the current QA method — be explicit when a
   change hasn't been manually verified.
 
+### Bug-class patterns found by adversarial QA (2026-08-16/17) — don't reintroduce these
+
+Two recurring bug shapes surfaced across this session's adversarial pass. Both are easy to
+reintroduce by accident when writing new code that looks like existing code — check for them
+explicitly rather than assuming a copy-pasted pattern is safe.
+
+1. **Check-then-insert-or-update races.** `databaseService.ts` has several functions shaped like
+   "SELECT to see if a row exists, then branch into INSERT or UPDATE." Two near-simultaneous
+   callers (double-click, two open tabs, a retry-after-timeout) can both pass the SELECT before
+   either write lands — the loser either throws a raw `23505` unique-violation (if a real UNIQUE
+   constraint backstops the intended shape) or, worse, silently creates a duplicate row (if no
+   such constraint exists at all) or silently clobbers the winner's write (a lost-update race, if
+   the two writes touch overlapping fields). Fixed instances this session: `submitRoster`,
+   `upsertTodaysEntry` (wellbeing), `getOrCreateMasterRoster`, `createDissertation`,
+   `getOrCreateExamReadiness`, `addLogbookSignoff`. **When adding a new check-then-write path**:
+   prefer a real `.upsert(payload, { onConflict: '<constraint columns>' })` where the semantics
+   allow it (the row's shape is fully replaceable) — but note `onConflict` needs a plain `UNIQUE`
+   constraint or the actual `PRIMARY KEY`, not a partial unique index (PostgREST can't infer a
+   target from a partial index; this was hit and fixed for `wellbeing_entries`). Where the
+   two writes need to merge (e.g. appending to an array, incrementing a counter) rather than
+   fully replace, use optimistic concurrency instead: read the row, then make the UPDATE's
+   `WHERE` clause also pin the field you're about to change to the value you just read (e.g.
+   `.eq('completed_count', priorCount)`), and retry against fresh state (bounded attempts) if zero
+   rows match — see `addLogbookSignoff` for the reference implementation. Either way, verify by
+   actually reproducing the race against the live DB with disposable test data (fire two
+   concurrent requests, confirm the pre-fix failure, confirm the post-fix outcome, clean up) —
+   code review alone won't catch this class.
+2. **Unbounded fetch-on-mount.** A connection-level network failure (offline, DNS failure — not
+   an HTTP error response, which `supabase-js` already surfaces cleanly as `{error}`) can leave
+   the underlying `fetch()` never settling. Any component that awaits a `databaseService` call
+   inside a mount effect with no timeout will hang its loading state forever with no error shown
+   on such a failure. Fixed instances: `ResidentLoginView`, `ChiefLoginView`,
+   `ChiefDashboardView`'s `loadDashboardData`. **When adding a new mount-time data load**: wrap it
+   in a bounded `Promise.race` against a timeout (15-20s), matching the `withTimeout()` helper
+   already duplicated in the fixed components, so a hard network failure surfaces the same error
+   UI as an HTTP-level failure instead of hanging. This is not yet applied to every
+   `databaseService` call site in the app — treat any newly-reported "stuck on loading forever"
+   report as this same class until proven otherwise.
+
+A third, one-off finding worth knowing about even though it's not a repeating pattern: session
+state restored from `localStorage` (`currentResident`/`isChiefAuthenticated` in `App.tsx`) must be
+read via a **lazy `useState` initializer**, not a `useEffect`/`useLayoutEffect`. Restoring it in
+any effect leaves a real first-render window where the state is still `null`/`false`, during which
+every session-gated route commits a `<Navigate>` fallback whose own effect can still fire even
+after a corrected re-render replaces it — `useLayoutEffect` does not reliably prevent this (verified
+empirically, see `App.tsx`'s `readInitialResidentSession`/`readInitialChiefAuthenticated` comment
+for the full mechanism). If a future session ever needs to restore comparable client-side session
+state (a new session type, a new gated-route family), read it synchronously in the initializer, not
+in an effect of any kind.
+
 ## Module admin-content build-out progress (2026-08-14, ongoing)
 
 Phased effort extending org-admin (and app-operator) content control across
