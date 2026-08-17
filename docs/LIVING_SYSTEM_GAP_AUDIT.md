@@ -314,14 +314,26 @@ real body (`SELECT s.tenant_id, t.name FROM settings s JOIN tenants t ... WHERE 
 p_code`). **Always check the live migrated schema/DB, never the base `schema.sql` file alone** — it
 does not reflect every later migration's `ALTER TABLE`.
 
-**§2 Tenancy — ~65%.** Settings correction above aside, `submissions` still has no `tenant_id`
-(unchanged). RLS is still `USING(true)` on the large majority of tables, including every table added
-by migrations 41-54 (`scheduling_*`, `meeting_*`, `clinical_document_types`, `rubric_*`) — only 4 real
-`auth.uid()`-scoped boundaries exist anywhere (doctor_profiles; research/casebook doctor-owned rows;
-form_instances/entries doctor-owned rows; personal_tasks/wellbeing_entries/focus_sessions doctor-owned
-rows). Spec §2's "RLS enforces it. No cross-tenant reads, ever" is not true today for the great
-majority of tables — this is the single largest security-shaped gap in the whole spec, not a cosmetic
-one.
+**§2 Tenancy — ~70%.** Settings correction above aside, `submissions` still has no `tenant_id`
+(unchanged). RLS is still `USING(true)` on institutional (workforce-owned) rows across the large
+majority of tables — this remains explicitly out of scope, since closing it needs a real auth
+architecture change for the plaintext-code login flow (no `auth.uid()` exists to write a policy
+against), declined by the app owner as separate, much larger work, not a quick phase.
+
+**Update (2026-08-17, same day)**: the *doctor-owned* half of this gap on the newer modules is now
+closed. Migration 57 extended the proven `auth.uid()`-scoped ownership pattern (migration 25 → 31 →
+40 → 51) to `scheduling_instances`/`scheduling_entries`, `meeting_series`/`meetings`,
+`clinical_document_types`/`clinical_documents`, and `rubric_templates`/`rubric_sections`/
+`rubric_items`/`rubric_instances` — 10 tables, 3 policy shapes depending on each table's actual
+ownership columns (direct 3-state check that also preserves global-seed-template visibility,
+denormalized-child direct check, and join-based check for genuine children with no owner column of
+their own). Independently re-verified (not just trusting the implementing fork's self-report): a
+disposable doctor-owned row is confirmed invisible to a plain anonymous anon-key request, while every
+institutional row and every global seed template (scheduling, rubric, forms) remains exactly as
+readable as before — no regression. 8 real `auth.uid()`-scoped boundaries now exist total (the
+original 4 plus these). Institutional-table RLS (workforce/submissions/collections/etc.) — the far
+larger piece of spec §2's "no cross-tenant reads, ever" — remains the single largest open gap,
+unchanged from before.
 
 **§3 Five-layer anatomy — ~70%.** Structure genuinely maps to Faces/Organs; confirmed real
 "module imports module" violations (not Face-composing-Organs, which is fine): `CasebookWorkspaceView`/
