@@ -387,11 +387,21 @@ Scheduling.** Forms & pipelines has all 5 spec'd generic templates seeded and ma
 none** — `scheduling_instances` contains exactly one row, literally named "Wiring verification test."
 The table/UI shipped; the actual seed-content task for this module was never completed.
 
-**§8.3 Personal instances for Dr. Olanipekun — not done, despite a migration file named for
-exactly this purpose.** `47_seed_olanipekun_real_workspace_content.sql` exists in the migrations
-folder; his `doctor_profiles` row is real and live; but `research_workspaces`/`casebook_workspaces`
-both return **zero rows** for his `doctor_id`. None of the described content (the dissertation title,
-the stroke-case casebook entry) was ever actually inserted. Concrete, easily-closeable gap.
+**§8.3 Personal instances for Dr. Olanipekun — CORRECTION (2026-08-17, same day): actually DONE,
+not a gap.** The first pass of this addendum checked `research_workspaces`/`casebook_workspaces` for
+his `doctor_id` (the separate unaffiliated-individual-doctor identity, migration 18) and found zero
+rows, concluding migration 47 was never applied. That check used the wrong ownership path — his real
+content lives under his **`workforce_id`** (his actual institutional Senior Registrar identity at
+UCH), which is the correct and expected path since he's genuinely affiliated, not an unaffiliated
+individual doctor. Verified directly against the live DB: the research workspace's title is the real
+dissertation title; its one `research_chapters` row holds 32,431 characters of real proposal text
+starting "1.0 BACKGROUND INFORMATION... Sexual health is a state of physical, emotional, mental, and
+social well-being..."; `research_correction_logs` has 51 real rows; `clinical_case_reports` has 3 real
+cases including, verbatim, "STROKE IN A KNOWN HYPERTENSIVE FARMER: DELAYED HEALTH-SEEKING BEHAVIOUR
+AND THE ROLE OF FAMILY SUPPORT IN RECOVERY" — the exact case the spec's §8.3 describes. Migration
+47's own "NOT APPLIED LIVE" header comment is stale/wrong, same pattern as several other migration
+headers flagged elsewhere in this addendum — always verify against the live DB, never trust a
+migration file's own claim about its application status.
 
 **Working rule 10 (no hardcoded vocabulary) — 28 files still contain literal
 `Resident`/`WACP`/`NPMCN` strings.** Most are `t('member', 'Resident')`-style terminology-wrapped
