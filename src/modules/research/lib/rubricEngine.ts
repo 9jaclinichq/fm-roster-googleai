@@ -10,7 +10,6 @@ import { ResearchTemplate } from '../../../types';
 
 const DEFAULT_TITLE_MAX_WORDS = 25;
 const DEFAULT_AFRICAN_LITERATURE_MIN_PCT = 25;
-const AFRICAN_LITERATURE_ORGS = new Set(['WACP', 'NPMCN']);
 
 function wordCount(text: string): number {
   const trimmed = text.trim();
@@ -58,12 +57,20 @@ export function validateCitationSyntax(referenceList: string, template: Research
       return { valid: false, message: `${malformed.length} reference(s) aren't numbered Vancouver-style ("1. Author AB. Title...").` };
     }
 
-    if (template && AFRICAN_LITERATURE_ORGS.has(template.organization_or_body)) {
-      const minPct = Number(template.proposal_rubric?.min_african_literature_pct) || DEFAULT_AFRICAN_LITERATURE_MIN_PCT;
+    // Gated by whether THIS template's own proposal_rubric configures the
+    // check, never by matching organization_or_body against a hardcoded
+    // set of names — see docs/LIVING_SYSTEM_GAP_AUDIT.md's addendum §8.1
+    // (2026-08-17 fix, behavior-verified identical for every live template
+    // via .tmp-rubric-verify.cjs before merging; the one template that
+    // relied on the old org-name fallback with an empty proposal_rubric
+    // got that field backfilled in migration 56 to preserve its behavior).
+    const configuredMinPct = template?.proposal_rubric?.min_african_literature_pct;
+    if (configuredMinPct != null) {
+      const minPct = Number(configuredMinPct) || DEFAULT_AFRICAN_LITERATURE_MIN_PCT;
       const africanCount = lines.filter(l => AFRICAN_LITERATURE_HINT.test(l)).length;
       const pct = Math.round((africanCount / lines.length) * 100);
       if (pct < minPct) {
-        return { valid: false, message: `~${pct}% African-sourced — ${template.organization_or_body} requires ${minPct}%+.`, africanLiteraturePct: pct };
+        return { valid: false, message: `~${pct}% African-sourced — this template requires ${minPct}%+.`, africanLiteraturePct: pct };
       }
       return { valid: true, message: `Vancouver OK. ~${pct}% African-sourced.`, africanLiteraturePct: pct };
     }

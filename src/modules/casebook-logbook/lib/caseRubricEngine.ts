@@ -66,16 +66,23 @@ export function countPccmComponents(pccm: PccmFramework): ValidationResult {
   };
 }
 
-// Sums a case's rubric_scores against the active template's domain point
-// weights (WACP/NPMCN 15-Casebook tracks), or the fraction of PMR steps
-// marked met (WACP PMR-10 track).
+// Sums a case's rubric_scores against the active template's own
+// scoring_rubric shape — a `steps` array means a pass/fail checklist (the
+// WACP PMR-10 track today; any future template with the same shape gets the
+// same treatment for free), a `domains` map means weighted points (WACP/
+// NPMCN 15-Casebook tracks and the generic templates). The scoring MODE is
+// determined by which shape the template's own data has, never by matching
+// a specific framework_type name — see docs/LIVING_SYSTEM_GAP_AUDIT.md's
+// addendum §8.1 for why this was hardcoded before (2026-08-17 fix,
+// behavior-verified identical for every live template via
+// .tmp-rubric-verify.cjs before merging).
 export function summarizeRubricScore(rubricScores: Record<string, number>, template: CasebookTemplate | null): ValidationResult {
   if (!template) return { valid: false, message: 'Select a template to score against.' };
 
-  if (template.framework_type === 'WACP_PMR_10') {
-    const steps = ((template.scoring_rubric as { steps?: string[] })?.steps) || [];
+  const steps = (template.scoring_rubric as { steps?: string[] })?.steps;
+  if (steps && steps.length > 0) {
     const met = steps.filter(s => rubricScores[s] >= 1).length;
-    return { valid: met === steps.length && steps.length > 0, message: `${met}/${steps.length || 7} PMR steps met.` };
+    return { valid: met === steps.length, message: `${met}/${steps.length} PMR steps met.` };
   }
 
   const domains = ((template.scoring_rubric as { domains?: Record<string, number> })?.domains) || {};
