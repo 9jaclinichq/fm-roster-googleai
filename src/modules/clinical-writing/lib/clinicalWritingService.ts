@@ -1,4 +1,5 @@
 import { supabase } from '../../../lib/databaseService';
+import { emitEvent } from '../../shared/lib/eventBus';
 
 // Clinical & Professional Writing module (migration 48) — a NEW, additive
 // data-access slice for the generic clinical_document_types/
@@ -148,6 +149,12 @@ export async function createDocumentType(
     console.warn('Error creating clinical document type:', error);
     throw error;
   }
+  emitEvent(supabase!, {
+    tenantId,
+    eventType: 'instance.created',
+    payload: { instance_type: 'clinical_document_type', instance_id: data.id, name },
+    source: 'createDocumentType',
+  }).catch((err) => console.warn('Failed to emit instance.created:', err));
   return data;
 }
 
@@ -211,6 +218,12 @@ export async function createDocument(
     console.warn('Error creating clinical document:', error);
     throw error;
   }
+  emitEvent(supabase!, {
+    tenantId: docType?.tenant_id ?? null,
+    eventType: 'entry.submitted',
+    payload: { document_id: data.id, document_type_id: documentTypeId, status },
+    source: 'createDocument',
+  }).catch((err) => console.warn('Failed to emit entry.submitted:', err));
   return data;
 }
 

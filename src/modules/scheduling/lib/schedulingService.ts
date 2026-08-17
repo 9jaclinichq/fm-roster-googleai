@@ -1,4 +1,5 @@
 import { supabase } from '../../../lib/databaseService';
+import { emitEvent } from '../../shared/lib/eventBus';
 
 // Scheduling module (migration 44) — a NEW, additive data-access slice for
 // the generic scheduling_instances/scheduling_entries/scheduling_pipelines
@@ -173,6 +174,12 @@ export async function createSchedulingInstance(
     console.warn('Error creating scheduling instance:', error);
     throw error;
   }
+  emitEvent(supabase!, {
+    tenantId: scope.tenantId ?? null,
+    eventType: 'instance.created',
+    payload: { instance_type: 'scheduling_instance', instance_id: data.id, name },
+    source: 'createSchedulingInstance',
+  }).catch((err) => console.warn('Failed to emit instance.created:', err));
   return data;
 }
 

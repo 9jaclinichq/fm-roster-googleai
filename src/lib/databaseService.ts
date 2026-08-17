@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { emitEvent } from '../modules/shared/lib/eventBus';
 import {
   WorkforceMember,
   Collection,
@@ -435,6 +436,11 @@ export const databaseService = {
         console.warn('Error updating existing submission:', error);
         throw error;
       }
+      emitEvent(supabase!, {
+        eventType: 'entry.updated',
+        payload: { workforce_id: submission.workforce_id, collection_id: submission.collection_id },
+        source: 'submitRoster',
+      }).catch((err) => console.warn('Failed to emit entry.updated:', err));
       return data;
     } else {
       const { data, error } = await supabase!
@@ -467,12 +473,24 @@ export const databaseService = {
               .eq('id', raceWinner.id)
               .select()
               .single();
-            if (!updateError) return updated;
+            if (!updateError) {
+              emitEvent(supabase!, {
+                eventType: 'entry.updated',
+                payload: { workforce_id: submission.workforce_id, collection_id: submission.collection_id },
+                source: 'submitRoster',
+              }).catch((err) => console.warn('Failed to emit entry.updated:', err));
+              return updated;
+            }
           }
         }
         console.warn('Error inserting new submission:', error);
         throw error;
       }
+      emitEvent(supabase!, {
+        eventType: 'entry.submitted',
+        payload: { workforce_id: submission.workforce_id, collection_id: submission.collection_id },
+        source: 'submitRoster',
+      }).catch((err) => console.warn('Failed to emit entry.submitted:', err));
       return data;
     }
   },
@@ -1549,6 +1567,15 @@ export const databaseService = {
       console.warn('Error logging AI action:', error);
       throw error;
     }
+    // Single wire-up point for every AI Copilot action across all 3 modules
+    // (academicCopilot/researchCopilot/casebookCopilot all call logAiAction)
+    // — a parallel event_log record of the same real action, not a
+    // replacement for ai_action_logs.
+    emitEvent(supabase!, {
+      eventType: 'ai.action_completed',
+      payload: { workforce_id: workforceId, action_type: actionType },
+      source: 'logAiAction',
+    }).catch((err) => console.warn('Failed to emit ai.action_completed:', err));
     return data;
   },
 
@@ -1904,6 +1931,15 @@ export const databaseService = {
       throw error;
     }
     const row = data?.[0];
+    // Payload intentionally excludes admin_access_code — event_log has no
+    // special access restriction, and this is the newly-provisioned Chief's
+    // real login credential, write-once-readable right here at creation.
+    emitEvent(supabase!, {
+      tenantId: row.tenant_id,
+      eventType: 'tenant.provisioned',
+      payload: { tenant_name: row.tenant_name },
+      source: 'createTenantWithAdmin',
+    }).catch((err) => console.warn('Failed to emit tenant.provisioned:', err));
     return { tenantId: row.tenant_id, tenantName: row.tenant_name, adminAccessCode: row.admin_access_code };
   },
 
@@ -2628,6 +2664,12 @@ export const databaseService = {
       console.warn('Error creating research workspace:', error);
       throw error;
     }
+    emitEvent(supabase!, {
+      tenantId: entry.tenant_id,
+      eventType: 'instance.created',
+      payload: { instance_type: 'research_workspace', instance_id: data.id, title: entry.title },
+      source: 'createResearchWorkspace',
+    }).catch((err) => console.warn('Failed to emit instance.created:', err));
     return data;
   },
 
@@ -2964,6 +3006,12 @@ export const databaseService = {
       console.warn('Error creating casebook workspace:', error);
       throw error;
     }
+    emitEvent(supabase!, {
+      tenantId: entry.tenant_id,
+      eventType: 'instance.created',
+      payload: { instance_type: 'casebook_workspace', instance_id: data.id, title: entry.title },
+      source: 'createCasebookWorkspace',
+    }).catch((err) => console.warn('Failed to emit instance.created:', err));
     return data;
   },
 
@@ -3115,7 +3163,15 @@ export const databaseService = {
         console.warn('Error recording logbook signoff:', error);
         throw error;
       }
-      if (data) return data;
+      if (data) {
+        emitEvent(supabase!, {
+          tenantId: (existing as { tenant_id?: string })?.tenant_id ?? null,
+          eventType: 'academic.signoff_recorded',
+          payload: { logbook_id: logbookId, signed_by_name: signoff.signed_by_name, completed_count: data.completed_count },
+          source: 'addLogbookSignoff',
+        }).catch((err) => console.warn('Failed to emit academic.signoff_recorded:', err));
+        return data;
+      }
       // completed_count moved under us since the read above — someone else's
       // signoff landed in between; retry against the now-current row.
     }

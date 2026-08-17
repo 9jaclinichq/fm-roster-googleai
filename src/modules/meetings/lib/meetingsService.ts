@@ -1,4 +1,5 @@
 import { supabase } from '../../../lib/databaseService';
+import { emitEvent } from '../../shared/lib/eventBus';
 
 // Meetings & Actions module (migration 45) — a NEW, additive data-access
 // slice for the generic meeting_series/meetings/meeting_actions tables,
@@ -158,6 +159,12 @@ export async function createMeetingSeries(
     console.warn('Error creating meeting series:', error);
     throw error;
   }
+  emitEvent(supabase!, {
+    tenantId,
+    eventType: 'instance.created',
+    payload: { instance_type: 'meeting_series', instance_id: data.id, name },
+    source: 'createMeetingSeries',
+  }).catch((err) => console.warn('Failed to emit instance.created:', err));
   return data;
 }
 
@@ -215,6 +222,12 @@ export async function scheduleMeeting(
     console.warn('Error scheduling meeting:', error);
     throw error;
   }
+  emitEvent(supabase!, {
+    tenantId: series?.tenant_id ?? null,
+    eventType: 'meeting.scheduled',
+    payload: { meeting_id: data.id, meeting_series_id: seriesId, title },
+    source: 'scheduleMeeting',
+  }).catch((err) => console.warn('Failed to emit meeting.scheduled:', err));
   return data;
 }
 
