@@ -32,10 +32,16 @@ function checkSupabase() {
 export async function listFormInstances(tenantId: string): Promise<FormInstance[]> {
   checkSupabase();
 
+  // Also include global seed templates (tenant_id IS NULL AND doctor_id IS
+  // NULL, migration 42) alongside this tenant's own rows — an .eq() alone
+  // makes every seeded template invisible to every tenant, defeating the
+  // point of seeding them. Found via the living-system re-audit
+  // (2026-08-17) after the identical bug was confirmed and fixed for
+  // scheduling_instances (migration 55) — same root cause here.
   const { data, error } = await supabase!
     .from('form_instances')
     .select('*')
-    .eq('tenant_id', tenantId)
+    .or(`tenant_id.eq.${tenantId},and(tenant_id.is.null,doctor_id.is.null)`)
     .order('created_at', { ascending: true });
 
   if (error) {
@@ -124,10 +130,11 @@ export async function getFormInstanceByName(tenantId: string, name: string): Pro
 export async function listFormInstancesForDoctor(doctorId: string): Promise<FormInstance[]> {
   checkSupabase();
 
+  // Same global-template visibility fix as listFormInstances above.
   const { data, error } = await supabase!
     .from('form_instances')
     .select('*')
-    .eq('doctor_id', doctorId)
+    .or(`doctor_id.eq.${doctorId},and(tenant_id.is.null,doctor_id.is.null)`)
     .order('created_at', { ascending: true });
 
   if (error) {
