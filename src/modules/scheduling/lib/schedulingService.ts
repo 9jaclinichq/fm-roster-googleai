@@ -118,14 +118,21 @@ export async function listSchedulingInstances(scope: { tenantId?: string; doctor
     return [];
   }
 
-  let query = supabase!.from('scheduling_instances').select('*');
-  if (scope.tenantId) {
-    query = query.eq('tenant_id', scope.tenantId);
-  } else if (scope.doctorId) {
-    query = query.eq('doctor_id', scope.doctorId);
-  }
+  // Also include global seed templates (tenant_id IS NULL AND doctor_id IS
+  // NULL, migration 55) alongside the caller's own rows — an .eq() alone
+  // would make every seeded template invisible to every tenant/doctor,
+  // defeating the point of seeding them. Same global-row visibility need
+  // migration 42 solved for form_instances' RLS policy; applied here at the
+  // query level since scheduling_instances' RLS is already permissive.
+  const ownerFilter = scope.tenantId
+    ? `tenant_id.eq.${scope.tenantId},and(tenant_id.is.null,doctor_id.is.null)`
+    : `doctor_id.eq.${scope.doctorId},and(tenant_id.is.null,doctor_id.is.null)`;
 
-  const { data, error } = await query.order('created_at', { ascending: false });
+  const { data, error } = await supabase!
+    .from('scheduling_instances')
+    .select('*')
+    .or(ownerFilter)
+    .order('created_at', { ascending: false });
 
   if (error) {
     console.warn('Error fetching scheduling instances:', error);
