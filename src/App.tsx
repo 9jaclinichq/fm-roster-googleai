@@ -116,6 +116,45 @@ interface DoctorSession {
   fullName: string;
 }
 
+// Lazy useState initializers (found via adversarial QA, 2026-08-17) — read
+// synchronously on the FIRST render, before React ever commits anything to
+// the DOM. This used to be a useEffect (then briefly a useLayoutEffect)
+// that ran AFTER the first render, which left a real window where
+// currentResident/isChiefAuthenticated started false/null and every
+// resident/chief-gated route committed a <Navigate to="/workspace/login">
+// fallback. That fallback's own effect fires even once the "real" session
+// value shows up moments later and a corrected re-render occurs — React
+// does not reliably cancel a fiber's already-scheduled passive effect just
+// because a synchronous layout-effect-triggered re-render replaced it
+// before paint, so useLayoutEffect alone did NOT fully close this (verified
+// empirically: a distinguishing `state` marker on the fallback's <Navigate>
+// showed it firing even when the very same render's currentResident was
+// already truthy). Reloading on ANY deep resident-gated route (wellbeing,
+// tasks, focus, research, casebook, etc.) silently bounced the user back to
+// the default "My Form" page, losing their place — reproduced against both
+// the dev server and a real `vite build` production bundle. Reading
+// localStorage synchronously in the initializer removes the race entirely:
+// the wrong <Navigate> is never created on any render, so there's no effect
+// to cancel or race to lose.
+function readInitialResidentSession(): ResidentSession | null {
+  const raw = localStorage.getItem('fm_session_resident');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as ResidentSession;
+  } catch (err) {
+    // A corrupted/malformed value here (bad manual edit, storage
+    // corruption, an old app version's shape) must not white-screen the
+    // whole app — fall back to a clean logged-out state instead.
+    console.warn('Discarding corrupted fm_session_resident:', err);
+    localStorage.removeItem('fm_session_resident');
+    return null;
+  }
+}
+
+function readInitialChiefAuthenticated(): boolean {
+  return localStorage.getItem('fm_session_chief') === 'true';
+}
+
 function MainAppContent() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -127,9 +166,11 @@ function MainAppContent() {
     document.title = brand.productName;
   }, [brand.productName]);
 
-  // Session State
-  const [currentResident, setCurrentResident] = useState<ResidentSession | null>(null);
-  const [isChiefAuthenticated, setIsChiefAuthenticated] = useState<boolean>(false);
+  // Session State — lazily initialized straight from localStorage (see
+  // readInitialResidentSession's own header comment for why this can't be
+  // a useEffect/useLayoutEffect).
+  const [currentResident, setCurrentResident] = useState<ResidentSession | null>(readInitialResidentSession);
+  const [isChiefAuthenticated, setIsChiefAuthenticated] = useState<boolean>(readInitialChiefAuthenticated);
   const [currentDoctor, setCurrentDoctor] = useState<DoctorSession | null>(null);
 
   // Footer-only brand — reflects who's actually signed in (org vs.
@@ -174,29 +215,18 @@ function MainAppContent() {
   const [presetResident, setPresetResident] = useState<WorkforceMember | null>(null);
   const [presetAdminCode, setPresetAdminCode] = useState<string>('');
 
-  // Load session from storage on mount
+  // currentResident/isChiefAuthenticated are already correctly restored by
+  // the lazy useState initializers above — this effect only needs to
+  // refresh subadmin roles (a genuinely async fetch that can't happen
+  // during the synchronous initializer) on mount, not set the initial
+  // session state itself.
   useEffect(() => {
-    const residentSession = localStorage.getItem('fm_session_resident');
-    if (residentSession) {
-      // A corrupted/malformed value here (bad manual edit, storage
-      // corruption, an old app version's shape) must not white-screen the
-      // whole app — fall back to a clean logged-out state instead.
-      try {
-        const parsed: ResidentSession = JSON.parse(residentSession);
-        setCurrentResident(parsed);
-        // Re-check roles on every restore (not just at login) so a role the
-        // Chief delegates/revokes mid-session takes effect on next refresh.
-        refreshSubadminRoles(parsed);
-      } catch (err) {
-        console.warn('Discarding corrupted fm_session_resident:', err);
-        localStorage.removeItem('fm_session_resident');
-      }
+    if (currentResident) {
+      // Re-check roles on every restore (not just at login) so a role the
+      // Chief delegates/revokes mid-session takes effect on next refresh.
+      refreshSubadminRoles(currentResident);
     }
-
-    const chiefSession = localStorage.getItem('fm_session_chief');
-    if (chiefSession === 'true') {
-      setIsChiefAuthenticated(true);
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Restore/track the individual-doctor session (migration 18) — separate
