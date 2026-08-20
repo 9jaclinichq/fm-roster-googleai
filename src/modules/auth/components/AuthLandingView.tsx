@@ -2,7 +2,6 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Stethoscope, ChevronRight } from 'lucide-react';
 import { getActiveBrand } from '../../shared/config/branding';
-import { useTerminology } from '../../shared/terminology';
 
 // Landing chooser between the two, independent identity tracks this app
 // supports — see supabase/migrations/18_individual_doctor_identity.sql:
@@ -20,7 +19,6 @@ import { useTerminology } from '../../shared/terminology';
 export const AuthLandingView: React.FC = () => {
   const navigate = useNavigate();
   const brand = getActiveBrand();
-  const { t } = useTerminology();
 
   return (
     <div className="max-w-md mx-auto my-12 px-4">
@@ -42,7 +40,15 @@ export const AuthLandingView: React.FC = () => {
               <Building2 size={18} className="text-blue-600 shrink-0" />
               <span>
                 <span className="block text-sm font-bold text-slate-800">My organization has an access code</span>
-                <span className="block text-[11px] text-slate-500 mt-0.5">{t('member', 'Resident')} or {t('admin', 'Chief Resident')} login</span>
+                {/* Platform-level, pre-tenant wording — deliberately NOT
+                    routed through useTerminology()'s t(). Workspc is
+                    multidisciplinary; "Resident"/"Chief Resident" are UCH
+                    Family Medicine's own tenant terminology, not a
+                    universal identity. Once a tenant is selected, that
+                    tenant's own terminology continues to apply downstream
+                    (ResidentLoginView/ChiefLoginView) — this literal
+                    string covers only this pre-tenant entry screen. */}
+                <span className="block text-[11px] text-slate-500 mt-0.5">Organisation Member or Organisation Admin login</span>
               </span>
             </span>
             <ChevronRight size={16} className="text-slate-400 shrink-0" />

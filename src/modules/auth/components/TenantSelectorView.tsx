@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Building2, Stethoscope, ChevronRight, AlertCircle, Loader2 } from 'lucide-react';
 import { databaseService } from '../../../lib/databaseService';
 import { PublicTenant } from '../../../types';
-import { useTerminology } from '../../shared/terminology';
 
 // Tenant-first login step ("select your institution" before name+code entry
 // — see CLAUDE.md's "Backlog: institution-first / self-serve org flow").
@@ -18,7 +17,6 @@ import { useTerminology } from '../../shared/terminology';
 // legacy links straight into /workspace/login keep working).
 export const TenantSelectorView: React.FC = () => {
   const navigate = useNavigate();
-  const { t } = useTerminology();
   const [tenants, setTenants] = useState<PublicTenant[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -54,8 +52,14 @@ export const TenantSelectorView: React.FC = () => {
       <div className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
         <div className="bg-gradient-to-br from-blue-600 to-blue-700 p-6 text-white text-center">
           <h2 className="text-xl font-bold tracking-tight">Select Your Organization</h2>
+          {/* Platform-level, pre-tenant wording — deliberately NOT routed
+              through useTerminology()'s t(): no tenant is selected yet at
+              this exact screen, so tenant-specific terminology cannot
+              apply here regardless. Once a tenant is chosen, that
+              tenant's own terminology continues downstream
+              (ResidentLoginView/ChiefLoginView). */}
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            Which organization are you a {t('member', 'resident').toLowerCase()} of?
+            Which organisation are you a member of?
           </p>
         </div>
 
