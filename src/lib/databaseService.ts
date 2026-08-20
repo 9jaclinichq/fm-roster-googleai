@@ -2003,6 +2003,12 @@ export const databaseService = {
     return data;
   },
 
+  // Unsafe — depends on tenants' permissive direct-write RLS (migration
+  // 11); no caller-identity check happens here at all. Superseded by
+  // chiefUpdateTenantTerminology() below (migration 59, Priority-0 Tenant
+  // Surface slice P0-3). Left in place, unused, until the final tenant-
+  // table lockdown audit (P0-7) confirms no caller remains — do not delete
+  // before then.
   async updateTenantTerminology(tenantId: string, overrides: Record<string, string>): Promise<Tenant> {
     checkSupabase();
 
@@ -2020,6 +2026,9 @@ export const databaseService = {
     return data;
   },
 
+  // Unsafe — same gap as updateTenantTerminology() above. Superseded by
+  // chiefUpdateTenantModuleFlags() below (migration 59, slice P0-3). Left
+  // in place, unused, until P0-7 confirms no caller remains.
   async updateTenantModuleFlags(tenantId: string, flags: Record<string, unknown>): Promise<Tenant> {
     checkSupabase();
 
@@ -2029,6 +2038,44 @@ export const databaseService = {
       .eq('id', tenantId)
       .select()
       .single();
+
+    if (error) {
+      console.warn('Error updating tenant module flags:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Chief-scoped, capability-checked replacements for the two direct
+  // writes above (migration 59, Priority-0 Tenant Surface slice P0-3).
+  // p_admin_code is re-verified server-side inside the RPC, which derives
+  // the caller's own tenant from it — no tenant id is ever accepted or
+  // trusted from the client. p_admin_code is explicitly transitional
+  // compatibility (same plaintext-code pattern every chief_* RPC already
+  // uses), not the target API contract — see
+  // docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md §11.
+  async chiefUpdateTenantTerminology(adminCode: string, overrides: Record<string, string>): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_update_tenant_terminology', {
+      p_admin_code: adminCode,
+      p_overrides: overrides,
+    });
+
+    if (error) {
+      console.warn('Error updating tenant terminology:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async chiefUpdateTenantModuleFlags(adminCode: string, flags: Record<string, unknown>): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_update_tenant_module_flags', {
+      p_admin_code: adminCode,
+      p_flags: flags,
+    });
 
     if (error) {
       console.warn('Error updating tenant module flags:', error);

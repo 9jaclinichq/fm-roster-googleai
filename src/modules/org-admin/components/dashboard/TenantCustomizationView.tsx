@@ -25,9 +25,15 @@ const TERMINOLOGY_KEYS = Object.keys(TERMINOLOGY_DEFAULTS);
 
 interface TenantCustomizationViewProps {
   tenantId: string;
+  // Verified Chief admin code, re-checked server-side by
+  // chiefUpdateTenantTerminology()/chiefUpdateTenantModuleFlags() (migration
+  // 59, Priority-0 Tenant Surface slice P0-3) — passed through from the
+  // existing Chief session (ChiefDashboardView's `fm_admin_code` localStorage
+  // read), not a new persistence mechanism.
+  adminCode: string;
 }
 
-export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = ({ tenantId }) => {
+export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = ({ tenantId, adminCode }) => {
   const { t } = useTerminology();
   const MODULE_TOGGLES = getModuleToggles(t);
   const [isLoading, setIsLoading] = useState(true);
@@ -74,7 +80,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
     const updated = { ...moduleFlags, [key]: !(moduleFlags[key] ?? true) };
     setModuleFlags(updated);
     try {
-      await databaseService.updateTenantModuleFlags(tenantId, updated);
+      await databaseService.chiefUpdateTenantModuleFlags(adminCode, updated);
       setStatusMessage('Module setting saved.');
     } catch (err) {
       console.warn(err);
@@ -91,7 +97,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
     const updated = { ...moduleFlags, case_reports_required_count: count };
     setModuleFlags(updated);
     try {
-      await databaseService.updateTenantModuleFlags(tenantId, updated);
+      await databaseService.chiefUpdateTenantModuleFlags(adminCode, updated);
       setStatusMessage(`Required case count set to ${count}. Note: CasebookBuilderView still hardcodes 15 slots — this value is not yet read by that component.`);
     } catch (err) {
       console.warn(err);
@@ -101,7 +107,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
 
   const saveTerminology = async () => {
     try {
-      await databaseService.updateTenantTerminology(tenantId, terminology);
+      await databaseService.chiefUpdateTenantTerminology(adminCode, terminology);
       setStatusMessage('Terminology saved. Applies to newly built tenant-aware views only — see TerminologyProvider scope note.');
     } catch (err) {
       console.warn(err);

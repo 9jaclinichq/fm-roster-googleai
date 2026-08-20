@@ -1256,9 +1256,9 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         )}
 
         {/* TAB 8: TENANT CUSTOMIZATION */}
-        {activeTab === 'customization' && (
+        {activeTab === 'customization' && adminCode && (
           <Suspense fallback={<LoadingShell />}>
-            <TenantCustomizationView tenantId={tenantId ?? DEFAULT_TENANT_ID} />
+            <TenantCustomizationView tenantId={tenantId ?? DEFAULT_TENANT_ID} adminCode={adminCode} />
           </Suspense>
         )}
 
