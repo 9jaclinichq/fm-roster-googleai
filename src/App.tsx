@@ -11,6 +11,7 @@ import { DevHelper } from './modules/shared/ui/DevHelper';
 import { LoadingShell } from './modules/shared/ui/LoadingShell';
 import { OfflineBanner } from './modules/shared/ui/OfflineBanner';
 import { ResidentLoginView } from './modules/auth/components/ResidentLoginView';
+import { PostLoginEmailPrompt } from './modules/auth/components/PostLoginEmailPrompt';
 import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
 import { AuthLandingView } from './modules/auth/components/AuthLandingView';
@@ -103,6 +104,14 @@ interface ResidentSession {
   // (not present on sessions restored from localStorage written before this
   // field existed) — every consumer falls back to DEFAULT_TENANT_ID.
   tenant_id?: string;
+  // Whether workforce.email is currently set (migration 64's
+  // verify_resident_login has_email column) — drives the post-login email
+  // prompt below. Persisted with the rest of the session so a member who
+  // already saved an email is never asked again on restore. Sessions
+  // restored from localStorage written before this field existed treat it
+  // as falsy (JS default), which only means the prompt may show once more
+  // on their next fresh login — never a login block either way.
+  hasEmail: boolean;
 }
 
 // Individual doctor identity (migration 18) — real Supabase Auth, separate
@@ -215,6 +224,17 @@ function MainAppContent() {
     (isChiefAuthenticated ? localStorage.getItem('fm_chief_tenant_id') : null) ||
     incomingLoginTenantId;
 
+  // The resident's access code, held only in this component's in-memory
+  // state — never persisted to localStorage, same pattern already used
+  // for the platform operator's transitional shared code. Set only on a
+  // fresh code-based login (never on session restore, and never for a
+  // doctor-linked session, which has no PIN at all), so the post-login
+  // email prompt below can call resident_set_email() without asking the
+  // member to re-enter their PIN. Its absence (null) is exactly what
+  // keeps the prompt from reappearing on every page reload — see
+  // PostLoginEmailPrompt's own render guard below.
+  const [residentAccessCode, setResidentAccessCode] = useState<string | null>(null);
+
   // DevHelper Preset triggers
   const [presetResident, setPresetResident] = useState<WorkforceMember | null>(null);
   const [presetAdminCode, setPresetAdminCode] = useState<string>('');
@@ -259,6 +279,11 @@ function MainAppContent() {
             name: linkedWorkforce.full_name,
             category: linkedWorkforce.category,
             subadminRoles: [],
+            // This session already has a real, verified email via
+            // doctor_profiles (a Supabase Auth account) — never show the
+            // workforce.email capture prompt for this path regardless of
+            // that column's own state.
+            hasEmail: true,
           };
           setCurrentResident(session);
           refreshSubadminRoles(session);
@@ -324,18 +349,32 @@ function MainAppContent() {
     return 'resident-login';
   };
 
-  const handleResidentLogin = (resident: { id: string; name: string; category: string; tenant_id?: string }) => {
-    const session: ResidentSession = { ...resident, subadminRoles: [] };
+  const handleResidentLogin = (resident: { id: string; name: string; category: string; tenant_id?: string; hasEmail: boolean; accessCode: string }) => {
+    const { accessCode, ...residentFields } = resident;
+    const session: ResidentSession = { ...residentFields, subadminRoles: [] };
     setCurrentResident(session);
     localStorage.setItem('fm_session_resident', JSON.stringify(session));
+    // In-memory only — see residentAccessCode's own declaration comment.
+    // Not included in the object persisted to localStorage above.
+    setResidentAccessCode(accessCode);
     navigate('/workspace/form');
     // Clear preset
     setPresetResident(null);
     refreshSubadminRoles(session);
   };
 
+  const handleResidentEmailSaved = () => {
+    setCurrentResident(prev => {
+      if (!prev) return prev;
+      const updated: ResidentSession = { ...prev, hasEmail: true };
+      localStorage.setItem('fm_session_resident', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   const handleResidentLogout = () => {
     setCurrentResident(null);
+    setResidentAccessCode(null);
     localStorage.removeItem('fm_session_resident');
     // No-op if this resident session didn't come from a doctor-link — but if
     // it did, this prevents the still-live Supabase Auth session from
@@ -426,6 +465,20 @@ function MainAppContent() {
         onNavigateToHome={() => navigate('/workspace/home')}
         currentView={getCurrentViewName()}
       />
+
+      {/* Post-login email capture — only for a fresh code-based login
+          whose workforce.email is still NULL (residentAccessCode is null
+          on a restored/reloaded session, so this deliberately does not
+          reappear on every page load — only on the member's next actual
+          login if they skip it, per the locked V1 decision). Never blocks
+          any route below it — a banner, not a gate. */}
+      {currentResident && !currentResident.hasEmail && residentAccessCode && (
+        <PostLoginEmailPrompt
+          workforceId={currentResident.id}
+          accessCode={residentAccessCode}
+          onSaved={handleResidentEmailSaved}
+        />
+      )}
 
       {/* Dev helper panel — local development builds only. Never rendered
           in a production/preview build, so it can't leak into a deployed site. */}

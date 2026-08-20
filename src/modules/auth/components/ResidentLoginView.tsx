@@ -6,7 +6,7 @@ import { KeyRound, User, ChevronDown, Sparkles, Check, AlertCircle, Building2, M
 import { useTerminology } from '../../shared/terminology';
 
 interface ResidentLoginViewProps {
-  onLoginSuccess: (resident: { id: string; name: string; category: string; tenant_id?: string }) => void;
+  onLoginSuccess: (resident: { id: string; name: string; category: string; tenant_id?: string; hasEmail: boolean; accessCode: string }) => void;
   onNavigateToChief: () => void;
   presetResident?: WorkforceMember | null;
 }
@@ -144,10 +144,14 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
       return;
     }
 
-    if (!registeredEmail.trim()) {
-      setError('Please enter the email registered with your organization.');
-      return;
-    }
+    // Email is intentionally NOT required here — verify_resident_login()'s
+    // own ratchet already accepts a blank/absent email for any member
+    // whose workforce.email is still NULL, and a seeded-email member's
+    // requirement is enforced server-side, not by this client. This
+    // client used to hard-block on a blank field regardless of that
+    // server behavior; removed (Share-Ready Onboarding Polish, email/
+    // login slice) — missing email must never block a member with a
+    // valid PIN.
 
     setIsLoggingIn(true);
     try {
@@ -170,6 +174,8 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
           // (migration 26) — take it from the already-fetched workforce
           // list row instead (same row, just verified).
           tenant_id: selectedResident.tenant_id,
+          hasEmail: verified.has_email,
+          accessCode,
         });
       } else {
         setError('Incorrect access code or registered email. Please check and try again.');
@@ -352,10 +358,14 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
             </p>
           </div>
 
-          {/* Registered Email (migration 26) */}
+          {/* Email (if already registered) — optional at the client level
+              (Share-Ready Onboarding Polish, email/login slice). Never
+              reveals before authentication whether the selected member
+              has one on file; the server ratchet in verify_resident_login()
+              remains the sole authority on whether it's required. */}
           <div className="space-y-1.5">
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-              Registered Email
+              Email (if already registered)
             </label>
             <div className="relative">
               <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -366,12 +376,12 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
                   setRegisteredEmail(e.target.value);
                   setError('');
                 }}
-                placeholder="Enter the email registered with your organization"
+                placeholder="Enter your registered email (optional)"
                 className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition placeholder:font-normal placeholder:text-slate-400"
               />
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-              A one-time check against your organization's records — no password is created or stored here.
+              If your email has not been added yet, leave this blank and continue with your PIN.
             </p>
           </div>
 

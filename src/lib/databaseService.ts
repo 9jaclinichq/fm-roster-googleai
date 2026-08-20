@@ -219,7 +219,7 @@ export const databaseService = {
     workforceId: string,
     code: string,
     email?: string
-  ): Promise<{ id: string; full_name: string; category: string } | null> {
+  ): Promise<{ id: string; full_name: string; category: string; has_email: boolean } | null> {
     checkSupabase();
 
     const { data, error } = await supabase!.rpc('verify_resident_login', {
@@ -234,6 +234,29 @@ export const databaseService = {
     }
     const row = Array.isArray(data) ? data[0] : data;
     return row || null;
+  },
+
+  // Self-service email capture (migration 64) — the ONLY write path for
+  // workforce.email; no raw column grant exists. Independently
+  // reverifies workforce_id + resident_code server-side inside the RPC —
+  // never trusts that the caller already logged in this session. Throws
+  // on invalid code, blank/malformed email, or a duplicate already
+  // belonging to another member — callers surface err.message directly,
+  // it's already a clear, specific string from the RPC.
+  async residentSetEmail(workforceId: string, code: string, email: string): Promise<boolean> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('resident_set_email', {
+      p_workforce_id: workforceId,
+      p_code: code,
+      p_email: email,
+    });
+
+    if (error) {
+      console.warn('Error setting resident email:', error);
+      throw error;
+    }
+    return Boolean(data);
   },
 
   async verifyChiefLogin(code: string): Promise<{ tenantId: string; tenantName: string } | null> {
