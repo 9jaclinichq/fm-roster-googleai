@@ -64,6 +64,14 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
 
+  // EMERGENCY CONTAINMENT — Slice E0 (2026-08-20). See
+  // docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md. This function accepts
+  // an unverified caller-supplied tenant_id/workforce_id and can activate a
+  // subscription against an arbitrary target. Disabled fail-closed until
+  // real server-verifiable authorization exists. Do not remove without
+  // that authorization being reviewed and in place.
+  return jsonResponse({ error: 'financial_feature_temporarily_unavailable' }, 503);
+
   let body: RequestBody;
   try {
     body = await req.json();

@@ -63,6 +63,14 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'Method not allowed' }, 405);
   }
 
+  // EMERGENCY CONTAINMENT — Slice E0 (2026-08-20). See
+  // docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md. This function creates
+  // a live Paystack subaccount with attacker-controlled settlement details
+  // and no server-side caller verification. Disabled fail-closed until
+  // real server-verifiable authorization exists. Do not remove without
+  // that authorization being reviewed and in place.
+  return jsonResponse({ error: 'financial_feature_temporarily_unavailable' }, 503);
+
   const paystackKey = Deno.env.get('PAYSTACK_SECRET_KEY');
   if (!paystackKey) {
     return jsonResponse({ error: 'PAYSTACK_SECRET_KEY is not configured on this function' }, 503);

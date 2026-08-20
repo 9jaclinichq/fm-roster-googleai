@@ -1856,8 +1856,16 @@ export const databaseService = {
     });
 
     if (fnError || !fnData?.subaccount_code) {
+      // E0 TRANSITIONAL (2026-08-20) — platform-operator-subaccount is under
+      // emergency containment (see docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md)
+      // and fails closed on every call while active. Deliberately not
+      // parsing fnData?.error/fnError?.message here: DISCOVER established
+      // the exact supabase-js non-2xx response shape is unverified, so any
+      // failure of this specific call is mapped to a fixed neutral message
+      // rather than risking a leaked/garbled internal string. Revert to
+      // surfacing the real provider/internal error once containment lifts.
       console.warn('Error creating Paystack subaccount:', fnError || fnData);
-      throw new Error(fnData?.error || fnError?.message || 'Failed to create Paystack subaccount');
+      throw new Error('Payment setup is temporarily unavailable.');
     }
 
     const { data, error } = await supabase!
@@ -2152,8 +2160,16 @@ export const databaseService = {
     });
 
     if (error || !data?.checkout_url) {
+      // E0 TRANSITIONAL (2026-08-20) — payment-checkout is under emergency
+      // containment (see docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md)
+      // and fails closed on every call while active. Deliberately not
+      // parsing data?.error/error?.message here: DISCOVER established the
+      // exact supabase-js non-2xx response shape is unverified, so any
+      // failure of this specific call is mapped to a fixed neutral message
+      // rather than risking a leaked/garbled internal string. Revert to
+      // surfacing the real provider/internal error once containment lifts.
       console.warn('Error initiating payment checkout:', error || data);
-      throw new Error(data?.error || error?.message || 'Failed to initiate checkout');
+      throw new Error('Payments are temporarily unavailable.');
     }
     return data as PaymentCheckoutResult;
   },
@@ -2176,8 +2192,16 @@ export const databaseService = {
     });
 
     if (error || !data?.checkout_url) {
+      // E0 TRANSITIONAL (2026-08-20) — payment-checkout is under emergency
+      // containment (see docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md)
+      // and fails closed on every call while active. Deliberately not
+      // parsing data?.error/error?.message here: DISCOVER established the
+      // exact supabase-js non-2xx response shape is unverified, so any
+      // failure of this specific call is mapped to a fixed neutral message
+      // rather than risking a leaked/garbled internal string. Revert to
+      // surfacing the real provider/internal error once containment lifts.
       console.warn('Error initiating tenant plan checkout:', error || data);
-      throw new Error(data?.error || error?.message || 'Failed to initiate checkout');
+      throw new Error('Payments are temporarily unavailable.');
     }
     return data as PaymentCheckoutResult;
   },
