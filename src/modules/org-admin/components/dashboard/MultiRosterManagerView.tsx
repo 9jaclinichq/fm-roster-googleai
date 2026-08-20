@@ -7,6 +7,7 @@ import {
   parseSupervisionRoster,
   parseSatelliteRoster,
 } from '../../../roster-engine/lib/uchRosterParser';
+import { computeReconciliationIssues } from '../../../roster-engine/lib/rosterReconciliation';
 import {
   WorkforceMember,
   Collection,
@@ -16,6 +17,8 @@ import {
   SupervisionGrid,
   SatelliteGrid,
   RosterTypeId,
+  SubmissionWithWorkforce,
+  Rotation,
 } from '../../../../types';
 import {
   ListChecks,
@@ -28,6 +31,9 @@ import {
   Plus,
   Sparkles,
   User,
+  ChevronDown,
+  ChevronRight,
+  ClipboardCheck,
 } from 'lucide-react';
 import { useTerminology } from '../../../shared/terminology';
 
@@ -64,6 +70,12 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
   const [collection, setCollection] = useState<Collection | null>(null);
   const [workforce, setWorkforce] = useState<WorkforceMember[]>([]);
   const [masterRoster, setMasterRoster] = useState<CombinedMasterRoster | null>(null);
+  // Workforce Option A (read-only reconciliation) — see
+  // docs/WORKFORCE_V1_RECOVERY_SPEC.md. submissions/rotations are read
+  // only to compute reconciliationIssues below; never written here.
+  const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
+  const [rotations, setRotations] = useState<Rotation[]>([]);
+  const [expandedIssueMemberId, setExpandedIssueMemberId] = useState<string | null>(null);
 
   const now = new Date();
   const [month, setMonth] = useState<number>(now.getMonth() + 1);
@@ -99,22 +111,30 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
   const load = async () => {
     setIsLoading(true);
     try {
-      const [wf, settings, collections] = await Promise.all([
+      const [wf, settings, collections, tenantRotations] = await Promise.all([
         databaseService.getWorkforce(tenantId),
         databaseService.getSettings(tenantId),
         databaseService.getCollections(tenantId),
+        databaseService.getRotations(),
       ]);
       setWorkforce(wf.filter(w => w.active));
+      setRotations(tenantRotations);
       const activeColl = collections.find(c => c.id === settings.current_collection_id) || null;
       setCollection(activeColl);
 
       if (activeColl) {
-        const mr = await databaseService.getOrCreateMasterRoster(activeColl.id, month, year);
+        const [mr, activeCollSubmissions] = await Promise.all([
+          databaseService.getOrCreateMasterRoster(activeColl.id, month, year),
+          databaseService.getSubmissions(activeColl.id, tenantId),
+        ]);
         setMasterRoster(mr);
+        setSubmissions(activeCollSubmissions);
         setGopGrid(mr.gop_clinic_grid?.slots ? mr.gop_clinic_grid : EMPTY_GOP);
         setEmergencyGrid(mr.emergency_call_grid?.shifts ? mr.emergency_call_grid : EMPTY_EMERGENCY);
         setSupervisionGrid(mr.supervision_grid?.duties ? mr.supervision_grid : EMPTY_SUPERVISION);
         setSatelliteGrid(mr.satellite_grid?.postings ? mr.satellite_grid : EMPTY_SATELLITE);
+      } else {
+        setSubmissions([]);
       }
     } catch (err) {
       console.warn('Failed to load Multi-Roster Manager:', err);
@@ -342,6 +362,21 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     );
   }
 
+  // Workforce Option A (read-only reconciliation) — pure, cheap computation
+  // over already-loaded state; recomputed on every render, no memoization
+  // needed at this data scale. Never writes anywhere. See
+  // docs/WORKFORCE_V1_RECOVERY_SPEC.md.
+  const reconciliationIssues = computeReconciliationIssues(submissions, workforce, rotations, masterRoster);
+  const reconciliationIssuesByMember = new Map<string, { memberName: string; issues: typeof reconciliationIssues }>();
+  for (const issue of reconciliationIssues) {
+    const entry = reconciliationIssuesByMember.get(issue.workforceId);
+    if (entry) {
+      entry.issues.push(issue);
+    } else {
+      reconciliationIssuesByMember.set(issue.workforceId, { memberName: issue.memberName, issues: [issue] });
+    }
+  }
+
   return (
     <div className="space-y-6">
       {statusMessage && (
@@ -369,6 +404,58 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
           </button>
         </div>
       </div>
+
+      {/* Workforce Option A — read-only reconciliation checklist. Not a
+          new page/tab; positioned immediately before the existing Floor
+          Check workflow so the Chief sees it while preparing/reviewing
+          the roster for this same cycle. Collapsed by default per member,
+          matching ActivityLogPanel.tsx's existing convention. Nothing
+          here writes to workforce/submissions/combined_master_rosters. */}
+      {reconciliationIssuesByMember.size > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <ClipboardCheck className="text-amber-600" size={16} />
+            <h4 className="font-bold text-slate-800 text-xs sm:text-sm">
+              {reconciliationIssues.length} issue{reconciliationIssues.length === 1 ? '' : 's'} need{reconciliationIssues.length === 1 ? 's' : ''} review
+            </h4>
+          </div>
+          <p className="text-[10px] text-slate-400">
+            Cross-checks {t('member', 'resident').toLowerCase()}-submitted rotation/leave for this cycle against current workforce status and the draft roster below.
+            These are conflicts to review, not automatic errors — nothing is changed automatically.
+          </p>
+          <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
+            {Array.from(reconciliationIssuesByMember.entries()).map(([workforceId, { memberName, issues }]) => {
+              const isExpanded = expandedIssueMemberId === workforceId;
+              return (
+                <div key={workforceId}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedIssueMemberId(prev => (prev === workforceId ? null : workforceId))}
+                    className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-slate-50 cursor-pointer transition"
+                  >
+                    <span className="text-xs font-bold text-slate-700">{memberName}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                        {issues.length} issue{issues.length === 1 ? '' : 's'}
+                      </span>
+                      {isExpanded ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
+                    </span>
+                  </button>
+                  {isExpanded && (
+                    <div className="px-3 pb-3 space-y-2">
+                      {issues.map((issue, i) => (
+                        <div key={i} className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-[10px] text-amber-900">
+                          {issue.message}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Step 1: Resident Floor Check */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-5 space-y-3">

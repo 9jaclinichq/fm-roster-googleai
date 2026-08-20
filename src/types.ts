@@ -637,6 +637,25 @@ export interface RosterParseResult<T> {
   provider?: 'openai' | 'gemini';
 }
 
+// Workforce Option A (read-only reconciliation) — see
+// docs/WORKFORCE_V1_RECOVERY_SPEC.md. Computed by
+// src/modules/roster-engine/lib/rosterReconciliation.ts, rendered inside
+// MultiRosterManagerView.tsx. Never written anywhere — this is a pure
+// display type, not a database row shape.
+export type ReconciliationIssueType = 'rotation_conflict' | 'unrecognised_rotation' | 'leave_roster_overlap';
+
+export interface ReconciliationIssue {
+  type: ReconciliationIssueType;
+  workforceId: string;
+  memberName: string;
+  // Human-readable, following the locked "conflicts with"/"declared
+  // leave"/"Needs Review" phrasing — never asserts one state is wrong.
+  message: string;
+  // Exact submitted/organisational/roster values being compared, named
+  // per field so the Chief can see precisely what was checked.
+  evidence: Record<string, string>;
+}
+
 // --- Universal Research Engine (migration 13) ---
 
 export type ResearchOrgBody = 'WACP' | 'NPMCN' | 'ICMJE' | 'CONSORT' | 'STROBE' | 'PRISMA' | 'CARE' | 'University_Thesis' | 'Custom_Doctor';
