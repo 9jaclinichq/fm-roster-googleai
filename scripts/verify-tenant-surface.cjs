@@ -234,6 +234,55 @@ function checkNoActiveConsumersOfUnsafeMethods() {
   }
 }
 
+// Extracts a single top-level method's source text from databaseService.ts
+// by scanning line-by-line from its declaration to the first line that is
+// exactly the method-closing `  },` at this file's consistent 2-space
+// top-level indent — mirrors this file's own established convention
+// (every method in databaseService.ts closes this way), so this is not a
+// brace-counting/AST parse, just a boundary match on that convention. If
+// the method is ever renamed, removed, or its closing convention changes,
+// this returns null and the caller treats that as a hard failure rather
+// than silently skipping the check.
+function extractMethodBody(fileContent, methodName) {
+  const lines = fileContent.split('\n');
+  const startPattern = new RegExp(`\\basync ${methodName}\\(`);
+  const startIndex = lines.findIndex(line => startPattern.test(line));
+  if (startIndex === -1) return null;
+
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    if (lines[i].replace(/\r$/, '') === '  },') {
+      return lines.slice(startIndex, i + 1).join('\n');
+    }
+  }
+  return null;
+}
+
+function checkProvisionTenantWithSubaccountHasNoDirectWrite() {
+  // P0-7A (migration 62) removed the last unverified direct tenants write
+  // — provisionTenantWithSubaccount() now creates its tenant row via the
+  // capability-checked platformOperatorCreateTenant() RPC path instead of
+  // a raw `.from('tenants').insert()`. This is the mechanical enforcement
+  // of that invariant: re-extracts the method's current body from disk on
+  // every run, so a future edit that reintroduces ANY direct `.from(
+  // 'tenants')` access inside this specific method — INSERT, UPDATE, or
+  // otherwise — fails this check, regardless of what else in the file
+  // changes around it.
+  const content = readFile('src/lib/databaseService.ts');
+  if (content === null) return;
+
+  const body = extractMethodBody(content, 'provisionTenantWithSubaccount');
+  if (body === null) {
+    fail('databaseService.provisionTenantWithSubaccount() not found — cannot verify it has no direct tenants write (method renamed/removed/restructured?)');
+    return;
+  }
+
+  if (/\.from\(\s*['"]tenants['"]\s*\)/.test(body)) {
+    fail('databaseService.provisionTenantWithSubaccount() contains a direct .from(\'tenants\') access — P0-7A\'s invariant requires all tenant writes here to go through platformOperatorCreateTenant() instead');
+  } else {
+    pass('databaseService.provisionTenantWithSubaccount() contains no direct .from(\'tenants\') access (INSERT/UPDATE/SELECT)');
+  }
+}
+
 function checkCliToolingHealth() {
   // Optional, non-blocking: confirms the pinned repo-local CLI (tooling
   // slice, docs/DATABASE_AND_SECURITY.md) is at least invocable. Does not
@@ -345,6 +394,7 @@ async function main() {
   checkChiefRpcsHaveNoTenantId();
   checkOperatorRpcsSelfVerify();
   checkNoActiveConsumersOfUnsafeMethods();
+  checkProvisionTenantWithSubaccountHasNoDirectWrite();
   checkCliToolingHealth();
 
   if (runRemoteRead) {
