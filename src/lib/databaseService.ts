@@ -44,6 +44,8 @@ import {
   MasterRosterStatus,
   Tenant,
   PublicTenant,
+  ChiefTenantConfig,
+  OperatorTenantListing,
   TenantPlanType,
   TenantStatus,
   CallDutyRule,
@@ -1805,6 +1807,12 @@ export const databaseService = {
   // management, per-tenant customization, AI quota, and guest review
   // links. Tenant isolation is client-enforced only, not RLS-enforced —
   // see migration 11's header for why.
+  // Unsafe — depends on tenants' permissive direct-read RLS (migration
+  // 11); no caller-identity check happens here at all. Superseded by
+  // platformOperatorListTenants() below (migration 61, Priority-0 Tenant
+  // Surface slice P0-5) — that was this method's only remaining caller.
+  // Left in place, unused, until the final tenant-table lockdown audit
+  // (P0-7) confirms no caller remains.
   async getTenants(): Promise<Tenant[]> {
     checkSupabase();
 
@@ -1833,6 +1841,15 @@ export const databaseService = {
     return data || [];
   },
 
+  // Unsafe for a privileged caller (Chief) — depends on tenants'
+  // permissive direct-read RLS. chiefGetTenant() below (migration 61,
+  // slice P0-5) supersedes this for TenantCustomizationView.tsx/
+  // TemplateManagerView.tsx. Still genuinely in use by
+  // CasebookBuilderView.tsx and terminology.tsx's resident/pre-login
+  // paths — those callers have no reusable server-verifiable credential
+  // today, so they remain on this method pending institutional Auth
+  // (explicitly deferred from P0-5 — see docs/TENANT_SURFACE_SECURITY_SPEC.md).
+  // Do not remove until every caller is migrated.
   async getTenant(tenantId: string): Promise<Tenant | null> {
     checkSupabase();
 
@@ -1842,6 +1859,24 @@ export const databaseService = {
       throw error;
     }
     return data;
+  },
+
+  // Chief-scoped, capability-checked tenant config read (migration 61,
+  // Priority-0 Tenant Surface slice P0-5). p_admin_code is re-verified
+  // server-side inside the RPC, which derives the caller's own tenant from
+  // it — no tenant id is ever accepted or trusted from the client. Narrow
+  // return shape (see ChiefTenantConfig) — only the fields
+  // TenantCustomizationView.tsx/TemplateManagerView.tsx actually read, not
+  // the full tenant row.
+  async chiefGetTenant(adminCode: string): Promise<ChiefTenantConfig | null> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_get_tenant', { p_admin_code: adminCode });
+    if (error) {
+      console.warn('Error fetching tenant config:', error);
+      throw error;
+    }
+    return data?.[0] ?? null;
   },
 
   // Creates a Paystack subaccount via the platform-operator-subaccount Edge
@@ -2581,9 +2616,12 @@ export const databaseService = {
     return publicUrlData.publicUrl;
   },
 
-  // Coarse, unfiltered counts for the SaaS operator console's platform
-  // analytics panel — global (across all tenants), not tenant-scoped.
-  // count: 'exact', head: true avoids fetching row bodies just to count.
+  // Unsafe — coarse, unfiltered counts for the SaaS operator console's
+  // platform analytics panel, but the `tenants` count depends on
+  // permissive direct-read RLS with no caller-identity check. Superseded
+  // by platformOperatorGetAnalyticsSummary() below (migration 61, slice
+  // P0-5) — that was this method's only caller. Left in place, unused,
+  // until P0-7 confirms no caller remains.
   async getPlatformAnalyticsSummary(): Promise<{
     totalTenants: number;
     totalMembers: number;
@@ -2607,12 +2645,11 @@ export const databaseService = {
     };
   },
 
-  // Per-tenant breakdown for the Platform Operator Console — the summary
-  // above is a flat global count, useless for spotting which specific
-  // tenant is heavy-usage-free-tier (upsell candidate) or a paying tenant
-  // gone quiet. No schema change: joins four small tables client-side
-  // rather than a Postgres view, consistent with this file's existing
-  // flat-.select()-composed-in-TS pattern.
+  // Unsafe — same gap as getPlatformAnalyticsSummary() above (the
+  // `tenants` read specifically). Superseded by
+  // platformOperatorGetTenantUsageBreakdown() below (migration 61, slice
+  // P0-5) — that was this method's only caller. Left in place, unused,
+  // until P0-7 confirms no caller remains.
   async getTenantUsageBreakdown(): Promise<{
     tenantId: string;
     name: string;
@@ -2656,6 +2693,74 @@ export const databaseService = {
       memberCount: membersByTenant.get(t.id) || 0,
       aiActionsThisWindow: usageByTenant.get(t.id) || 0,
       submissionCount: submissionsByTenant.get(t.id) || 0,
+    }));
+  },
+
+  // Platform-operator-scoped, capability-checked replacements for
+  // getTenants()/getPlatformAnalyticsSummary()/getTenantUsageBreakdown()
+  // (migration 61, Priority-0 Tenant Surface slice P0-5). Each
+  // independently re-verifies p_operator_code server-side — a prior
+  // verifyPlatformOperatorLogin() call is never treated as sufficient
+  // authorization. p_operator_code is explicitly transitional
+  // compatibility, not the target API contract — see
+  // docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md §11.
+  async platformOperatorListTenants(operatorCode: string): Promise<OperatorTenantListing[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('platform_operator_list_tenants', { p_operator_code: operatorCode });
+    if (error) {
+      console.warn('Error fetching tenants:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  async platformOperatorGetAnalyticsSummary(operatorCode: string): Promise<{
+    totalTenants: number;
+    totalMembers: number;
+    activeMasterRosters: number;
+    aiActionCount: number;
+  }> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('platform_operator_get_analytics_summary', { p_operator_code: operatorCode });
+    if (error) {
+      console.warn('Error fetching platform analytics summary:', error);
+      throw error;
+    }
+    const row = data?.[0];
+    return {
+      totalTenants: row?.total_tenants ?? 0,
+      totalMembers: row?.total_members ?? 0,
+      activeMasterRosters: row?.active_master_rosters ?? 0,
+      aiActionCount: row?.ai_action_count ?? 0,
+    };
+  },
+
+  async platformOperatorGetTenantUsageBreakdown(operatorCode: string): Promise<{
+    tenantId: string;
+    name: string;
+    planType: TenantPlanType;
+    status: TenantStatus;
+    memberCount: number;
+    aiActionsThisWindow: number;
+    submissionCount: number;
+  }[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('platform_operator_get_tenant_usage_breakdown', { p_operator_code: operatorCode });
+    if (error) {
+      console.warn('Error fetching tenant usage breakdown:', error);
+      throw error;
+    }
+    return (data || []).map((row: { tenant_id: string; name: string; plan_type: TenantPlanType; status: TenantStatus; member_count: number; ai_actions_this_window: number; submission_count: number }) => ({
+      tenantId: row.tenant_id,
+      name: row.name,
+      planType: row.plan_type,
+      status: row.status,
+      memberCount: row.member_count,
+      aiActionsThisWindow: row.ai_actions_this_window,
+      submissionCount: row.submission_count,
     }));
   },
 

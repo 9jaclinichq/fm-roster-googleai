@@ -96,7 +96,7 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
         databaseService.getResearchTemplates(),
         databaseService.getCasebookTemplates(),
         databaseService.getVivaVignettes(),
-        databaseService.getTenant(tenantId),
+        databaseService.chiefGetTenant(adminCode),
       ]);
       setResearchTemplates(rt);
       setCasebookTemplates(ct);
@@ -601,7 +601,7 @@ export const TemplateManagerView: React.FC<TemplateManagerViewProps> = ({ tenant
           // Check the tenant directly rather than trusting the isFreeTier
           // closure — load() updates that state asynchronously, so it could
           // still read stale by the time this runs.
-          const tenant = await databaseService.getTenant(tenantId);
+          const tenant = await databaseService.chiefGetTenant(adminCode);
           const stillFree = (tenant?.plan_type ?? 'free_seeded') === 'free_seeded';
           await load();
           setShowUpgradeModal(false);

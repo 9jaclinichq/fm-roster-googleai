@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../../../../lib/databaseService';
-import { Tenant, CallDutyRule, TenantAiAdaptationRule } from '../../../../types';
+import { ChiefTenantConfig, CallDutyRule, TenantAiAdaptationRule } from '../../../../types';
 import { TERMINOLOGY_DEFAULTS, useTerminology } from '../../../shared/terminology';
 import { Settings2, Sliders, Tag, Sparkles, RefreshCw, Plus } from 'lucide-react';
 
@@ -37,7 +37,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
   const { t } = useTerminology();
   const MODULE_TOGGLES = getModuleToggles(t);
   const [isLoading, setIsLoading] = useState(true);
-  const [tenant, setTenant] = useState<Tenant | null>(null);
+  const [tenant, setTenant] = useState<ChiefTenantConfig | null>(null);
   const [callDutyRules, setCallDutyRules] = useState<CallDutyRule[]>([]);
   const [adaptationRules, setAdaptationRules] = useState<TenantAiAdaptationRule[]>([]);
   const [statusMessage, setStatusMessage] = useState('');
@@ -53,16 +53,16 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
   const load = async () => {
     setIsLoading(true);
     try {
-      const [t, rules, adapt] = await Promise.all([
-        databaseService.getTenant(tenantId),
+      const [chiefTenant, rules, adapt] = await Promise.all([
+        databaseService.chiefGetTenant(adminCode),
         databaseService.getCallDutyRules(tenantId),
         databaseService.getTenantAiAdaptationRules(tenantId),
       ]);
-      if (t) {
-        setTenant(t);
-        setModuleFlags(t.module_flags || {});
-        setCaseReportsRequired(String(t.module_flags?.case_reports_required_count ?? 15));
-        setTerminology(t.terminology_overrides || {});
+      if (chiefTenant) {
+        setTenant(chiefTenant);
+        setModuleFlags(chiefTenant.module_flags || {});
+        setCaseReportsRequired(String(chiefTenant.module_flags?.case_reports_required_count ?? 15));
+        setTerminology(chiefTenant.terminology_overrides || {});
       }
       setCallDutyRules(rules);
       setAdaptationRules(adapt);

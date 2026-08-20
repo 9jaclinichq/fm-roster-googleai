@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { databaseService } from '../lib/databaseService';
-import { Tenant, TenantPlanType, TenantAiAdaptationRule } from '../types';
+import { Tenant, OperatorTenantListing, TenantPlanType, TenantAiAdaptationRule } from '../types';
 import {
   ShieldCheck, AlertCircle, RefreshCw, Building2, Users, ListChecks,
   Sparkles, Plus, LogOut, BadgeCheck, Ban, ChevronDown,
@@ -153,9 +153,9 @@ const OperatorConsole: React.FC<{
   operatorId, operatorName, operatorCode, onLogout,
 }) => {
   const [isLoading, setIsLoading] = useState(true);
-  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenants, setTenants] = useState<OperatorTenantListing[]>([]);
   const [analytics, setAnalytics] = useState<{ totalTenants: number; totalMembers: number; activeMasterRosters: number; aiActionCount: number } | null>(null);
-  const [usageBreakdown, setUsageBreakdown] = useState<Awaited<ReturnType<typeof databaseService.getTenantUsageBreakdown>>>([]);
+  const [usageBreakdown, setUsageBreakdown] = useState<Awaited<ReturnType<typeof databaseService.platformOperatorGetTenantUsageBreakdown>>>([]);
   const [statusMessage, setStatusMessage] = useState('');
   const [showProvisionForm, setShowProvisionForm] = useState(false);
 
@@ -177,10 +177,14 @@ const OperatorConsole: React.FC<{
   const load = async () => {
     setIsLoading(true);
     try {
+      if (!operatorCode) {
+        setStatusMessage('Your operator session has expired. Please sign out and sign in again.');
+        return;
+      }
       const [t, a, u] = await Promise.all([
-        databaseService.getTenants(),
-        databaseService.getPlatformAnalyticsSummary(),
-        databaseService.getTenantUsageBreakdown(),
+        databaseService.platformOperatorListTenants(operatorCode),
+        databaseService.platformOperatorGetAnalyticsSummary(operatorCode),
+        databaseService.platformOperatorGetTenantUsageBreakdown(operatorCode),
       ]);
       setTenants(t);
       setAnalytics(a);
@@ -257,7 +261,7 @@ const OperatorConsole: React.FC<{
     }
   };
 
-  const handlePlanChange = async (tenant: Tenant, plan: TenantPlanType) => {
+  const handlePlanChange = async (tenant: OperatorTenantListing, plan: TenantPlanType) => {
     if (!operatorCode) {
       setStatusMessage('Your operator session has expired. Please sign out and sign in again.');
       return;
@@ -272,7 +276,7 @@ const OperatorConsole: React.FC<{
     }
   };
 
-  const handleStatusToggle = async (tenant: Tenant) => {
+  const handleStatusToggle = async (tenant: OperatorTenantListing) => {
     if (!operatorCode) {
       setStatusMessage('Your operator session has expired. Please sign out and sign in again.');
       return;

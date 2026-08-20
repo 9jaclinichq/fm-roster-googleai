@@ -370,6 +370,38 @@ export interface PublicTenant {
   department: string | null;
 }
 
+// Chief-scoped tenant configuration read (migration 61, Priority-0 Tenant
+// Surface slice P0-5) — the `chief_get_tenant()` RPC's exact return shape.
+// Covers exactly what TenantCustomizationView.tsx and TemplateManagerView.tsx
+// (the only two current consumers) actually read: `name`/`module_flags`/
+// `terminology_overrides` for the customization editor, `plan_type` for
+// TemplateManagerView's free-tier gate. Deliberately excludes
+// `short_code`, `status`, `paystack_subaccount_code`, and `created_at` —
+// no existing Chief consumer needs them.
+export interface ChiefTenantConfig {
+  id: string;
+  name: string;
+  plan_type: TenantPlanType;
+  module_flags: Record<string, unknown>;
+  terminology_overrides: Record<string, string>;
+}
+
+// Platform-operator-scoped tenant listing (migration 61, slice P0-5) — the
+// `platform_operator_list_tenants()` RPC's exact return shape, matching
+// exactly what SaaSOperatorConsoleView.tsx's tenant management table
+// renders. Excludes `module_flags`/`terminology_overrides`/`created_at` —
+// not rendered there.
+export interface OperatorTenantListing {
+  id: string;
+  name: string;
+  short_code: string;
+  institution: string | null;
+  department: string | null;
+  plan_type: TenantPlanType;
+  status: TenantStatus;
+  paystack_subaccount_code: string | null;
+}
+
 export interface CallDutyRule {
   id: string;
   tenant_id: string;
