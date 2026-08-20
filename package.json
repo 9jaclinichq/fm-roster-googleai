@@ -10,7 +10,9 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm run build"
+    "verify": "npm run typecheck && npm run build",
+    "supabase:version": "supabase --version",
+    "supabase:functions:list": "supabase functions list --project-ref gdumksfffewpdqqwvcdo"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.6",
@@ -26,6 +28,7 @@
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "supabase": "2.111.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

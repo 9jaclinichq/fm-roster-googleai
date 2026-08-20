@@ -49,6 +49,32 @@ Any future migration slice must include:
 - Human review before writing SQL.
 - Separate human approval before applying SQL anywhere live.
 
+## CLI Tooling
+
+- The repo pins a local Supabase CLI as a devDependency: `supabase@2.111.0`,
+  exact version (no `^`/`~`).
+- Prefer `npm run supabase:version` / repo-local `npx supabase ...` over any
+  global install. The global/Scoop CLI is unreliable in the current agent
+  environment (observed segfault in Git-Bash and exit code 5 in PowerShell)
+  and should not be relied on.
+- `supabase db push` remains prohibited until migration-history
+  reconciliation between local migration files and live applied state is
+  separately completed and approved. No `db push`/`db:*` script is provided
+  in `package.json` — its absence is intentional, not an oversight.
+- Migration-file existence does not establish remote application state (see
+  "Ground Truth" above). For migration inspection, use
+  `npx supabase migration list --linked` only after the repo has been
+  explicitly linked in the current environment, or a separately approved
+  `--db-url` path when appropriate — no convenience script wraps this,
+  because doing so would hide which of those two preconditions is in play.
+- Read-only CLI commands (`supabase:version`, `supabase:functions:list`,
+  a manually-run `migration list`) are allowed where authentication is
+  already available. This does not extend to any command that mutates
+  remote state.
+- Broken global tooling is not justification for using
+  `.tmp-run-migration.cjs`, direct DB passwords, or any other stronger
+  credential path than the CLI itself provides.
+
 ## RLS Pattern Guidance
 
 When building doctor-owned features, copy the existing verified pattern rather
