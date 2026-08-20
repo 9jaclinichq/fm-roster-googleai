@@ -1,0 +1,369 @@
+#!/usr/bin/env node
+// Priority-0 Tenant Surface — reusable security verification harness (P0-6).
+//
+// Dependency-free by design: no Vitest/Jest/Playwright, no new npm
+// packages. Uses Node core (fs/path/child_process) and the
+// already-installed @supabase/supabase-js only.
+//
+// THREE CATEGORIES, THREE DIFFERENT SAFETY LEVELS:
+//
+//   STATIC (default, no flags)      - pure text/regex inspection of
+//                                      migration and source files already
+//                                      on disk. No network call is ever
+//                                      made in this mode. Safe anywhere,
+//                                      including CI.
+//
+//   --remote-read                   - additionally invokes
+//                                      list_public_tenants() live. This is
+//                                      the ONE RPC this harness will ever
+//                                      call over the network: it is
+//                                      intentionally public (migration 58),
+//                                      requires no auth, and calling it
+//                                      isn't "testing authorization" since
+//                                      there is none to bypass. chief_*/
+//                                      platform_operator_* RPCs are NEVER
+//                                      invoked by this script, live or
+//                                      otherwise. Requires SUPABASE_URL/
+//                                      SUPABASE_ANON_KEY already present in
+//                                      the process environment - this
+//                                      script does not read .env itself
+//                                      (no dotenv, no manual file parse).
+//                                      Skips gracefully, not a failure, if
+//                                      those vars are absent.
+//
+//   --local-mutation                - anonymous INSERT/UPDATE negative
+//                                      tests against `tenants`. These are
+//                                      meaningless before P0-7 lands (the
+//                                      permissive policy still allows the
+//                                      write today) and are reported as a
+//                                      labeled pre-P0-7 baseline, not a
+//                                      failure, until then. Requires
+//                                      TENANT_SURFACE_ALLOW_LOCAL_MUTATION=1
+//                                      plus TENANT_SURFACE_LOCAL_SUPABASE_URL/
+//                                      _ANON_KEY (harness-specific env var
+//                                      names, never reused from the app's
+//                                      own VITE_SUPABASE_URL). Hard-refuses,
+//                                      before any network call, if the
+//                                      target URL contains the known
+//                                      production project ref or matches
+//                                      VITE_SUPABASE_URL if that is also
+//                                      set in the environment.
+//
+// Run manually:
+//   node scripts/verify-tenant-surface.cjs
+//   node scripts/verify-tenant-surface.cjs --remote-read
+//   node scripts/verify-tenant-surface.cjs --local-mutation
+
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const PRODUCTION_PROJECT_REF = 'gdumksfffewpdqqwvcdo';
+
+const args = process.argv.slice(2);
+const runRemoteRead = args.includes('--remote-read');
+const runLocalMutation = args.includes('--local-mutation');
+
+let failures = 0;
+let skipped = 0;
+
+function fail(message) {
+  console.error(`FAIL: ${message}`);
+  failures += 1;
+}
+
+function pass(message) {
+  console.log(`OK:   ${message}`);
+}
+
+function info(message) {
+  console.log(`INFO: ${message}`);
+}
+
+function skip(message) {
+  console.log(`SKIP: ${message}`);
+  skipped += 1;
+}
+
+function readFile(relPath) {
+  const abs = path.join(REPO_ROOT, relPath);
+  if (!fs.existsSync(abs)) {
+    fail(`${relPath} does not exist`);
+    return null;
+  }
+  return fs.readFileSync(abs, 'utf8');
+}
+
+// Recursively lists .ts/.tsx files under a src-relative dir, skipping
+// node_modules/dist — no glob dependency needed for this narrow use.
+function listSourceFiles(relDir) {
+  const abs = path.join(REPO_ROOT, relDir);
+  const results = [];
+  function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (/\.(ts|tsx)$/.test(entry.name)) {
+        results.push(full);
+      }
+    }
+  }
+  walk(abs);
+  return results;
+}
+
+// ============================================================
+// STATIC CHECKS — no network, run unconditionally
+// ============================================================
+
+function checkPublicDiscoveryProjection() {
+  const sql = readFile('supabase/migrations/58_list_public_tenants_rpc.sql');
+  if (sql === null) return;
+
+  const match = sql.match(/CREATE OR REPLACE FUNCTION public\.list_public_tenants\(\)\s*RETURNS TABLE \(([\s\S]*?)\)\s*LANGUAGE/);
+  if (!match) {
+    fail('list_public_tenants() RETURNS TABLE block not found in migration 58');
+    return;
+  }
+  const columnBlock = match[1];
+  const columns = columnBlock
+    .split(',')
+    .map(c => c.trim().split(/\s+/)[0])
+    .filter(Boolean);
+
+  const approved = ['id', 'name', 'institution', 'department'];
+  const excluded = ['plan_type', 'status', 'short_code', 'module_flags', 'terminology_overrides', 'paystack_subaccount_code', 'created_at'];
+
+  const missing = approved.filter(c => !columns.includes(c));
+  const extra = columns.filter(c => !approved.includes(c));
+  const leaked = excluded.filter(c => columns.includes(c));
+
+  if (missing.length === 0 && extra.length === 0) {
+    pass(`list_public_tenants() projection is exactly [${approved.join(', ')}]`);
+  } else {
+    fail(`list_public_tenants() projection is [${columns.join(', ')}], expected exactly [${approved.join(', ')}]`);
+  }
+  if (leaked.length > 0) {
+    fail(`list_public_tenants() leaks excluded field(s): ${leaked.join(', ')}`);
+  } else {
+    pass('list_public_tenants() exposes none of the excluded private fields');
+  }
+}
+
+function checkChiefRpcsHaveNoTenantId() {
+  const files = [
+    'supabase/migrations/59_chief_tenant_config_rpcs.sql',
+    'supabase/migrations/61_chief_platform_operator_tenant_reads.sql',
+  ];
+  const chiefFns = ['chief_get_tenant', 'chief_update_tenant_terminology', 'chief_update_tenant_module_flags'];
+  const combined = files.map(f => readFile(f)).filter(Boolean).join('\n');
+  if (!combined) return;
+
+  for (const fnName of chiefFns) {
+    const re = new RegExp(`CREATE OR REPLACE FUNCTION public\\.${fnName}\\(([^)]*)\\)`);
+    const match = combined.match(re);
+    if (!match) {
+      fail(`${fnName}() definition not found`);
+      continue;
+    }
+    const params = match[1];
+    if (/tenant_id/i.test(params)) {
+      fail(`${fnName}() signature contains a tenant_id parameter: (${params.trim()})`);
+    } else {
+      pass(`${fnName}() accepts no tenant_id parameter: (${params.trim()})`);
+    }
+  }
+}
+
+function checkOperatorRpcsSelfVerify() {
+  const files = [
+    'supabase/migrations/60_platform_operator_tenant_rpcs.sql',
+    'supabase/migrations/61_chief_platform_operator_tenant_reads.sql',
+  ];
+  const combined = files.map(f => readFile(f)).filter(Boolean).join('\n');
+  if (!combined) return;
+
+  const definitions = combined.match(/CREATE OR REPLACE FUNCTION public\.platform_operator_\w+/g) || [];
+  const checks = combined.match(/platform_operators\s+\w+\s+WHERE\s+\w+\.shared_code\s*=\s*p_operator_code/g) || [];
+
+  if (definitions.length === 0) {
+    fail('No platform_operator_* RPC definitions found');
+    return;
+  }
+  if (definitions.length === checks.length) {
+    pass(`All ${definitions.length} platform_operator_* RPCs independently verify shared_code (${definitions.length} definitions, ${checks.length} inline checks)`);
+  } else {
+    fail(`platform_operator_* RPC count (${definitions.length}) does not match inline operator-code check count (${checks.length}) — at least one RPC may be relying on prior login state instead of self-verifying`);
+  }
+}
+
+function checkNoActiveConsumersOfUnsafeMethods() {
+  const unsafeMethods = [
+    'createTenant',
+    'updateTenantPlan',
+    'updateTenantStatus',
+    'updateTenantTerminology',
+    'updateTenantModuleFlags',
+    'getTenants',
+    'getPlatformAnalyticsSummary',
+    'getTenantUsageBreakdown',
+  ];
+  // getTenant() is deliberately excluded — P0-5 established it remains a
+  // genuine, approved consumer of CasebookBuilderView.tsx/terminology.tsx
+  // pending institutional Auth. Flagging it here would be a false positive.
+
+  const files = listSourceFiles('src').filter(f => path.basename(f) !== 'databaseService.ts');
+
+  for (const method of unsafeMethods) {
+    const re = new RegExp(`databaseService\\.${method}\\(`);
+    const hits = [];
+    for (const file of files) {
+      const content = fs.readFileSync(file, 'utf8');
+      if (re.test(content)) {
+        hits.push(path.relative(REPO_ROOT, file));
+      }
+    }
+    if (hits.length === 0) {
+      pass(`databaseService.${method}() has no active consumers outside databaseService.ts`);
+    } else {
+      fail(`databaseService.${method}() is still called from: ${hits.join(', ')}`);
+    }
+  }
+}
+
+function checkCliToolingHealth() {
+  // Optional, non-blocking: confirms the pinned repo-local CLI (tooling
+  // slice, docs/DATABASE_AND_SECURITY.md) is at least invocable. Does not
+  // fail the harness if the CLI is unavailable — this environment has
+  // known CLI flakiness, and CLI availability is not itself a tenant-
+  // surface security property.
+  try {
+    // shell: true so this resolves npx.cmd on Windows (execFileSync does
+    // not apply PATHEXT resolution to shims on its own).
+    const version = execFileSync('npx supabase --version', { cwd: REPO_ROOT, encoding: 'utf8', timeout: 15000, shell: true }).trim();
+    info(`Repo-local Supabase CLI reports version ${version}`);
+  } catch (err) {
+    info(`Repo-local Supabase CLI unavailable/unresponsive (non-blocking): ${err.message.split('\n')[0]}`);
+  }
+}
+
+// ============================================================
+// REMOTE READ-ONLY — opt-in via --remote-read
+// ============================================================
+
+async function checkPublicDiscoveryLiveShape() {
+  const url = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  if (!url || !anonKey) {
+    skip('remote-read: SUPABASE_URL/SUPABASE_ANON_KEY not set in environment — not reading .env to obtain them');
+    return;
+  }
+
+  const { createClient } = require('@supabase/supabase-js');
+  const client = createClient(url, anonKey);
+  const { data, error } = await client.rpc('list_public_tenants');
+  if (error) {
+    fail(`remote-read: list_public_tenants() call failed: ${error.message}`);
+    return;
+  }
+
+  const approved = ['id', 'name', 'institution', 'department'];
+  const excluded = ['plan_type', 'status', 'short_code', 'module_flags', 'terminology_overrides', 'paystack_subaccount_code', 'created_at'];
+  const rows = data || [];
+  let bad = false;
+  for (const row of rows) {
+    const keys = Object.keys(row);
+    const unexpected = keys.filter(k => !approved.includes(k));
+    if (unexpected.length > 0) {
+      fail(`remote-read: list_public_tenants() row has unexpected key(s): ${unexpected.join(', ')}`);
+      bad = true;
+    }
+    const leaked = excluded.filter(k => keys.includes(k));
+    if (leaked.length > 0) {
+      fail(`remote-read: list_public_tenants() row leaks excluded field(s): ${leaked.join(', ')}`);
+      bad = true;
+    }
+  }
+  if (!bad) {
+    pass(`remote-read: list_public_tenants() returned ${rows.length} row(s), all matching the approved projection exactly`);
+  }
+}
+
+// ============================================================
+// LOCAL/TEST MUTATION-NEGATIVE — opt-in via --local-mutation
+// ============================================================
+
+async function checkAnonymousMutationRejected() {
+  if (process.env.TENANT_SURFACE_ALLOW_LOCAL_MUTATION !== '1') {
+    fail('local-mutation: refused — TENANT_SURFACE_ALLOW_LOCAL_MUTATION=1 not set. This is a deliberate hard requirement, not a default-on test.');
+    return;
+  }
+  const url = process.env.TENANT_SURFACE_LOCAL_SUPABASE_URL;
+  const anonKey = process.env.TENANT_SURFACE_LOCAL_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) {
+    fail('local-mutation: refused — TENANT_SURFACE_LOCAL_SUPABASE_URL/_ANON_KEY not set. These are harness-specific vars, deliberately not the app\'s own VITE_SUPABASE_URL.');
+    return;
+  }
+  if (url.includes(PRODUCTION_PROJECT_REF) || (process.env.VITE_SUPABASE_URL && url === process.env.VITE_SUPABASE_URL)) {
+    fail(`local-mutation: refused — target URL appears to be the production project (${PRODUCTION_PROJECT_REF}). Local mutation tests must never target production.`);
+    return;
+  }
+
+  const { createClient } = require('@supabase/supabase-js');
+  const client = createClient(url, anonKey);
+  const probeShortCode = `zzz_p0_6_harness_probe_${Date.now()}`;
+
+  const insertResult = await client.from('tenants').insert([{ name: 'P0-6 harness probe (disposable)', short_code: probeShortCode }]).select().maybeSingle();
+  if (insertResult.error) {
+    pass('local-mutation: anonymous INSERT into tenants is rejected');
+  } else {
+    info('local-mutation: anonymous INSERT succeeded — PRE-P0-7 baseline (permissive policy still in effect, expected before P0-7 lands), not a failure');
+    // Best-effort cleanup of the disposable row this probe just created.
+    if (insertResult.data && insertResult.data.id) {
+      await client.from('tenants').delete().eq('id', insertResult.data.id);
+    }
+  }
+
+  const updateResult = await client.from('tenants').update({ name: 'P0-6 harness probe (should be rejected)' }).eq('short_code', probeShortCode);
+  if (updateResult.error) {
+    pass('local-mutation: anonymous UPDATE into tenants is rejected');
+  } else {
+    info('local-mutation: anonymous UPDATE succeeded — PRE-P0-7 baseline (permissive policy still in effect, expected before P0-7 lands), not a failure');
+  }
+}
+
+// ============================================================
+// MAIN
+// ============================================================
+
+async function main() {
+  info('Static checks (no network):');
+  checkPublicDiscoveryProjection();
+  checkChiefRpcsHaveNoTenantId();
+  checkOperatorRpcsSelfVerify();
+  checkNoActiveConsumersOfUnsafeMethods();
+  checkCliToolingHealth();
+
+  if (runRemoteRead) {
+    info('Remote read-only checks (--remote-read):');
+    await checkPublicDiscoveryLiveShape();
+  } else {
+    skip('remote-read checks not requested (pass --remote-read to include list_public_tenants() live-shape verification)');
+  }
+
+  if (runLocalMutation) {
+    info('Local/test mutation-negative checks (--local-mutation):');
+    await checkAnonymousMutationRejected();
+  } else {
+    skip('local-mutation checks not requested (pass --local-mutation to include anonymous INSERT/UPDATE rejection tests against a local/test instance)');
+  }
+
+  console.log('');
+  console.log(`${failures} failure(s), ${skipped} skipped.`);
+  process.exit(failures > 0 ? 1 : 0);
+}
+
+main();
