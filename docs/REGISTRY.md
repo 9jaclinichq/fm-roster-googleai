@@ -1,57 +1,130 @@
 # PrivyDoc Workspace — Component Registry
 
-Per `docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md` §7. This is a refresh of the
-registry against what actually exists on disk as of this pass (branch
-`worktree-agent-a1fa77173ef5fa8d3`, based on `main`, migrations through
-`43_seed_generic_research_templates.sql`). This refresh folds in the wave of
-work that landed since the previous registry snapshot: the Scored Rubric
-primitive (a new, not-yet-consumed generic scoring engine), the Forms
-module's global-seed ownership shape plus 5 seeded generic form templates,
-4 new generic seed rows split across `research_templates`/`casebook_templates`,
-`CategoryManagerPanel.tsx` going from standalone to actually wired into
-`ChiefDashboardView.tsx`'s "Categories" tab, and a scoping-only pass on a
-possible Scheduling module generalization. Every path below was
-re-confirmed against the real file tree in this pass, not copied forward
-from the previous snapshot without checking — one real gap was found this
-way: `workforce_categories`/`CategoryManagerPanel.tsx` (migration 39) had
-**no registry entry at all** in the previous snapshot despite already
-existing on disk; that's corrected here, not just updated.
+Per `docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md` §7, now read alongside
+`docs/WORKSPC_PRODUCT_CONSTITUTION.md` as the higher product-direction
+authority (see that document's §0 for how the two relate; `AGENTS.md`'s
+source-of-truth hierarchy governs where any of these disagree).
+
+**Slice 2 refresh (2026-08-20)**: brought current through migration `57_
+doctor_ownership_rls_newer_modules.sql` and today's `src/modules/` tree, per
+the Product Constitution's Slice 2 documentation-reconciliation task. Every
+fact below marked as new/changed this pass was re-verified directly against
+source and migration files, not copied forward from the previous snapshot
+(which stopped at migration 43). Superseded passages from that snapshot are
+kept and struck through in spirit (labeled **"[43-snapshot, superseded]"**)
+rather than silently deleted, per this task's own instruction to preserve
+history. **This pass is source/migration-file evidence only — no live
+database was queried.** Per the Product Constitution §17/M10: a migration
+file existing, or its own header claiming it was applied, is not proof of
+live state. Distinguish, for everything below: *what exists in code*, *what
+is wired to a face*, *what has live data per prior, separately-verified live-DB
+passes recorded elsewhere in this file* (there are a few, inherited from
+earlier audit passes that did have live access — not repeated or re-verified
+here), and *what is simply unknown live*.
 
 Status legend: `stable` = works, matches its current scope; `fixing` = mid-move
 in the modularization pass; `fragmented` = still split across the old
 `src/components/` and new `src/modules/` trees, or doing one god-file's worth
 of unrelated things; `stub` = scaffolding exists but no real behavior yet.
 
-**Note on migration status**: migrations 32–35 each carry an explicit
-"NOT APPLIED LIVE — a human will review and apply the pending batch" header
-comment. Migration 36 (org-defined groups) carries no such disclaimer.
-Migration 37 (`insights`) also says "NOT APPLIED LIVE" in its own header, yet
-migration 38's header describes a *live* duplicate-row bug it fixed ("Confirmed
-live: 18 rows for 9 actually-pending residents") — i.e. 37 was apparently
-applied live at some point after its own header was written, contradicting
-that header. This audit is docs-only and has no database access, so this
-contradiction is reported as-is from the migration files rather than resolved
-against the live schema — flag it to whoever applies the pending batch.
-**Migrations 41 and 42 also explicitly say "NOT APPLIED LIVE"** in their own
-headers (both defer to "a human reviews and applies the pending batch
-afterward", same posture as 32–35/37). **Migration 43 states neither** — its
-header describes scope/judgment calls at length but never says whether it's
-been applied; reported as-is, not assumed either way.
+**Note on migration status (headers, not live verification)**: migrations
+32–35 each carry an explicit "NOT APPLIED LIVE — a human will review and
+apply the pending batch" header comment; migration 36 carries no such
+disclaimer. Migration 37 says "NOT APPLIED LIVE" yet migration 38's header
+describes a *live* bug it fixed in 37's own output — an internal
+contradiction, reported as-is, not resolved. Migrations 41/42/44/45/48 all
+say "NOT APPLIED LIVE" in their own headers. **Migration 43 states neither.**
+**Migrations 51 and 57 both explicitly say they were applied live via the
+untracked `.tmp-run-migration.cjs` script "immediately after being written,"**
+a different and newer self-reported pattern than the earlier "written for
+review, a human applies afterward" convention 44/45/48 still use. Per the
+Product Constitution's M10 (migration discipline): this registry does not
+attempt to reconstruct or verify actual approval/application provenance for
+any of the above — every claim in this paragraph is "what the header text
+says," not "what is confirmed live." `docs/WORKSPC_PRODUCT_CONSTITUTION.md`
+§17 already states any future production migration/application requires
+explicit human review and approval regardless of what a header claims.
 
-**Biggest remaining gap, this pass**: with org-defined groups (36) and
-categories (39) both now real and wired into at least one consuming panel
-each, and the Forms/Research/Casebook seed libraries growing (42/43), the
-single largest structural gap is no longer "no org-defined vocabulary" — it's
-that **Clinical & Professional Writing has no generic instance table at
-all**. Migration 42's own header says this explicitly while declining to
-seed a referral-letter/SOP-template form: `DissertationAssistantView.tsx`,
-`CasebookBuilderView.tsx`, and `CasebookWorkspaceView.tsx` remain three
-separate hardcoded features with no builder+instances model the way Forms
-now has one. Close behind: the new Scored Rubric primitive (migration 41) is
-schema+engine+form with **zero consuming faces** (see M15 below) — a second,
-even newer "built but unwired" gap alongside the pre-existing Scheduling/
-Meetings ones (both still additive-only, no dashboard wiring, no schema at
-all for Meetings — see the new M16/M17 entries below).
+**Biggest remaining gap, [43-snapshot, superseded]**: that snapshot named
+"Clinical & Professional Writing has no generic instance table at all" as the
+single largest structural gap. **This is now closed at the schema/service
+level** — migration 48 built `clinical_document_types`/`clinical_documents`,
+seeded 3 generic templates, and `src/modules/clinical-writing/` exists with a
+real service and panel (see M18 below). The gap has moved, not vanished: see
+"Current biggest gaps" immediately below.
+
+**Current biggest gaps, this pass**:
+1. **Institutional-table RLS remains the single largest open item** —
+   `workforce`/`submissions`/`collections`/etc. are still `USING (true)` for
+   any anon-key holder, unchanged by migration 57 (which only closed the
+   doctor-owned half — see S1/S-tenancy notes below and
+   `docs/LIVING_SYSTEM_GAP_AUDIT.md`'s addendum §2). The Product Constitution
+   §14/§17 now names closing this as a precondition for onboarding a second
+   real organisation, not a someday item.
+2. **Three real, additively-built org-side modules (Scheduling, Meetings,
+   Clinical Writing) have zero individual/member-facing surface** — each is
+   wired only as a `ChiefDashboardView.tsx` tab (see M16/M17/M18), with no
+   `/workspace/*` or `/doctor/*` route of its own.
+3. **Personal Productivity (migration 51) is fully live and fully wired into
+   navigation today** (see M19) — this is a fact, not a recommendation. The
+   Product Constitution's M6 calls for it to be HIDE/FROZEN from Workforce V1
+   navigation; this registry does not change navigation (out of Slice 2
+   scope) but flags the gap between constitutional direction and current
+   wiring explicitly, for a future navigation slice to close.
+
+## Product disposition (Slice 2 reconciliation taxonomy)
+
+Per the Product Constitution's Slice 1 §15: **this taxonomy is a current
+planning aid, not constitutional law.** It records this pass's assessment of
+each current module/capability against the Constitution's Workforce-first V1
+focus, so a future navigation/scoping slice has a starting point. It does not
+authorize or perform any hide/retire/build action itself.
+
+| Module (registry ref) | Disposition | Why |
+|---|---|---|
+| Auth / login (M2, F1–F5, F17) | KEEP | Identity/membership entry points; V1-foundational. |
+| Forms — legacy monthly submission (M8) | KEEP | The live V1 workforce-collection wedge itself. |
+| Roster Engine (M11) | KEEP | The live V1 roster-publication pipeline. |
+| Announcements (M1) | KEEP | Named explicitly in V1 (minimal operational Announcements). |
+| Org-admin / Chief Dashboard shell (F9) | KEEP, REFACTOR later | V1-foundational shell; mixes V1 and non-V1 tabs today — splitting it is future scoping work, not this slice's. |
+| Workforce categories / org groups (S4) | KEEP | Contextual-permission foundation the Constitution's §14/M3 calls V1-foundational. |
+| Event bus / UDR / Agent manifests (S2/S3/S6, A1–A3) | KEEP | The real seed of ambient intelligence and A0–A1 automation (Constitution §10/§11). |
+| Integrations layer (M14) | INTEGRATE (direction), KEEP (current stub) | Matches Constitution §6 directly; underbuilt, not misdirected. |
+| Forms & Pipelines generalisation (M13) | KEEP | The natural target primitive for M4's submissions↔roster recovery work — not this slice's to build. |
+| Scored Rubric primitive (M15) | KEEP, unwire risk | Matches Constitution's Assessments/Rubrics ownership (§5); real but zero live usage. |
+| Scheduling (M16) | HIDE for V1 | Real, additive, not in V1's named list (Constitution §15); park per M7-adjacent reasoning until Workforce V1 lands. |
+| Meetings & Actions (M17) | HIDE for V1 | Explicitly parked as-is per the Constitution's M7. |
+| Clinical & Professional Writing (M18) | HIDE for V1, UNCERTAIN long-term | Parked per M7; also a candidate boundary question against Constitution §7 ("word processor") worth a future explicit review, not decided here. |
+| Personal Productivity (M19) | RETIRE-FROM-V1-NAV — human/future slice, currently still live | Constitution M6: HIDE/FREEZE, not delete, not develop further, not in V1 nav. Currently still fully wired into nav (see M19) — a future navigation slice, not this one, closes that gap. |
+| Research, Casebook & Logbook, Dissertation, Exam Readiness, Viva Simulator | KEEP, defer | Real, live, not V1's focus; Constitution §12 names Research a likely future domain. |
+| Consultant / Co-Resident Review (M5) | UNCERTAIN | Parked per Constitution M12; may inform a future shared Approval primitive. |
+| Knowledge Packs (M9) | UNCERTAIN | Parked per Constitution M12; needs a future build-vs-integrate call against §6. |
+| Billing (M3) | KEEP, REFACTOR (business, not code) | Real and live; gates content creation today, Constitution's Free=Operate/Paid=Automate (§4) is the target model — reconciling the two is a business decision, not in this slice's scope. |
+| Platform Operator Console (F8) | KEEP, REFACTOR (relocate) | Necessary; still outside `src/modules/`, unchanged since the modularisation pass. |
+
+## Registry engine-attribution terminology (revised 2026-08-20)
+
+Every `owner engine:` field below previously read `privybrain-2`, `babsbrain-2`, or a `(target)`
+variant of one of the two, inherited verbatim from `docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md`'s L2
+engine model. Per the Product Constitution's Slice 2, Decision 1: those names belong to a different,
+unrelated sibling product and must not continue as active ownership labels in this registry.
+
+Every `owner engine:` field has been revised to one of:
+- **`none`**, when no real or intended in-repo AI/automation component is involved, or
+- **`none — intelligence/automation layer, concretely <in-repo module/service/agent/Edge Function
+  name>`**, when a real in-repo component already does the work, or
+- **`none — intelligence/automation layer (target; ...)`**, when the ownership is still purely
+  conceptual/aspirational and no in-repo component implements it yet.
+
+No replacement branded engine name has been invented, per the Constitution's explicit instruction.
+This is a labeling change only — no component was moved, renamed, or rewired to produce it.
+
+**Known, deliberately unresolved, out of this slice's scope**: the `agent_manifests.owner_engine`
+database column and the `agent_key` values themselves (`babsbrain2_submission_chaser`,
+`babsbrain2_meeting_action_chaser`, `privybrain2_rubric_compliance_chaser`) still literally store the
+old branding — quoted verbatim below (S6, A1–A3) as a factual record of current stored data, not as
+an endorsed active label. Renaming those is a schema change, out of scope for a documentation-only
+slice; flagged here so a future slice doesn't have to rediscover it.
 
 ---
 
@@ -163,13 +236,13 @@ consumes: `workforce`, `collections`, `submissions`, `settings`, `user_roles`, `
 emits: none directly (the L1 agent it embeds, F18 `InsightsStrip`, does emit — see below)
 udr fields: none
 gates: Chief session
-status: **substantially de-fragmented since the previous audit** — the Phase 3 org-admin module split landed. `ChiefDashboardView.tsx` is now 1,169 lines (down from ~1,900; up slightly from 1,153 at the last snapshot for the `CategoryManagerPanel` wiring below) and composes 9 sibling panels directly imported from `src/modules/org-admin/components/dashboard/`: `SubmissionsPanel`, `PendingResidentsPanel`, `WorkforceRegistryPanel`, `AnnouncementsAdminPanel`, `RoleDelegationPanel`, `CollectionSettingsPanel`, `FormsBuilderPanel`, `IntegrationsPanel`, and **`CategoryManagerPanel`** (new this pass — see the "Categories" tab paragraph in S4 below; the previous registry snapshot never actually carried an entry for it at all despite it already existing on disk — see this file's intro note), plus 4 lazy-loaded: `MultiRosterManagerView`, `TenantCustomizationView`, `TemplateManagerView`, and **`KnowledgePackManagerView`** (also lazy-loaded here; missing from the previous snapshot's list even though it already existed on disk). **Correction**: the previous snapshot's list also named `TenantUpgradeCheckoutModal` as one of this component's lazy imports — re-checked directly this pass and that's not accurate: `ChiefDashboardView.tsx` does not import it at all; it's opened one level down, from inside `TemplateManagerView.tsx` (see F13). Still not a pure composition shell (1,169 lines still holds substantial cross-panel state/handlers), so still marked `fixing` rather than fully `stable` — but this is real, confirmed progress, not a re-label. Also now renders **F18 `InsightsStrip`** between the KPI cards and the tab switcher (the living-system spec's Dashboard-module row: "insight strips, module tiles, tenant switcher").
+status: **[43-snapshot figures superseded: 1,169 lines / 9 panels]** `ChiefDashboardView.tsx` is now **1,339 lines** (grown from 1,169 at the 43-snapshot) with an **18-value `activeTab` union** (`submissions | pending | workforce | announcements | roles | knowledge | roster | customization | templates | forms | integrations | categories | scheduling | meetings | clinical-writing | agents | activity | settings`, confirmed by direct read of the `useState` declaration), up from the 43-snapshot's smaller set. Directly-imported panels confirmed this pass (from `src/modules/org-admin/components/dashboard/`): `SubmissionsPanel`, `PendingResidentsPanel`, `WorkforceRegistryPanel`, `AnnouncementsAdminPanel`, `RoleDelegationPanel`, `CollectionSettingsPanel`, `FormsBuilderPanel`, `IntegrationsPanel`, `CategoryManagerPanel`, and **new this pass**: `AgentRegistryPanel` (S6) and `ActivityLogPanel` (S2). The 4 previously-confirmed lazy-loaded views (`MultiRosterManagerView`, `TenantCustomizationView`, `TemplateManagerView`, `KnowledgePackManagerView`) were not re-verified line-by-line this pass but their tabs remain in the `activeTab` union; `SchedulingBuilderView`/`MeetingsPanel`/`ClinicalWritingPanel` (M16/M17/M18) are also composed here, per those modules' own "wired into ChiefDashboardView's tab" status, not independently re-confirmed as lazy vs. eager this pass. Still not a pure composition shell — now larger than the 43-snapshot, not smaller — so still marked `fixing` rather than `stable`. Also renders **F18 `InsightsStrip`** between the KPI cards and the tab switcher, unchanged.
 
 ### F10 Org-Admin: Multi-Roster Manager (HITL roster editor)
 layer: L5
 face: org-admin
 path: `src/modules/org-admin/components/dashboard/MultiRosterManagerView.tsx`
-owner engine: babsbrain-2 (via `roster-parser`)
+owner engine: none — intelligence/automation layer, concretely the `roster-parser` Edge Function (E4)
 tenant scope: org
 consumes: `raw_roster_uploads`, `combined_master_rosters`, `roster_types`, `workforce`
 emits: none
@@ -217,7 +290,7 @@ status: stable — **path corrected** (moved from `src/components/`).
 layer: L5
 face: doctor
 path: `src/modules/org-admin/components/ComplianceNudgesView.tsx`
-owner engine: babsbrain-2 (conceptually — "submission chaser" per spec §7; **note this is a distinct, older client-side derivation, not the same code as the new L1 `submissionChaserAgent.ts` below** — the two currently coexist unmerged)
+owner engine: none — intelligence/automation layer (conceptually "submission chaser" per the living-system spec §7, itself superseded — see Decision 1 note above; **note this is a distinct, older client-side derivation, not the same code as the new L1 `submissionChaserAgent.ts` below** — the two currently coexist unmerged)
 tenant scope: individual (per-resident)
 consumes: `dissertations`, `case_reports`, `exam_readiness`, `settings`, `collections` (via `deriveNudges`)
 emits: none
@@ -265,7 +338,7 @@ status: stable — **new since the previous snapshot**, not part of the task's b
 layer: L5
 face: org-admin
 path: `src/modules/shared/ui/InsightsStrip.tsx`
-owner engine: babsbrain-2
+owner engine: none — intelligence/automation layer, concretely `submissionChaserAgent.ts` (A1)
 tenant scope: org
 consumes: `insights` (via `getActiveInsights`), triggers `A1` (`runSubmissionChaser`) on mount
 emits: none directly (the agent it triggers emits `insight.generated` — see A1)
@@ -293,7 +366,7 @@ status: stub — read-only. Sibling to org-admin's `IntegrationsPanel` (M14 belo
 layer: L4
 face: doctor, org-admin
 path: `src/modules/announcements/components/AnnouncementBoardView.tsx` (instance/consumption view); **builder now exists** at `src/modules/org-admin/components/dashboard/AnnouncementsAdminPanel.tsx`
-owner engine: babsbrain-2 (target)
+owner engine: none — intelligence/automation layer (target; no in-repo agent implemented yet)
 tenant scope: org
 consumes: `announcements` (tenant-scoped, migration 11), `announcement_reads`
 emits: none today (spec wants `module.configured`/broadcast events — not implemented; `event_log`/`eventBus.ts` now exist but nothing in this module calls `emitEvent`)
@@ -308,7 +381,7 @@ This "module" is entirely L5 faces (login/landing screens), not an L4 organ with
 layer: L4
 face: doctor, org-admin
 path: `src/modules/billing/components/UpgradeCheckoutModal.tsx`, `src/modules/billing/lib/useWorkspaceQuota.ts`
-owner engine: babsbrain-2 (target — "payment watcher")
+owner engine: none — intelligence/automation layer (target — "payment watcher" concept; no in-repo agent implemented yet)
 tenant scope: individual (per-resident quota) and org (tenant plan)
 consumes: `ai_action_logs`, `user_subscriptions`, `tenants.plan_type`
 emits: none (spec wants `payment.succeeded`/`plan.changed` — not implemented as events; `eventBus.ts`'s `EventType` union already includes `billing.checkout_started`/`billing.subscription_activated`/`billing.subscription_cancelled`/`billing.quota_exhausted` for when this is wired)
@@ -320,7 +393,7 @@ status: stable — unchanged in this pass. Now that `integrations_catalog` (M14)
 layer: L4
 face: doctor, org-admin
 path: `src/modules/casebook-logbook/components/{CasebookBuilderView,CasebookWorkspaceView}.tsx`, `src/modules/casebook-logbook/lib/{caseRubricEngine,casebookCopilot,familyTools}.ts`
-owner engine: privybrain-2
+owner engine: none — intelligence/automation layer, concretely `casebookCopilot.ts` (calls the `casebook-copilot` Edge Function, E3)
 tenant scope: org (institutional) and individual (doctor-owned workspaces, migration 25)
 consumes: `casebook_templates`, `casebook_workspaces`, `clinical_case_reports`, `clinical_logbooks`, `case_reports` (old MVP)
 emits: none
@@ -346,7 +419,7 @@ status: stable, unchanged in this pass structurally. One retrofit gap carried fo
 layer: L4
 face: doctor
 path: `src/modules/dissertation/components/DissertationAssistantView.tsx`, `src/modules/dissertation/lib/academicCopilot.ts`
-owner engine: privybrain-2
+owner engine: none — intelligence/automation layer, concretely `academicCopilot.ts` (calls the `dissertation-copilot` Edge Function, E1)
 tenant scope: org (institutional resident only — no doctor-owned path)
 consumes: `dissertations`, `dissertation_milestones`
 emits: none
@@ -358,7 +431,7 @@ status: stable, unchanged — still one hardcoded dissertation-tracking flow, no
 layer: L4
 face: doctor
 path: `src/modules/exam-readiness/components/ExamReadinessView.tsx`
-owner engine: babsbrain-2 (target — compliance checker)
+owner engine: none — intelligence/automation layer (target — "compliance checker" concept; no in-repo agent implemented yet)
 tenant scope: org
 consumes: `exam_readiness` (fixed named columns, migration 05)
 emits: none
@@ -370,7 +443,7 @@ status: stable — unchanged, deliberately not generalized (see CLAUDE.md).
 layer: L4
 face: doctor, org-admin
 path: `src/modules/form/components/{ResidentFormView,ResidentActivityGraph}.tsx`
-owner engine: babsbrain-2
+owner engine: none — intelligence/automation layer (target; no in-repo agent implemented yet)
 tenant scope: org
 consumes: `submissions`, `collections`, `rotations`; **now also writes (additively) into `form_entries`** via `src/modules/form/lib/formService.ts` — see M13
 emits: none as an event, but **now has a real, live dual-write into the generalized Forms scaffold** (M13) on every successful submission
@@ -382,7 +455,7 @@ status: stable but still **the single clearest example of a use-case wearing a m
 layer: L4
 face: doctor, org-admin
 path: `src/modules/knowledge-packs/components/{KnowledgeLibraryView,KnowledgePackManagerView}.tsx`
-owner engine: privybrain-2 (target)
+owner engine: none — intelligence/automation layer (target; no in-repo agent implemented yet)
 tenant scope: org
 consumes: `knowledge_packs`, `knowledge_pack_items`
 emits: none
@@ -394,7 +467,7 @@ status: stable, unchanged in this pass.
 layer: L4
 face: doctor, org-admin
 path: `src/modules/research/components/ResearchWorkspaceView.tsx`, `src/modules/research/lib/{folderStructure,researchCopilot,rubricEngine,templateEngine}.ts`
-owner engine: privybrain-2
+owner engine: none — intelligence/automation layer, concretely `researchCopilot.ts` (calls the `research-copilot` Edge Function, E2)
 tenant scope: org (institutional) and individual (doctor-owned, migration 25)
 consumes: `research_templates`, `research_workspaces`, `research_chapters`, `research_correction_logs`
 emits: none
@@ -408,7 +481,7 @@ status: stable, unchanged in this pass — still the module closest to the spec'
 layer: L4
 face: org-admin
 path: `src/modules/roster-engine/lib/uchRosterParser.ts` (lib only — see F10 for the UI, now in `src/modules/org-admin/components/dashboard/`, not this module's own folder)
-owner engine: babsbrain-2
+owner engine: none — intelligence/automation layer, concretely `uchRosterParser.ts` (calls the `roster-parser` Edge Function, E4)
 tenant scope: org
 consumes: `raw_roster_uploads`
 emits: none
@@ -420,7 +493,7 @@ status: fragmented, unchanged in substance — still no `components/` directory 
 layer: L4
 face: doctor, org-admin
 path: `src/modules/viva-simulator/components/OralExamSimulatorView.tsx`
-owner engine: privybrain-2
+owner engine: none — intelligence/automation layer (target; no dedicated AI Copilot lib identified in this module's own path)
 tenant scope: org
 consumes: `viva_vignettes` (tenant-scoped bank, migration 28), `viva_simulations` (scores)
 emits: none
@@ -432,7 +505,7 @@ status: stable, unchanged in this pass.
 layer: L4
 face: org-admin
 path: builder — `src/modules/org-admin/components/dashboard/FormsBuilderPanel.tsx`; data access — `src/modules/form/lib/formService.ts`; schema — `supabase/migrations/35_forms_pipelines.sql`, extended by `supabase/migrations/40_doctor_personal_forms.sql` and `supabase/migrations/42_form_instances_global_seed_and_content.sql`
-owner engine: babsbrain-2
+owner engine: none — intelligence/automation layer (target; no in-repo agent implemented yet)
 tenant scope: org, individual (doctor-owned, migration 40), and now **global/seed** (migration 42 — see below)
 consumes: `form_instances`, `form_entries`, `form_pipelines`
 emits: none (no event emission wired here yet)
@@ -461,18 +534,84 @@ path: schema — `supabase/migrations/41_scored_rubric_primitive.sql`; engine �
 owner engine: none declared yet (no `agent_manifests` row references this primitive)
 tenant scope: org, individual, and global (3-way ownership: `rubric_templates.tenant_id`/`.doctor_id` can independently be NULL or set — deliberately NOT the migration 25/31/40 doctor-owned-XOR-institutional CHECK, since a global template needs both columns NULL, a state that CHECK shape cannot express)
 consumes: `rubric_templates`, `rubric_sections`, `rubric_items`, `rubric_instances`
-emits: none
-udr fields: none
-gates: none — RLS is fully permissive on all 4 tables (including `rubric_instances`), same trust model as the rest of this schema, per the migration's own explicit instruction not to invent a new boundary here
-status: **stub — confirmed by direct repo-wide search this pass, flagging explicitly per this task's own instruction rather than marking `stable`.** `rubric_templates`/`rubric_sections`/`rubric_items`/`rubric_instances` and the `compute_rubric_totals(p_instance_id)` SQL/PLPGSQL RPC (server-side aggregation: sums each section's scored items against `max_points`, checks `pass_threshold`, flags any zero-scored item in an `all_items_required` section, derives a fixed 3-value `recommendation` band) all exist and are internally complete. But `RubricInstanceForm.tsx` — the only rendering UI for this primitive — is imported by **nothing**: a repo-wide grep for `RubricInstanceForm` outside its own file turns up exactly one hit, a comment in `scoredRubricEngine.ts`, not an actual import. No face (Chief dashboard, doctor workspace, or otherwise) opens this form, and no seed rubric content exists in `rubric_templates` — migration 41's own header explicitly declines to seed real rubric content, deferring to Dr. Olanipekun supplying authoritative WACP/OSCE/credentialing documents per CLAUDE.md's "Sourcing module content" policy. Migration 41 also carries its own "NOT APPLIED LIVE" header (see intro note) — so today this is schema-plus-library code with zero live rows and zero consumers, the newest addition to this registry's "built but unwired" gap list (see intro "biggest remaining gap" note).
+emits: none from this primitive's own engine directly; **A3 (`privybrain2_rubric_compliance_chaser`) reads `rubric_instances` and emits `insight.generated`** — see A3 below
+udr fields: `udr.ts`'s `entries[]` includes `rubric_instance` rows via `fetchRubricInstances`, scoped by `assessor_workforce_id`/`assessor_doctor_id` (2026-08-17 extension — new since the 43-snapshot, see S3)
+gates: **[43-snapshot superseded: "RLS is fully permissive on all 4 tables"]** — migration 57 gave all 4 tables a real doctor-owned RLS boundary: `rubric_templates` a direct 3-state check, `rubric_sections`/`rubric_items` a join-based check back to their owning template, and `rubric_instances` its own 4th shape (`tenant_id IS NOT NULL OR assessor_workforce_id IS NOT NULL OR (assessor_doctor_id IS NOT NULL AND auth.uid() = assessor_doctor_id)` — flagged in migration 57's own header as compensating for a real pre-existing gap in migration 41: `rubric_instances` has two separate assessor columns with no ownership-exclusivity CHECK constraint between them). Institutional and global-template rows remain exactly as permissive as before — only a purely doctor-claimed row now requires the matching `auth.uid()`.
+status: **[43-snapshot carried forward — still real/unwired at the primitive-usage level; RLS gap above is now closed, usage gap is not]** `rubric_templates`/`rubric_sections`/`rubric_items`/`rubric_instances` and the `compute_rubric_totals(p_instance_id)` SQL/PLPGSQL RPC (server-side aggregation: sums each section's scored items against `max_points`, checks `pass_threshold`, flags any zero-scored item in an `all_items_required` section, derives a fixed 3-value `recommendation` band) all exist and are internally complete. But `RubricInstanceForm.tsx` — the only rendering UI for this primitive — is imported by **nothing**: a repo-wide grep for `RubricInstanceForm` outside its own file turns up exactly one hit, a comment in `scoredRubricEngine.ts`, not an actual import. No face (Chief dashboard, doctor workspace, or otherwise) opens this form, and no seed rubric content exists in `rubric_templates` — migration 41's own header explicitly declines to seed real rubric content, deferring to Dr. Olanipekun supplying authoritative WACP/OSCE/credentialing documents per CLAUDE.md's "Sourcing module content" policy. Migration 41 also carries its own "NOT APPLIED LIVE" header (see intro note) — so today this is schema-plus-library code with zero live rows and zero consumers, the newest addition to this registry's "built but unwired" gap list (see intro "biggest remaining gap" note).
+
+**Known data-integrity gap — `rubric_instances` assessor ownership (per Product Constitution Slice 2,
+Decision 2)**: `rubric_instances` carries two separate assessor columns, `assessor_workforce_id` and
+`assessor_doctor_id`, with **no exclusivity constraint between them** — unlike every other
+doctor/institutional ownership pair in this schema (`personal_tasks`, `wellbeing_entries`,
+`focus_sessions`, `scheduling_instances`, `meeting_series`, `clinical_document_types` all have an
+explicit CHECK enforcing exactly one owner is set). Migration 57's own header independently names
+this "a real gap in migration 41, not introduced here" and compensates for it only at the RLS level
+(see `gates` above), not at the schema level. No schema change or migration is made in this slice —
+recorded here as a known gap with the following constraints on how it may eventually be closed:
+- Intended ownership semantics must be confirmed first (can an instance legitimately have both a
+  workforce assessor and a doctor assessor at once — e.g., co-assessment — or should this always have
+  been an exactly-one-of pair like every sibling table?) before any constraint is designed.
+- Any live/current rows must be checked through an approved process before adding a constraint —
+  per earlier passes' own findings, `rubric_instances` is believed to have zero live rows, but that
+  belief is itself unverified live-database state, not a basis for assuming a constraint would be
+  safe to add without checking first.
+- The eventual design should prevent ambiguous simultaneous assessor ownership, whatever the
+  confirmed intended semantics turn out to require.
+- Exact nullability/XOR rules require a separately reviewed specification — not decided here.
+- **Further expansion of this assessor model is frozen** until the integrity question above is
+  resolved — no new code should add a third assessor-shaped column or a new consumer that assumes
+  today's two-column shape is safe to build on.
+- **This is not a Workforce V1 blocker** unless Workforce Operations begins depending on this rubric
+  ownership path — today it does not (Workforce V1's own path runs through `submissions`/`workforce`,
+  not `rubric_instances`).
 
 ### M16 Scheduling
 layer: L4
-status: **scoped, not yet built.** `docs/SCHEDULING_MODULE_SCOPING.md` (new this pass) maps the living-system spec's §7/§8.2 "Scheduling" capability (duty roster, on-call, clinic sessions, branch coverage, equipment/room booking) against the app's actual existing roster features — `raw_roster_uploads`/`combined_master_rosters`/`roster_types` (migration 10, see M11 Roster Engine above) — and concludes those are a real, actively-used AI-assisted HITL document-parsing pipeline for 5 UCH-specific formats, structurally unlike Forms' "one hardcoded flat-field form" starting point, so a straight lift into a generic `form_instances`-style model would misrepresent what it actually does. The document proposes a target shape and migration paths but **deliberately writes no schema, no migration, and no application code** — confirmed on disk: no `44_scheduling_module.sql` or any migration past 43 exists, and no `src/modules/scheduling/` directory exists. Migration 42's own header independently reached the same "needs its own scoping pass first" conclusion in passing before this document did the actual pass. Nothing to register as a face/organ/spine component yet — this entry exists so the registry doesn't silently omit a capability the spec names, per this file's own §7 format.
+face: org-admin (no member-facing face — see gap note)
+path: builder/panel — `src/modules/scheduling/components/SchedulingBuilderView.tsx`; data access — `src/modules/scheduling/lib/schedulingService.ts`; schema — `supabase/migrations/44_scheduling_module.sql`, RLS extended by `57_doctor_ownership_rls_newer_modules.sql`
+owner engine: none — intelligence/automation layer (target; no in-repo agent implemented yet)
+tenant scope: org, and schema-only doctor-owned (`doctor_id` column exists on `scheduling_instances`/`scheduling_entries`; no doctor-scoped UI consumes it yet)
+consumes: `scheduling_instances`, `scheduling_entries`, `scheduling_pipelines`
+emits: `instance.created` on `event_log`, confirmed via `schedulingService.ts`'s `createSchedulingInstance` (see S2)
+udr fields: `udr.ts`'s `pipelines[]` reads `scheduling_pipelines` for the caller's tenant (extended 2026-08-17, see S3); `instances[]` deliberately does NOT include `scheduling_instances` — `udr.ts`'s own header explains why (a scheduling instance is shared tenant/doctor-scope config, not a personal record, unlike `research_workspaces`/`casebook_workspaces`)
+gates: none
+status: **[43-snapshot, superseded: previously "scoped, not yet built"] — now real, additive, built exactly as scoped.** `docs/SCHEDULING_MODULE_SCOPING.md`'s recommended path (b) was implemented: `raw_roster_uploads`/`combined_master_rosters`/`MultiRosterManagerView.tsx`/`uchRosterParser.ts` (M11 Roster Engine) remain completely untouched — this is a fully separate, parallel system, not a replacement or a connection to it (see the Product Constitution's M4 on why that connection is deliberately not being made yet). RLS: `scheduling_instances`/`scheduling_entries` got a real `auth.uid() = doctor_id` boundary in migration 57 (shapes (a)/(b) in that migration's header); `scheduling_pipelines` was explicitly left permissive (57's header: "no doctor-owned pipeline concept exists yet"). Wired into `ChiefDashboardView.tsx`'s `'scheduling'` tab (confirmed in the `activeTab` union, F9) — **no `/workspace/scheduling` or `/doctor/scheduling` route exists**, so this module has zero member-facing or individual-doctor-facing surface today, org-admin only. Disposition: see the product-disposition table above — HIDE for V1 (not in the Constitution's named V1 list), keep built.
 
 ### M17 Meetings & Actions
 layer: L4
-status: **gap — not built, and not found in this pass.** The living-system spec (§7) names Meetings & Actions as one of its 10 target capability modules. No `meetings`-related migration exists in `supabase/migrations/` (confirmed: highest migration on disk this pass is `43_seed_generic_research_templates.sql`, no `45_*` file), and no `src/modules/meetings/` directory exists on disk. A sibling worktree was flagged as possibly landing this module around the same time as this pass's work, but nothing under that name has merged to this branch as of this refresh — not registered as built, and not invented here. Re-check on the next registry refresh once/if it lands.
+face: org-admin (no member-facing face — see gap note)
+path: builder/panel — `src/modules/meetings/components/MeetingsPanel.tsx`; data access — `src/modules/meetings/lib/meetingsService.ts`; schema — `supabase/migrations/45_meetings_module.sql`, RLS extended by `57_doctor_ownership_rls_newer_modules.sql`; its rung-1 agent — see A2 below
+owner engine: none — intelligence/automation layer, concretely `meetingActionAgent.ts` (A2) for the action-tracker intelligence; no AI Copilot for meeting content itself
+tenant scope: org, and schema-only doctor-owned (same posture as M16 — `doctor_id` columns exist, no doctor-scoped UI)
+consumes: `meeting_series`, `meetings`, `meeting_actions`
+emits: `instance.created` (series creation), `meeting.scheduled` (occurrence creation) — both confirmed in `meetingsService.ts`; `meeting.action.owed` is **not** emitted at action-creation time (the file's own comment documents a deliberate design change: firing it at creation would be premature since most actions aren't yet overdue) — it's emitted instead by the separate `meetingActionAgent.ts` (A2) when an action is actually found overdue
+udr fields: `udr.ts`'s new `meetings[]` field (2026-08-17 extension, see S3) — scoped to "meetings this person owes an action on" via `meeting_actions.owner_workforce_id`, matching spec §5's own framing; returns `[]` today since `meeting_actions` has no confirmed live rows yet (schema/path real, no known producer of real usage)
+gates: none
+status: **[43-snapshot, superseded: previously "gap — not built, not found"] — now real, built exactly as scoped, and the first of the newer modules to gain its own rung-1 agent.** `meeting_series`/`meetings`/`meeting_actions` all exist (migration 45), seeded with one global "Standing Departmental Meeting" template. RLS: `meeting_series`/`meetings` got the real doctor-owned boundary in migration 57; `meeting_actions` was explicitly left permissive (57's header: "has ONLY owner_workforce_id, no doctor_id column at all — no doctor-owned row shape to protect"). Wired into `ChiefDashboardView.tsx`'s `'meetings'` tab — same no-member-facing-route gap as M16. **New since the 43-snapshot**: `src/modules/shared/lib/meetingActionAgent.ts` (A2 below, migration 50) is a real rung-1 agent that reads overdue `meeting_actions` and raises a dismissible insight. Disposition: HIDE for V1 per the Constitution's M7 (explicitly named — "park Meetings/Clinical Writing/Research as-is for Workforce V1, do not perform V1-adjacent feature development in them").
+
+### M18 Clinical & Professional Writing
+layer: L4
+face: org-admin (no member-facing face — see gap note)
+path: builder/panel — `src/modules/clinical-writing/components/ClinicalWritingPanel.tsx`; data access — `src/modules/clinical-writing/lib/clinicalWritingService.ts`; schema — `supabase/migrations/48_clinical_writing_module.sql`, RLS extended by `57_doctor_ownership_rls_newer_modules.sql`
+owner engine: none — intelligence/automation layer (target; no in-repo agent implemented yet — the living-system spec's engine-assignment convention this entry previously cited is itself superseded, see Decision 1 note above)
+tenant scope: org, and schema-only doctor-owned (same posture as M16/M17)
+consumes: `clinical_document_types`, `clinical_documents`
+emits: `instance.created` (document-type creation), `entry.submitted` (document creation) — both confirmed in `clinicalWritingService.ts`
+udr fields: `udr.ts`'s `entries[]` includes `clinical_document` rows via `fetchClinicalDocuments`, scoped by `created_by_workforce_id` (2026-08-17 extension, see S3) — a real, working read path, distinct from `instances[]`, which deliberately excludes `clinical_document_types` for the same shared-config-not-personal-record reasoning as M16's `scheduling_instances`
+gates: none
+status: **new entry this pass — this module did not exist in the 43-snapshot and had no registry entry at all** (migration 48 postdates it). Real, additive: `clinical_case_reports`/`case_reports`/`casebook_templates`/`casebook_workspaces`/`DissertationAssistantView.tsx`/`dissertations` are all confirmed completely untouched by this module, per its own migration header and `docs/CLINICAL_WRITING_MODULE_SCOPING.md`'s explicit recommendation to keep case write-ups owned by Casebook & Logbook rather than folding them in here. Seeded with 3 global document types (Referral Letter, SOP/Protocol Template, General Clerking Template), each a structured `body_template` of guided fields — not free-text word-processing, though it is a native long-form drafting surface. Explicitly does NOT attach to the Scored Rubric primitive (M15) in this first slice, per the migration's own header, despite `clinical_documents.subject_ref` following the same convention `rubric_instances.subject_ref` uses. Version history (`clinical_document_versions`) was explicitly skipped in this first slice — `clinical_documents.updated_at` (plain overwrite) is the only history today. Wired into `ChiefDashboardView.tsx`'s `'clinical-writing'` tab — same no-member-facing-route gap as M16/M17. Disposition: HIDE for V1 per the Constitution's M7 (named explicitly alongside Meetings/Research). Also flagged in the product-disposition table above as UNCERTAIN long-term — a native structured-document-authoring surface is close to the boundary the Constitution's §7 warns against ("a word processor"), worth an explicit future review rather than an assumption either way.
+
+### M19 Personal Productivity
+layer: L4 (folded into the `shared` module folder, not its own — see path)
+face: doctor, org-admin (fully member-facing, unlike M16–M18)
+path: UI — `src/modules/shared/ui/{FocusModeView,WellbeingView,PersonalTasksView,TeamDirectoryView}.tsx`; data access — `src/modules/shared/lib/{focusSessionService,wellbeingService,personalTasksService}.ts` (Team Directory needs no service — a read-only view over `workforce`); schema — `supabase/migrations/51_personal_productivity_module.sql`
+owner engine: none declared
+tenant scope: workforce-owned (permissive) and doctor-owned (real `auth.uid() = doctor_id` RLS boundary, confirmed in migration 51 itself — this module shipped WITH real doctor-owned RLS from day one, unlike M16–M18's schema-only doctor columns)
+consumes: `personal_tasks`, `wellbeing_entries`, `focus_sessions` (Team Directory reads `workforce` directly, no new table)
+emits: none confirmed (no `emitEvent` call found in any of the three service files)
+udr fields: none
+gates: none
+status: **new entry this pass — no registry entry existed for this at the 43-snapshot** (migration 51 postdates it, and this module doesn't correspond to any of the living-system spec's 10 named capabilities at all — it was sourced from an unrelated Flutter product concept study, per the migration's own header). **Confirmed fully live-routed**, unlike M16–M18: `App.tsx` wires `/workspace/{focus,wellbeing,tasks,team}` and `/doctor/{focus,wellbeing,tasks}` (doctor routes redirect a linked doctor to the `/workspace/*` equivalent, same pattern as research/casebook), and `Navbar`/`DoctorHomeView` navigation callbacks target these routes directly — this is real, member-facing, in-nav functionality today, the only one of the four newest modules that is. Ownership shape is deliberately `workforce_id`/`doctor_id` (not `tenant_id`/`doctor_id`) since a personal task/mood entry/focus session belongs to exactly one person, never "the org" — migration 51's own header explains why this differs from every other module's ownership convention. **Constitutional flag, not acted on in this slice**: the Product Constitution's §7 names "a generic task manager" as something Workspc deliberately does not build, and its M6 explicitly calls for this module to be HIDE/FROZEN from Workforce V1 navigation — that is a navigation change, out of Slice 2's scope (Slice 2 may not modify navigation), so it is recorded here as a gap for a future slice, not fixed now.
 
 ---
 
@@ -493,14 +632,14 @@ status: **fragmented, unchanged in substance** — still one large god-file doin
 ### S2 Event Bus
 layer: L3
 face: shared
-path: `src/modules/shared/lib/eventBus.ts`
+path: `src/modules/shared/lib/eventBus.ts`; read-out face — `src/modules/org-admin/components/dashboard/ActivityLogPanel.tsx` via `src/modules/shared/lib/auditLogService.ts`
 owner engine: none
 tenant scope: any
-consumes: nothing (write-only)
+consumes: nothing directly (still write-only at the bus level — see gap note)
 emits: `event_log` rows (any string; `EventType` union in this file covers §6's vocabulary for editor autocomplete only, not DB-enforced)
 udr fields: none
 gates: none
-status: **real, but minimal — no longer absent, still far from a real bus.** Backed by `event_log` (migration 32). This is a plain typed insert wrapper (`emitEvent`) — explicitly **no pub/sub, no listeners, no in-process dispatch**, per the file's own header. Nothing in this app currently reads `event_log` back out. Confirmed exactly one real caller today: `submissionChaserAgent.ts`'s `insight.generated` emission (A1 below) — every other module (Announcements, Billing, Casebook, Dissertation, Research, Forms, Integrations) has an `EventType` reserved for it in the union but does not call `emitEvent` anywhere yet.
+status: **[43-snapshot, superseded: previously "one real caller, nothing reads it back"] — materially more real this pass, on both the write and read side.** Still a plain typed insert wrapper (`emitEvent`) — explicitly no pub/sub, no listeners, no in-process dispatch, per the file's own header; that architectural fact is unchanged. What changed: **confirmed 8 real call sites now**, not 1 — `src/lib/databaseService.ts` (`entry.updated`/`entry.submitted` in `submitRoster`, `ai.action_completed` in `logAiAction`, `tenant.provisioned` in `createTenantWithAdmin`, `instance.created` in both `createResearchWorkspace`/`createCasebookWorkspace`, `academic.signoff_recorded` in `addLogbookSignoff`), `schedulingService.ts` (`instance.created`), `meetingsService.ts` (`instance.created`, `meeting.scheduled`), `clinicalWritingService.ts` (`instance.created`, `entry.submitted`), and all three L1 agents (`submissionChaserAgent.ts`, `meetingActionAgent.ts`, `rubricComplianceAgent.ts` — `insight.generated`/`meeting.action.owed`). **`event_log` also has a real reader now**: `ActivityLogPanel.tsx` (new since the 43-snapshot, wired into `ChiefDashboardView.tsx`'s `'activity'` tab) lists recent tenant-scoped events via `auditLogService.listRecentEvents`, with a collapsible raw-payload view per row — a genuine, if simple, activity trail, closing the "nothing reads this back out" gap `eventBus.ts`'s own header still describes as future work. Still not a bus in the pub/sub sense — this is one write path plus one read face, not in-process dispatch to multiple subscribers.
 
 ### S3 Unified Doctor Record (UDR)
 layer: L3
@@ -508,11 +647,17 @@ face: shared
 path: `src/modules/shared/lib/udr.ts`
 owner engine: none
 tenant scope: any
-consumes: `workforce`, `doctor_profiles`, `tenants`, `research_workspaces`, `casebook_workspaces`, `submissions`, `case_reports`, `dissertations`, `dissertation_milestones`, `exam_readiness`, `user_subscriptions`
+consumes: `workforce`, `doctor_profiles`, `tenants`, `research_workspaces`, `casebook_workspaces`, `submissions`, `case_reports`, `dissertations`, `dissertation_milestones`, `exam_readiness`, `user_subscriptions`, **now also** `insights`, `clinical_documents`, `rubric_instances`, `meeting_actions`, `meetings`, `form_pipelines`, `scheduling_pipelines`
 emits: nothing (pure read composition, no writes)
-udr fields: `identity`, `tenant`, `instances[]`, `entries[]`, `academic`, `billing` — all real; **`insights[]` is confirmed still hardcoded to the literal empty array `[]`** (see below)
+udr fields: `identity`, `tenant`, `instances[]`, `entries[]`, `academic`, `billing`, **`insights[]` — now real** (see below), **`meetings[]`, `pipelines[]` — new this pass, real**, `audit[]` — confirmed still always `[]`, by design (see below)
 gates: none
-status: **real since this wave — no longer absent, but with one specifically-checked gap.** `getUnifiedDoctorRecord(client, ref)` is a deliberate **read-only composition function**, not new storage — it queries tables that already exist and reshapes them into §5's `udr.*` shape; it performs no writes and creates no new tables, per its own header's explicit rationale (migrating every existing table into a truly generic schema would be a high-risk live-production rewrite, out of scope). Accepts either a `workforceId` or `doctorId` ref and correctly unions both when a doctor is linked to a workforce row (`workforce.doctor_id`). **Directly checked per this task's instruction**: `insights[]` is typed `UdrInsight = unknown` and the function's return statement ends with a literal `insights: []` — it does **not** read the new `insights` table (migration 37) at all, despite that table now existing and being actively written by A1/read by F18. This is a real, currently-unclosed gap: the `insights` table and `InsightsStrip.tsx` (F18) read/write it directly, bypassing this composition layer entirely, rather than `udr.ts` being the single place `insights[]` is assembled as §5 describes. Also unaddressed: `entries[]` deliberately does not expand into `research_chapters`/`clinical_case_reports` (kept at the coarser `instances[]` granularity), and `billing` only reflects `workforce_id`-scoped subscriptions, never `scope='tenant'` org-wide ones or an unlinked doctor's billing.
+status: **[43-snapshot, superseded: "`insights[]` hardcoded to `[]`, `meetings[]`/`pipelines[]`/`audit[]` didn't exist"] — the file's own header documents a 2026-08-17 extension that closes most of this**, independently confirmed by reading the current source, not just the header's own claim:
+- **`insights[]` is now real**, not hardcoded — `fetchInsights`/`fetchInsightsForDoctor` query the `insights` table directly (migration 37/49), scoped by `workforce_id` or `doctor_id`. The workforce path has real data (Submission Chaser, A1, writes it); the doctor-scoped path is no longer merely theoretical either — `rubricComplianceAgent.ts` (A3, migration 50) is confirmed to write doctor-scoped insights in its "unlinked doctor sweep" mode, per that migration's own header.
+- **`meetings[]` is new and real** (not present in the 43-snapshot at all, since Meetings didn't exist yet) — scoped to "meetings this person owes an action on" via `meeting_actions.owner_workforce_id`, matching spec §5's framing exactly. Returns `[]` in practice today since no confirmed live `meeting_actions` rows exist yet — a real path with, as far as this pass can confirm from source alone, no live producer yet.
+- **`pipelines[]` is new and real** — reads `form_pipelines`/`scheduling_pipelines` scoped through the owning instance's `tenant_id`. `udr.ts`'s own header is candid that `ranAt` really means "defined/created at," not a genuine per-execution timestamp, since no per-run pipeline-execution log exists anywhere in this schema.
+- **`audit[]` is confirmed still always `[]`**, and unlike the three fields above, this one has **no real backing data source at all** per the file's own header: `event_log` has no per-person actor column, so scoping it to a person is not possible without misattributing every other tenant member's events. This remains the one genuinely unclosed field in this section — not a wiring gap like the others were, but a real missing-column gap in `event_log` itself.
+- `instances[]` deliberately still does NOT expand to cover `scheduling_instances`/`clinical_document_types` (see M16/M18's own udr-fields notes for why — shared config, not personal records) and still does not expand into `research_chapters`/`clinical_case_reports` at the sub-instance level (kept at the coarser `instances[]` granularity, unchanged from the 43-snapshot).
+- `billing` is unchanged from the 43-snapshot: only reflects `workforce_id`-scoped subscriptions, never `scope='tenant'` org-wide ones or an unlinked doctor's billing.
 
 ### S4 Tenant Config Service
 layer: L3
@@ -528,11 +673,11 @@ face: shared
 path: `src/modules/shared/lib/integrationsService.ts`; schema `supabase/migrations/33_integrations_layer.sql`
 status: **scaffold exists — no longer absent, but still not a real integrations layer.** `integrations_catalog` (reference data, 8 seeded rows) and `integrations_connections` (per-tenant-or-per-individual status, 3-way owner-shape CHECK constraint mirroring migration 30's `user_subscriptions.scope` pattern) both exist and are read by two UI panels (M14/F19). Zero real OAuth/API integration flow exists for any of the 7 non-native rows — this remains a read-only catalog/status scaffold, exactly as its own migration header describes it ("a SCAFFOLD only"). Flutterwave/Paystack remain hardcoded directly into the billing Edge Functions rather than actually routed through this layer — the `payment-processor` catalog row documents that live integration but doesn't mediate it.
 
-### S6 Agent Manifests (new)
+### S6 Agent Manifests
 layer: L3
 face: shared
-path: schema `supabase/migrations/34_agent_manifests.sql`, seed additions in `supabase/migrations/37_insights.sql`
-status: **new this wave.** A lookup/registry table (`agent_manifests`: `agent_key`, `name`, `owner_engine`, `rung`, `description`, `gates`, `tenant_scope`) intended per spec §4/§7 as the place AI-assisted actions and agents formally declare their rung. Seeded with 10 rows (migration 34) documenting the existing 4 AI Copilot Edge Functions' individual actions (verbatim action-key strings from each function's own request contract, not invented), plus 1 more row (migration 37) for the new `babsbrain2_submission_chaser` agent (A1). **Important limitation, directly checked**: confirmed via repo-wide search that `agent_manifests` is referenced only by `src/modules/shared/lib/eventBus.ts`, `submissionChaserAgent.ts`, and `InsightsStrip.tsx` (via comments/the `insights.agent_key` foreign key) — **no Edge Function (`dissertation-copilot`, `research-copilot`, `casebook-copilot`, `roster-parser`) actually reads or writes this table at runtime.** It is a static reference/documentation table today, not yet a live orchestration registry; the FK relationship from `insights.agent_key → agent_manifests.agent_key` (migration 37) is the only place a manifest row is structurally required to exist.
+path: schema `supabase/migrations/34_agent_manifests.sql`, seed additions in `supabase/migrations/37_insights.sql` and `supabase/migrations/50_second_wave_agents.sql`; UI — `src/modules/org-admin/components/dashboard/AgentRegistryPanel.tsx`
+status: **[43-snapshot carried forward, row count updated]** A lookup/registry table (`agent_manifests`: `agent_key`, `name`, `owner_engine`, `rung`, `description`, `gates`, `tenant_scope`) intended per spec §4/§7 as the place AI-assisted actions and agents formally declare their rung. Seeded with 10 rows (migration 34, the existing 4 AI Copilot Edge Functions' individual actions) + 1 row (migration 37, Submission Chaser, A1) + **2 more rows this pass (migration 50)**: `babsbrain2_meeting_action_chaser` (A2 below) and `privybrain2_rubric_compliance_chaser` (A3 below) — **13 rows total**, all rung 0 or rung 1; migration 50's own header is explicit that climbing to rung 2+ was deliberately deferred, not attempted. **Limitation carried forward, re-confirmed this pass**: still no Edge Function (`dissertation-copilot`, `research-copilot`, `casebook-copilot`, `roster-parser`) reads or writes this table at runtime — it remains a static reference/documentation table for the 3 real L1 agents (A1/A2/A3) and the `insights.agent_key` foreign key, not a live orchestration registry. `AgentRegistryPanel.tsx` (wired into `ChiefDashboardView.tsx`'s `'agents'` tab) is a read-only viewer over this table — confirmed present, not independently line-audited this pass.
 
 ---
 
@@ -542,7 +687,7 @@ status: **new this wave.** A lookup/registry table (`agent_manifests`: `agent_ke
 layer: L2
 face: shared
 path: `supabase/functions/dissertation-copilot/index.ts`
-owner engine: privybrain-2
+owner engine: none — this Edge Function is itself the concrete in-repo AI implementation
 rung: 0
 tenant scope: org
 consumes: `dissertations` content (client-supplied), `tenant_ai_adaptation_rules` (feature_key `academic_copilot`)
@@ -555,7 +700,7 @@ status: fragmented, unchanged in this pass. Now has 3 corresponding rows in `age
 layer: L2
 face: shared
 path: `supabase/functions/research-copilot/index.ts`
-owner engine: privybrain-2
+owner engine: none — this Edge Function is itself the concrete in-repo AI implementation
 rung: 0
 tenant scope: org, individual
 consumes: `research_templates` (dynamic prompt build via `_shared/researchRubric.ts`), `tenant_ai_adaptation_rules` (feature_key `research_copilot`)
@@ -568,7 +713,7 @@ status: fragmented, unchanged in this pass. 3 corresponding `agent_manifests` ro
 layer: L2
 face: shared
 path: `supabase/functions/casebook-copilot/index.ts`
-owner engine: privybrain-2
+owner engine: none — this Edge Function is itself the concrete in-repo AI implementation
 rung: 0-1
 tenant scope: org, individual
 consumes: `casebook_templates` (via `_shared/casebookRubric.ts`), `tenant_ai_adaptation_rules` (feature_key `casebook_copilot`)
@@ -581,7 +726,7 @@ status: fragmented, unchanged in this pass. 3 corresponding `agent_manifests` ro
 layer: L2
 face: shared
 path: `supabase/functions/roster-parser/index.ts`
-owner engine: babsbrain-2
+owner engine: none — this Edge Function is itself the concrete in-repo AI implementation
 rung: 0
 tenant scope: org
 consumes: `raw_roster_uploads` text, `tenant_ai_adaptation_rules` (feature_key `roster_parser`)
@@ -598,7 +743,7 @@ status: fragmented, unchanged in this pass. 1 corresponding `agent_manifests` ro
 layer: L1
 face: none (see F18 for its dashboard face)
 path: `src/modules/shared/lib/submissionChaserAgent.ts`; manifest seed `supabase/migrations/37_insights.sql`; dedup fix `supabase/migrations/38_insights_dedup_index.sql`
-owner engine: babsbrain-2
+owner engine: none — this agent is itself the concrete in-repo implementation (its `agent_key`/`owner_engine` DB values still literally read `babsbrain2_submission_chaser`/`babsbrain-2` — see Decision 1 note above)
 rung: **1** (per the seeded `agent_manifests` row: `agent_key = 'babsbrain2_submission_chaser'`, `owner_engine = 'babsbrain-2'`, `rung = 1`, `tenant_scope = 'org'`)
 tenant scope: org
 consumes: `collections` (currently-open, per tenant), `workforce` (active, per tenant), `submissions` (for the open collection), `insights` (for its own dedup check)
@@ -610,6 +755,32 @@ status: stable, new — **the first real agent in this app to run end-to-end thr
 **Scope, exactly as implemented** (confirmed by reading the source): one signal only — active workforce members with no `submissions` row yet for the tenant's currently-open `collections` row, and only once that collection's `deadline` has passed (the open/closed `status` flag and "past deadline" are independent in this app, same distinction `ChiefDashboardView.tsx` already treats separately). Not a general-purpose rules engine.
 
 **Idempotency, worth knowing exactly**: the dedup check is deliberately *not* the same formula as `getActiveInsights`'s "active" predicate (dismissed_at IS NULL AND cooldown_until has lapsed) — a literal reading of that formula would not be idempotent, since a freshly-inserted row's `cooldown_until` is 3 days in the future and would itself fail an "active" check, causing a same-day re-run to insert a second row. Instead, the insert-time dedup skips any subject with a not-yet-superseded row (not dismissed, OR dismissed but still inside its own cooldown). `cooldown_until` is left `null` at insert time (so a brand-new insight is immediately visible in F18) and is only set 3 days out when `dismissInsight()` is called. A genuine race (two near-simultaneous runs, e.g. a fast reload remounting `InsightsStrip` before the first run's insert was visible to the second run's dedup SELECT) was found live — 18 duplicate rows for 9 actually-pending residents — and fixed in migration 38 with a partial unique index (`(tenant_id, agent_key, subject_ref) WHERE dismissed_at IS NULL`) plus switching the insert to an `upsert(..., { ignoreDuplicates: true })` against that same conflict target.
+
+### A2 babsbrain2_meeting_action_chaser (Meeting Action Chaser)
+layer: L1
+face: none (surfaces via F18 `InsightsStrip`, same as A1)
+path: `src/modules/shared/lib/meetingActionAgent.ts`; manifest seed `supabase/migrations/50_second_wave_agents.sql`
+owner engine: none — this agent is itself the concrete in-repo implementation (its `agent_key`/`owner_engine` DB values still literally read `babsbrain2_meeting_action_chaser`/`babsbrain-2` — see Decision 1 note above)
+rung: **1** (per its `agent_manifests` row)
+tenant scope: org
+consumes: `meeting_actions` (status open/in_progress, past `due_date`, for a tenant)
+emits: `insights` rows (persisted, dismissible); `meeting.action.owed` on `event_log` (see S2)
+udr fields: same pattern as A1 — writes what conceptually belongs in `udr.insights[]`, but directly to the `insights` table, not through `udr.ts`
+gates: rung 1 = "shown as suggestion" — the manifest's own `gates` text: *"Shown as a suggestion in InsightsStrip.tsx; no autonomous action taken — a human reads the insight and follows up manually. Dismissing is a plain UPDATE."*
+status: **new this pass — did not exist at the 43-snapshot.** Same shape as A1 (Submission Chaser): reads one signal (overdue `meeting_actions`), raises a dismissible insight, same dedup convention. Directly closes a gap the newer-modules audit found — `meetingsService.ts`'s `createMeetingAction` used to carry a dead, commented-out `emitEvent(..., 'meeting.action.owed', ...)` call, now superseded by this agent actually firing that event when an action is confirmed overdue (not at creation time, which the file's own comment explains would have been premature). No live `meeting_actions` rows are confirmed to exist yet (see M17), so this agent's real-world trigger condition has not been confirmed exercised — the code path is real, its live output is unverified.
+
+### A3 privybrain2_rubric_compliance_chaser (Rubric Compliance Chaser)
+layer: L1
+face: none (surfaces via F18 `InsightsStrip` for the org sweep; via `UnifiedRecordView.tsx` for the doctor sweep — not independently re-verified this pass)
+path: `src/modules/shared/lib/rubricComplianceAgent.ts`; manifest seed `supabase/migrations/50_second_wave_agents.sql`
+owner engine: none — this agent is itself the concrete in-repo implementation (its `agent_key`/`owner_engine` DB values still literally read `privybrain2_rubric_compliance_chaser`/`privybrain-2` — see Decision 1 note above)
+rung: **1** (per its `agent_manifests` row)
+tenant scope: `any` — the only agent manifest with this scope value, reflecting its two run modes below
+consumes: `rubric_instances` (migration 41/46) whose `recommendation` is `review_required` or `recommend_revise`
+emits: `insights` rows (persisted, dismissible); `insight.generated` on `event_log` (see S2) — confirmed two separate call sites in source, one per run mode
+udr fields: same pattern as A1/A2 — writes what conceptually belongs in `udr.insights[]`/`udr.entries[]` (rubric_instances also surfaces in `entries[]` directly, see S3), not through `udr.ts`
+gates: rung 1 = "shown as suggestion" — the manifest's own `gates` text: *"Shown as a suggestion in InsightsStrip.tsx (org sweep) and UnifiedRecordView.tsx (doctor sweep); no autonomous action taken. Dismissing is a plain UPDATE."*
+status: **new this pass — did not exist at the 43-snapshot.** Runs in two modes, confirmed via source: an org-wide sweep (`tenantId` set, `tenantId: null` not used) and an unlinked-doctor sweep (`tenantId: null` explicitly, second call site in `rubricComplianceAgent.ts`). Migration 50's own header calls this **the first real producer of a doctor-scoped `insights` row** — closing the read-path-with-no-producer gap `udr.ts`'s `fetchInsightsForDoctor` previously had (see S3). Since `rubric_instances` is confirmed to have zero live rows in earlier audit passes (see `docs/LIVING_SYSTEM_GAP_AUDIT.md`'s addendum §8.1), this agent's trigger condition is real code with, as far as this pass can confirm from source alone, nothing yet to act on.
 
 ---
 

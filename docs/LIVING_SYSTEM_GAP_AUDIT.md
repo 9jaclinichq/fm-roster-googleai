@@ -356,10 +356,55 @@ submissions, case reports) — never extended to cover `scheduling_*`, `meeting_
 `clinical_document_types`, or `rubric_*` after those modules shipped. The spine was not kept in sync
 with the organs built on top of it.
 
+**SUPERSEDED (2026-08-20, Slice 2 documentation reconciliation) — this finding is stale.** `udr.ts`
+carries its own dated header noting a 2026-08-17 extension (commit `73a9f78`), independently
+confirmed this pass by reading the current file, not just trusting that header's claim. Corrected
+picture, field by field:
+- `entries[]` now includes `clinical_document` rows (via `created_by_workforce_id`) and
+  `rubric_instance` rows (via `assessor_workforce_id`/`assessor_doctor_id`) — the migration
+  41/48 gap this finding named is closed.
+- `meetings[]` is now implemented (`fetchMeetings`, scoped to meetings the caller owes an action
+  on) — not missing entirely as this finding says, though it returns `[]` in practice today since
+  no live `meeting_actions` rows are confirmed to exist. Real path, no confirmed producer yet — a
+  materially different, narrower gap than "missing entirely."
+- `pipelines[]` is now implemented (`fetchPipelines`, covering both `form_pipelines` and
+  `scheduling_pipelines`) — also closed, with the same "field exists, execution-log semantics are
+  thin" caveat `udr.ts`'s own header states (`ranAt` means "defined at," not "last ran at").
+- `instances[]` remains deliberately unextended to `scheduling_instances`/`clinical_document_types`
+  — but this is now a documented design decision in `udr.ts`'s own header (shared tenant/doctor
+  config is not a personal record), not an oversight: folding a shared builder-template into one
+  person's UDR would misrepresent org-wide config as a personal artifact.
+- **`audit[]` is the one field still genuinely unclosed**, and for a real structural reason: `event_log`
+  (migration 32) has no per-actor column at all, so there is no data to scope by person even if this
+  file wanted to. This is now the single concrete remaining UDR gap, not the four-field list above.
+
+Net: revise this section's estimate upward — UDR composition is now close to complete against §5's
+named fields, with one specific, well-understood, and now console-registry-tracked open item
+(`audit[]`, blocked on `event_log` schema, not on this file). See `docs/REGISTRY.md`'s S3 entry for
+the fully current field-by-field detail; this paragraph is retained for historical trail, not as the
+current authority.
+
 **§6 Event vocabulary — ~5%.** Live `event_log` has exactly 2 rows, both `insight.generated`. Of the
 ~24 named events in the spec, only that one has ever actually fired. `eventBus.ts` exists as real,
 usable infrastructure; it is essentially not called from the real user-action paths that should be
 calling it.
+
+**SUPERSEDED (2026-08-20, Slice 2 documentation reconciliation) — the "essentially not called" claim
+is stale; the live-row-count claim above is not re-verified here (no live database access this
+pass) and should not be assumed still accurate either way.** Confirmed by direct source read (commit
+`773e37f`, "wire emitEvent into core write paths across the app"): `emitEvent` now has **8 real call
+sites** across `src/lib/databaseService.ts` (submission create/update, AI action logging, tenant
+provisioning, research/casebook workspace creation, logbook signoff), `schedulingService.ts`,
+`meetingsService.ts`, `clinicalWritingService.ts`, and all three L1 agents
+(`submissionChaserAgent.ts`, `meetingActionAgent.ts`, `rubricComplianceAgent.ts`). **A real reader
+now exists too**: `ActivityLogPanel.tsx`, wired into `ChiefDashboardView.tsx`'s `'activity'` tab,
+lists recent tenant-scoped `event_log` rows — closing the "nothing reads this back out" half of this
+finding. What remains true and unchanged: `eventBus.ts` is still a plain insert wrapper, not a real
+pub/sub bus with in-process dispatch to multiple subscribers — "no longer essentially unused" is not
+the same claim as "a real event bus." Whether live `event_log` row *volume* has grown proportionally
+with these new call sites is a live-database question this pass cannot answer — see
+`docs/REGISTRY.md`'s S2 entry for the current source-level detail, and treat any specific row count
+as unverified until checked live.
 
 **§7 The 10 modules — ~55-65%, very uneven.** Forms & pipelines (~85%, genuinely generic — an org
 admin can create a second, different form instance today, confirmed in code), Billing & plans (~85%,
@@ -414,6 +459,21 @@ AND THE ROLE OF FAMILY SUPPORT IN RECOVERY" — the exact case the spec's §8.3 
 47's own "NOT APPLIED LIVE" header comment is stale/wrong, same pattern as several other migration
 headers flagged elsewhere in this addendum — always verify against the live DB, never trust a
 migration file's own claim about its application status.
+
+**New since this addendum was last touched (2026-08-20, Slice 2 documentation reconciliation) —
+Personal Productivity module (migration 51), not covered anywhere above.** `personal_tasks`,
+`wellbeing_entries`, and `focus_sessions` (plus a schema-free Team Directory view over `workforce`)
+shipped after this addendum's "through migration 54" pass began, sourced from an unrelated Flutter
+product-concept study per that migration's own header — it does not correspond to any of the living-
+system spec's 10 named capability modules, so it was never going to appear in the §7 module-by-module
+breakdown above. Worth flagging here because, unlike Scheduling/Meetings/Clinical Writing (all
+org-admin-only today), this module is **fully wired into member-facing navigation**
+(`/workspace/{focus,wellbeing,tasks,team}`, `/doctor/{focus,wellbeing,tasks}`) and ships with real
+doctor-owned RLS from day one — the most complete newer module by wiring, despite being the one with
+the weakest claim to belonging in this spec at all. See `docs/REGISTRY.md`'s new M19 entry and
+`docs/WORKSPC_PRODUCT_CONSTITUTION.md`'s M6 (HIDE/FREEZE from Workforce V1 navigation, not delete, not
+develop further) for the current product-direction call on this module — this audit file records the
+implementation fact only; it does not itself resolve the disposition question.
 
 **Working rule 10 (no hardcoded vocabulary) — 28 files still contain literal
 `Resident`/`WACP`/`NPMCN` strings.** Most are `t('member', 'Resident')`-style terminology-wrapped
