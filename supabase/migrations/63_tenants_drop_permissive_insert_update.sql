@@ -1,0 +1,55 @@
+-- ====================================================================
+-- Migration 63: atomic removal of tenants' permissive direct INSERT/UPDATE
+-- policies (Priority-0 Tenant Surface, slice P0-7C)
+-- ====================================================================
+-- Every legitimate mutation this table needs is now served by a
+-- SECURITY DEFINER RPC (chief_update_tenant_terminology/module_flags,
+-- migration 59; platform_operator_create_tenant/update_tenant_status/
+-- update_tenant_plan, migrations 60/62) or a service-role path
+-- (payment-webhook) — neither depends on these policies, both confirmed
+-- unaffected by this migration:
+--   - SECURITY DEFINER functions execute with the privileges of the
+--     function's owner, not the calling anon/authenticated role, and are
+--     not subject to the caller's row policies unless the function
+--     explicitly opts into `row_security = force` (none of the RPCs above
+--     do).
+--   - payment-webhook uses a service_role-keyed client — BYPASSRLS is a
+--     database-level role attribute, not a policy grant, so it is
+--     structurally immune to any policy change on this table.
+--
+-- P0-7A (migration 62) removed the last direct client write
+-- (provisionTenantWithSubaccount()'s raw insert, migrated onto the
+-- capability-checked platform_operator_create_tenant RPC). P0-7B
+-- (scripts/verify-tenant-surface.cjs) mechanically prevents that write
+-- from being reintroduced. This migration is the atomic policy removal
+-- that P0-7A/P0-7B's re-DISCOVER confirmed was safe: re-verified
+-- immediately before writing this file that zero current product code,
+-- RPC, Edge Function, or trigger still requires direct client INSERT or
+-- UPDATE permission on tenants.
+--
+-- No replacement restrictive policy is added — RLS-enabled-with-no-
+-- matching-policy already denies by default, the same posture this table
+-- already has for DELETE (no tenants_delete policy has ever existed).
+--
+-- tenants_select is NOT touched by this migration. SELECT remains
+-- `USING (true)`, unchanged, pending the institutional-Auth-dependent
+-- slice already identified in the P0-7 readiness plan (residents/members
+-- have no reusable server-verifiable credential yet for the tenant reads
+-- still depending on it — see docs/TENANT_SURFACE_SECURITY_SPEC.md and
+-- docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md).
+--
+-- ROLLBACK WARNING — read before ever reverting this migration:
+-- rolling this back means re-creating tenants_insert/tenants_update with
+-- WITH CHECK (true) / USING (true) — i.e. deliberately re-opening the
+-- anonymous direct-write exposure this entire P0-1..P0-7C sequence exists
+-- to close. Any rollback must state this explicitly in its own commit
+-- message/PR, not restore these policies silently as a routine revert,
+-- and should only be used as a genuine emergency measure with an
+-- immediate plan to re-close it again.
+
+DROP POLICY IF EXISTS "tenants_insert" ON tenants;
+DROP POLICY IF EXISTS "tenants_update" ON tenants;
+
+-- ====================================================================
+-- END OF MIGRATION 63
+-- ====================================================================
