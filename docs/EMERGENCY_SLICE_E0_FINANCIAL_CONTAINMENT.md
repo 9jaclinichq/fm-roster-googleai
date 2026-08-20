@@ -6,10 +6,14 @@ Status: source containment applied; **live deployment status UNKNOWN, not yet pe
 ## Vulnerability class
 
 Unauthenticated, unattributed access to financial-side-effect-capable Edge
-Functions. Both affected functions are deployed (per their own header
-comments) with `--no-verify-jwt` and perform no independent server-side
-verification of caller identity, tenant/workforce ownership, or
-platform-operator authority before taking action.
+Functions. Both affected functions' own source headers document an
+*intended* `--no-verify-jwt` deployment (a manual CLI instruction in a
+comment, not an enforced or automatically-applied setting) — **current live
+deployment status is unknown, not confirmed by source alone** (see "Live
+deployment status" below). Regardless of live deployment status, the source
+as written performs no independent server-side verification of caller
+identity, tenant/workforce ownership, or platform-operator authority before
+taking action.
 
 ## Affected functions
 
