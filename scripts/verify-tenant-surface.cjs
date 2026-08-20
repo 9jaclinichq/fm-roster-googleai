@@ -32,12 +32,16 @@
 //                                      those vars are absent.
 //
 //   --local-mutation                - anonymous INSERT/UPDATE negative
-//                                      tests against `tenants`. These are
-//                                      meaningless before P0-7 lands (the
-//                                      permissive policy still allows the
-//                                      write today) and are reported as a
-//                                      labeled pre-P0-7 baseline, not a
-//                                      failure, until then. Requires
+//                                      tests against `tenants`. P0-7C
+//                                      (migration 63) dropped the
+//                                      permissive tenants_insert/
+//                                      tenants_update policies, so a
+//                                      successful anonymous write is now a
+//                                      hard FAIL, not an informational
+//                                      baseline — this only means anything
+//                                      once migration 63 is actually
+//                                      applied to whatever instance this
+//                                      is pointed at. Requires
 //                                      TENANT_SURFACE_ALLOW_LOCAL_MUTATION=1
 //                                      plus TENANT_SURFACE_LOCAL_SUPABASE_URL/
 //                                      _ANON_KEY (harness-specific env var
@@ -60,6 +64,11 @@ const { execFileSync } = require('child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PRODUCTION_PROJECT_REF = 'gdumksfffewpdqqwvcdo';
+// The always-present seeded tenant row (migration 11's fixed-id INSERT) —
+// used only as a stable UPDATE target for the --local-mutation probe
+// below, on whatever instance TENANT_SURFACE_LOCAL_SUPABASE_URL points
+// at. Never referenced by any static/remote-read check.
+const SEEDED_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 const args = process.argv.slice(2);
 const runRemoteRead = args.includes('--remote-read');
@@ -113,6 +122,21 @@ function listSourceFiles(relDir) {
   }
   walk(abs);
   return results;
+}
+
+// Lists migration files numbered strictly after `afterNumber`, sorted
+// numerically by their leading number (not lexically — "9" must sort
+// before "10"). Non-numbered files in supabase/migrations/ are ignored.
+function listMigrationFilesAfter(afterNumber) {
+  const dir = path.join(REPO_ROOT, 'supabase/migrations');
+  return fs.readdirSync(dir)
+    .map(name => {
+      const match = name.match(/^(\d+)_/);
+      return match ? { name, num: parseInt(match[1], 10) } : null;
+    })
+    .filter(entry => entry && entry.num > afterNumber)
+    .sort((a, b) => a.num - b.num)
+    .map(entry => `supabase/migrations/${entry.name}`);
 }
 
 // ============================================================
@@ -230,6 +254,43 @@ function checkNoActiveConsumersOfUnsafeMethods() {
       pass(`databaseService.${method}() has no active consumers outside databaseService.ts`);
     } else {
       fail(`databaseService.${method}() is still called from: ${hits.join(', ')}`);
+    }
+  }
+}
+
+function checkNoPermissivePolicyReintroduced() {
+  // P0-7D: mechanical enforcement of P0-7C's (migration 63) own removal —
+  // fails if any migration numbered after 63 re-creates a permissive
+  // INSERT/UPDATE/ALL policy on tenants (USING(true) or WITH CHECK(true)),
+  // under any policy name. Deliberately does not care about the policy's
+  // name — a future migration reintroducing the same exposure under a
+  // different name would defeat a name-only check.
+  const files = listMigrationFilesAfter(63);
+  if (files.length === 0) {
+    pass('No migrations exist after migration 63 yet — no permissive tenants INSERT/UPDATE policy has been reintroduced');
+    return;
+  }
+
+  const policyStatementRe = /CREATE\s+(?:OR\s+REPLACE\s+)?POLICY\s+"[^"]*"\s+ON\s+tenants\s+FOR\s+(?:INSERT|UPDATE|ALL)\b[^;]*;/gi;
+  const permissiveConditionRe = /(?:USING|WITH\s+CHECK)\s*\(\s*true\s*\)/i;
+
+  const found = [];
+  for (const relPath of files) {
+    const sql = readFile(relPath);
+    if (sql === null) continue;
+    const matches = sql.match(policyStatementRe) || [];
+    for (const statement of matches) {
+      if (permissiveConditionRe.test(statement)) {
+        found.push({ file: relPath, statement: statement.trim() });
+      }
+    }
+  }
+
+  if (found.length === 0) {
+    pass(`No permissive tenants INSERT/UPDATE policy has been reintroduced in any migration after 63 (${files.length} later migration file(s) checked)`);
+  } else {
+    for (const hit of found) {
+      fail(`Permissive tenants INSERT/UPDATE policy reintroduced in ${hit.file}: ${hit.statement}`);
     }
   }
 }
@@ -369,18 +430,46 @@ async function checkAnonymousMutationRejected() {
   if (insertResult.error) {
     pass('local-mutation: anonymous INSERT into tenants is rejected');
   } else {
-    info('local-mutation: anonymous INSERT succeeded — PRE-P0-7 baseline (permissive policy still in effect, expected before P0-7 lands), not a failure');
-    // Best-effort cleanup of the disposable row this probe just created.
+    // P0-7D (post migration 63): a successful anonymous INSERT is now a
+    // real regression, not an expected pre-lockdown baseline — hard FAIL.
+    // Cleanup of the disposable row this probe just created still runs
+    // regardless, so a failing regression run doesn't also leave garbage
+    // data behind in whatever instance this was pointed at.
+    fail('local-mutation: anonymous INSERT into tenants succeeded — expected rejection after migration 63 (permissive tenants_insert policy may have been reintroduced or migration 63 is not applied to this target)');
     if (insertResult.data && insertResult.data.id) {
       await client.from('tenants').delete().eq('id', insertResult.data.id);
     }
   }
 
-  const updateResult = await client.from('tenants').update({ name: 'P0-6 harness probe (should be rejected)' }).eq('short_code', probeShortCode);
+  // UPDATE probe deliberately targets the always-present seeded tenant row
+  // (SEEDED_TENANT_ID, migration 11), NOT the row the INSERT probe above
+  // may or may not have created. Targeting the INSERT probe's own row
+  // would make this check meaningless whenever INSERT is correctly
+  // rejected: an UPDATE matching zero rows returns no error regardless of
+  // RLS, so a working lockdown would have produced a false FAIL here.
+  // .select().single() forces an explicit error when the update matches
+  // no visible rows (RLS-denied looks identical to "no such row" from the
+  // client's perspective, which is exactly the rejection this is testing
+  // for), decoupling this check entirely from the INSERT probe's outcome.
+  // Read the seeded row's current name first (SELECT remains permissive —
+  // unaffected by this lockdown) so a regression can be cleanly restored.
+  const { data: seededTenant } = await client.from('tenants').select('name').eq('id', SEEDED_TENANT_ID).maybeSingle();
+  const originalSeededTenantName = seededTenant?.name ?? null;
+
+  const probeName = `P0-6 harness probe (should be rejected) ${Date.now()}`;
+  const updateResult = await client.from('tenants').update({ name: probeName }).eq('id', SEEDED_TENANT_ID).select().single();
   if (updateResult.error) {
     pass('local-mutation: anonymous UPDATE into tenants is rejected');
   } else {
-    info('local-mutation: anonymous UPDATE succeeded — PRE-P0-7 baseline (permissive policy still in effect, expected before P0-7 lands), not a failure');
+    // Regression: this actually renamed the seeded tenant row on whatever
+    // instance this is pointed at (local/test only, per the guards above).
+    // Restore its original name — the same permission state that allowed
+    // this update to succeed also allows the restore, so this is safe
+    // best-effort cleanup, not a second independent write dependency.
+    fail('local-mutation: anonymous UPDATE into tenants succeeded — expected rejection after migration 63 (permissive tenants_update policy may have been reintroduced or migration 63 is not applied to this target)');
+    if (originalSeededTenantName !== null) {
+      await client.from('tenants').update({ name: originalSeededTenantName }).eq('id', SEEDED_TENANT_ID);
+    }
   }
 }
 
@@ -395,6 +484,7 @@ async function main() {
   checkOperatorRpcsSelfVerify();
   checkNoActiveConsumersOfUnsafeMethods();
   checkProvisionTenantWithSubaccountHasNoDirectWrite();
+  checkNoPermissivePolicyReintroduced();
   checkCliToolingHealth();
 
   if (runRemoteRead) {
