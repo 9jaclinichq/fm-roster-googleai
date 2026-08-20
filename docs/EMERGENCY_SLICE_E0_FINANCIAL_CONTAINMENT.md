@@ -1,7 +1,12 @@
 # Emergency Slice E0 — Financial Endpoint Containment
 
 Date: 2026-08-20
-Status: source containment applied; **live deployment status UNKNOWN, not yet performed by this change**.
+Status: source containment applied and **live containment deployment completed
+2026-08-20**. Both affected functions are confirmed `ACTIVE` running the
+contained source (see "Live deployment status" below).
+
+- Source containment commit: `24045df`
+- Documentation correction commit: `bb76e2b`
 
 ## Vulnerability class
 
@@ -52,43 +57,54 @@ error-detail surfacing) once containment is lifted.
 
 ## Live deployment status
 
-**UNKNOWN.** This change edits source only. No `supabase functions deploy`
-command was run, and none of this change's contents change what is
-currently live. **Source containment does not imply live containment** —
-the live, previously-deployed versions of these two functions (if
-currently deployed) remain exactly as they were, with no server-side
-verification, until someone explicitly runs:
+**Live containment deployment completed 2026-08-20.** Performed manually
+from Windows PowerShell (the Git-Bash `supabase` CLI in the primary
+development sandbox was non-functional — segfaulted on every invocation,
+including a no-network `--version` check — so deployment was carried out
+from a working PowerShell environment instead, using the reviewed contained
+source from commit `24045df`). No tooling was reinstalled or upgraded to
+accomplish this.
 
-```
-npx supabase@2.112.0 functions deploy platform-operator-subaccount --project-ref <ref> --no-verify-jwt --use-api
-npx supabase@2.112.0 functions deploy payment-checkout --project-ref <ref> --no-verify-jwt --use-api
-```
+| Function | Status | Version | Updated at (UTC) |
+|---|---|---|---|
+| `platform-operator-subaccount` | `ACTIVE` | 2 | 2026-08-20 05:31:34 |
+| `payment-checkout` | `ACTIVE` | 7 | 2026-08-20 05:31:51 |
 
-or otherwise redeploys via the Supabase dashboard. Whether these functions
-are currently deployed and reachable at all was not established during
-DISCOVER and is not established by this record — repository evidence
-(detailed header comments referencing a live secret key, and
-`payment-checkout`'s pricing being explicitly described as confirmed by the
-product owner) is suggestive but not proof of current live state. This
-record does not assume exposure, and does not assume safety.
+`payment-webhook` was **not** redeployed and remains unchanged at version 5,
+updated 2026-08-14 22:24:10 UTC — confirming this containment action did not
+touch it.
+
+**Containment was verified through Supabase deployment metadata only** (the
+status/version/timestamp table above) — **no function URL was invoked and
+no provider request was made** as part of this verification, consistent
+with this record's and Slice E0's own constraints throughout.
+
+**Source containment and this live deployment are the same fail-closed
+behaviour now in effect live** — both functions return
+`{"error": "financial_feature_temporarily_unavailable"}` (HTTP 503) before
+any credential read, input parsing, service-role client creation, provider
+`fetch`, or database mutation, for every caller, unconditionally.
 
 ## What remains unresolved
 
-- Live deployment of this containment change has not occurred and requires
-  separate, explicit approval.
-- Whether the live environment is currently exposed at all remains
-  unverified.
-- The underlying vulnerability class — no server-verifiable caller/tenant/
-  operator identity for privileged or cost-bearing Edge Functions — is not
-  fixed by this containment. It is the subject of
+- **The underlying authentication vulnerability remains unresolved.** Live
+  containment stops the financial side effects; it does not add real
+  caller/tenant/operator verification. That remains the subject of
   `docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md` (Slice 6, paused pending this
   emergency work).
-- `payment-webhook` was explicitly not touched or reviewed for changes in
-  this slice.
+- **Re-enablement remains prohibited until real, server-verifiable
+  authorization exists** — see "Requirement for re-enablement" below,
+  unchanged by this deployment.
+- `payment-webhook` was explicitly not touched, redeployed, or reviewed for
+  changes in this slice.
 - The `databaseService.ts` neutral-message mapping is a deliberate,
   temporary simplification (any failure of these specific calls reads as
   "unavailable") and should be reverted to precise error surfacing once
   containment lifts.
+- Whether the pre-containment live versions (prior to version 2 / version 7
+  above) were ever actually exposed/exploited remains unverified and out of
+  this record's scope — this record documents the containment action taken,
+  not an incident forensic analysis.
 
 ## Requirement for re-enablement
 
