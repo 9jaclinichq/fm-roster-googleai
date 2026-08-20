@@ -356,6 +356,20 @@ export interface Tenant {
   created_at: string;
 }
 
+// Pre-login discovery projection (migration 58, Priority-0 Tenant Surface
+// slice P0-1) — the `list_public_tenants()` RPC's exact return shape, not
+// a client-side pick of `Tenant`. Deliberately excludes `status` (active/
+// discoverable filtering happens server-side inside the RPC, see that
+// migration's header) and every private field (`short_code`, `plan_type`,
+// `paystack_subaccount_code`, `module_flags`, `terminology_overrides`,
+// `created_at`) per docs/TENANT_SURFACE_SECURITY_SPEC.md §3.
+export interface PublicTenant {
+  id: string;
+  name: string;
+  institution: string | null;
+  department: string | null;
+}
+
 export interface CallDutyRule {
   id: string;
   tenant_id: string;

@@ -43,6 +43,7 @@ import {
   CombinedMasterRoster,
   MasterRosterStatus,
   Tenant,
+  PublicTenant,
   TenantPlanType,
   TenantStatus,
   CallDutyRule,
@@ -1810,6 +1811,23 @@ export const databaseService = {
     const { data, error } = await supabase!.from('tenants').select('*').order('created_at', { ascending: true });
     if (error) {
       console.warn('Error fetching tenants:', error);
+      throw error;
+    }
+    return data || [];
+  },
+
+  // Public, pre-login tenant discovery (migration 58, Priority-0 Tenant
+  // Surface slice P0-1) — the locked public projection via
+  // `list_public_tenants()`, which server-side filters to active/
+  // discoverable tenants and returns only id/name/institution/department.
+  // Not yet called by any consumer (that migration is P0-2); added
+  // alongside getTenants() without changing it, per P0-1's own scope.
+  async listPublicTenants(): Promise<PublicTenant[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('list_public_tenants');
+    if (error) {
+      console.warn('Error fetching public tenants:', error);
       throw error;
     }
     return data || [];
