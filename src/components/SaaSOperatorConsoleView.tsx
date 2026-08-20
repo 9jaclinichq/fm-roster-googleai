@@ -22,6 +22,20 @@ interface OperatorSession {
 
 export const SaaSOperatorConsoleView: React.FC = () => {
   const [session, setSession] = useState<OperatorSession | null>(null);
+  // The verified operator code, held only in this component's in-memory
+  // React state — never written to localStorage/sessionStorage/cookies, per
+  // the locked transitional-credential decision (P0-4). It is high-
+  // authority and transitional (plaintext-code verification, pending
+  // Supabase Auth convergence — see
+  // docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md §11), so it does not get the
+  // same durable-persistence treatment as the operator's id/name below. A
+  // page refresh clears it: OPERATOR_SESSION_KEY still restores {id, name}
+  // for read-only display, but every operator RPC call requires this code,
+  // so each mutating handler below (handleProvision/handlePlanChange/
+  // handleStatusToggle) guards on it being present and asks for
+  // re-authentication if not, rather than silently trusting the restored
+  // session.
+  const [operatorCode, setOperatorCode] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
@@ -40,13 +54,14 @@ export const SaaSOperatorConsoleView: React.FC = () => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
-    if (!code.trim()) {
+    const trimmedCode = code.trim();
+    if (!trimmedCode) {
       setLoginError('Enter the platform operator code.');
       return;
     }
     setLoggingIn(true);
     try {
-      const operator = await databaseService.verifyPlatformOperatorLogin(code.trim());
+      const operator = await databaseService.verifyPlatformOperatorLogin(trimmedCode);
       if (!operator) {
         setLoginError('Incorrect operator code. Access denied.');
         return;
@@ -54,6 +69,9 @@ export const SaaSOperatorConsoleView: React.FC = () => {
       const sess: OperatorSession = { id: operator.id, name: operator.name };
       setSession(sess);
       localStorage.setItem(OPERATOR_SESSION_KEY, JSON.stringify(sess));
+      // In-memory only — see the operatorCode state comment above. Not
+      // included in the object persisted to localStorage.
+      setOperatorCode(trimmedCode);
       await databaseService.logOperatorEvent(operator.id, 'operator_login');
     } catch (err) {
       console.warn(err);
@@ -65,6 +83,7 @@ export const SaaSOperatorConsoleView: React.FC = () => {
 
   const handleLogout = () => {
     setSession(null);
+    setOperatorCode(null);
     localStorage.removeItem(OPERATOR_SESSION_KEY);
     setCode('');
   };
@@ -115,11 +134,23 @@ export const SaaSOperatorConsoleView: React.FC = () => {
     );
   }
 
-  return <OperatorConsole operatorId={session.id} operatorName={session.name} onLogout={handleLogout} />;
+  return (
+    <OperatorConsole
+      operatorId={session.id}
+      operatorName={session.name}
+      operatorCode={operatorCode}
+      onLogout={handleLogout}
+    />
+  );
 };
 
-const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLogout: () => void }> = ({
-  operatorId, operatorName, onLogout,
+const OperatorConsole: React.FC<{
+  operatorId: string;
+  operatorName: string;
+  operatorCode: string | null;
+  onLogout: () => void;
+}> = ({
+  operatorId, operatorName, operatorCode, onLogout,
 }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -176,6 +207,10 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
       setProvisionError('Name and short code are required.');
       return;
     }
+    if (!withBilling && !operatorCode) {
+      setProvisionError('Your operator session has expired. Please sign out and sign in again.');
+      return;
+    }
     setProvisioning(true);
     try {
       let tenant: Tenant;
@@ -185,6 +220,11 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
           setProvisioning(false);
           return;
         }
+        // Unmigrated in this slice — provisionTenantWithSubaccount() calls
+        // platform-operator-subaccount, which remains under Emergency Slice
+        // E0 fail-closed containment (see
+        // docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md). Not touched by
+        // P0-4.
         tenant = await databaseService.provisionTenantWithSubaccount({
           name: newName.trim(),
           short_code: newShortCode.trim(),
@@ -196,7 +236,7 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
           percentage_charge: Number(percentageCharge) || 5,
         });
       } else {
-        tenant = await databaseService.createTenant({
+        tenant = await databaseService.platformOperatorCreateTenant(operatorCode as string, {
           name: newName.trim(),
           short_code: newShortCode.trim(),
           institution: newInstitution.trim() || null,
@@ -218,8 +258,12 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
   };
 
   const handlePlanChange = async (tenant: Tenant, plan: TenantPlanType) => {
+    if (!operatorCode) {
+      setStatusMessage('Your operator session has expired. Please sign out and sign in again.');
+      return;
+    }
     try {
-      await databaseService.updateTenantPlan(tenant.id, plan);
+      await databaseService.platformOperatorUpdateTenantPlan(operatorCode, tenant.id, plan);
       await databaseService.logOperatorEvent(operatorId, 'tenant_plan_changed', { tenant_id: tenant.id, plan });
       await load();
     } catch (err) {
@@ -229,9 +273,13 @@ const OperatorConsole: React.FC<{ operatorId: string; operatorName: string; onLo
   };
 
   const handleStatusToggle = async (tenant: Tenant) => {
+    if (!operatorCode) {
+      setStatusMessage('Your operator session has expired. Please sign out and sign in again.');
+      return;
+    }
     const nextStatus = tenant.status === 'active' ? 'suspended' : 'active';
     try {
-      await databaseService.updateTenantStatus(tenant.id, nextStatus);
+      await databaseService.platformOperatorUpdateTenantStatus(operatorCode, tenant.id, nextStatus);
       await databaseService.logOperatorEvent(operatorId, 'tenant_status_changed', { tenant_id: tenant.id, status: nextStatus });
       await load();
     } catch (err) {

@@ -1906,8 +1906,12 @@ export const databaseService = {
     return data;
   },
 
-  // Provisions a tenant WITHOUT a Paystack subaccount (free tier or
-  // billing configured later).
+  // Unsafe — depends on tenants' permissive direct-write RLS (migration
+  // 11); no caller-identity check happens here at all. Provisions a tenant
+  // WITHOUT a Paystack subaccount (free tier or billing configured later).
+  // Superseded by platformOperatorCreateTenant() below (migration 60,
+  // Priority-0 Tenant Surface slice P0-4). Left in place, unused, until the
+  // final tenant-table lockdown audit (P0-7) confirms no caller remains.
   async createTenant(tenant: {
     name: string;
     short_code: string;
@@ -1969,6 +1973,9 @@ export const databaseService = {
     return { tenantId: row.tenant_id, tenantName: row.tenant_name, adminAccessCode: row.admin_access_code };
   },
 
+  // Unsafe — same gap as createTenant() above. Superseded by
+  // platformOperatorUpdateTenantPlan() below (migration 60, slice P0-4).
+  // Left in place, unused, until P0-7 confirms no caller remains.
   async updateTenantPlan(tenantId: string, planType: TenantPlanType): Promise<Tenant> {
     checkSupabase();
 
@@ -1986,6 +1993,9 @@ export const databaseService = {
     return data;
   },
 
+  // Unsafe — same gap as createTenant() above. Superseded by
+  // platformOperatorUpdateTenantStatus() below (migration 60, slice P0-4).
+  // Left in place, unused, until P0-7 confirms no caller remains.
   async updateTenantStatus(tenantId: string, status: 'active' | 'suspended'): Promise<Tenant> {
     checkSupabase();
 
@@ -1995,6 +2005,73 @@ export const databaseService = {
       .eq('id', tenantId)
       .select()
       .single();
+
+    if (error) {
+      console.warn('Error updating tenant status:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Platform-operator-scoped, capability-checked replacements for
+  // createTenant()/updateTenantPlan()/updateTenantStatus() above (migration
+  // 60, Priority-0 Tenant Surface slice P0-4). p_operator_code is
+  // re-verified server-side inside each RPC independently — a prior
+  // verifyPlatformOperatorLogin() call is never treated as sufficient
+  // authorization on its own. p_operator_code is explicitly transitional
+  // compatibility, not the target API contract — see
+  // docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md §11. Does not cover
+  // provisionTenantWithSubaccount() (Paystack path) — that remains under
+  // Emergency Slice E0 containment, untouched by this slice.
+  async platformOperatorCreateTenant(operatorCode: string, tenant: {
+    name: string;
+    short_code: string;
+    institution?: string | null;
+    department?: string | null;
+    plan_type?: TenantPlanType;
+  }): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('platform_operator_create_tenant', {
+      p_operator_code: operatorCode,
+      p_name: tenant.name,
+      p_short_code: tenant.short_code,
+      p_institution: tenant.institution ?? null,
+      p_department: tenant.department ?? null,
+      p_plan_type: tenant.plan_type ?? 'free_seeded',
+    });
+
+    if (error) {
+      console.warn('Error creating tenant:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async platformOperatorUpdateTenantPlan(operatorCode: string, tenantId: string, planType: TenantPlanType): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('platform_operator_update_tenant_plan', {
+      p_operator_code: operatorCode,
+      p_tenant_id: tenantId,
+      p_plan_type: planType,
+    });
+
+    if (error) {
+      console.warn('Error updating tenant plan:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  async platformOperatorUpdateTenantStatus(operatorCode: string, tenantId: string, status: 'active' | 'suspended'): Promise<Tenant> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('platform_operator_update_tenant_status', {
+      p_operator_code: operatorCode,
+      p_tenant_id: tenantId,
+      p_status: status,
+    });
 
     if (error) {
       console.warn('Error updating tenant status:', error);
