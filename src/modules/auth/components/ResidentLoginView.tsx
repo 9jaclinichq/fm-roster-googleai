@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { databaseService } from '../../../lib/databaseService';
-import { WorkforceMember, Tenant } from '../../../types';
+import { WorkforceMember, PublicTenant } from '../../../types';
 import { KeyRound, User, ChevronDown, Sparkles, Check, AlertCircle, Building2, Mail } from 'lucide-react';
 import { useTerminology } from '../../shared/terminology';
 
@@ -40,7 +40,7 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
     (location.state as { tenantId?: string } | null)?.tenantId ||
     new URLSearchParams(location.search).get('tenant') ||
     '';
-  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenants, setTenants] = useState<PublicTenant[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState<string>('');
   const [isTenantDropdownOpen, setIsTenantDropdownOpen] = useState<boolean>(false);
   const [workforce, setWorkforce] = useState<WorkforceMember[]>([]);
@@ -76,8 +76,10 @@ export const ResidentLoginView: React.FC<ResidentLoginViewProps> = ({
   useEffect(() => {
     async function loadTenants() {
       try {
-        const data = await withTimeout(databaseService.getTenants(), 15000);
-        const active = data.filter((tn) => tn.status === 'active');
+        // list_public_tenants() (migration 58) already filters to
+        // active/discoverable tenants server-side — no client-side status
+        // filter needed or possible (status isn't part of this projection).
+        const active = await withTimeout(databaseService.listPublicTenants(), 15000);
         setTenants(active);
         // Prefer the tenant already chosen on TenantSelectorView, as long as
         // it's still a real active tenant; otherwise fall back to the first

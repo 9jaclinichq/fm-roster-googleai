@@ -198,8 +198,13 @@ function MainAppContent() {
   // `incomingTenantId` does (location.state, falling back to a `?tenant=`
   // query param). Without this, a non-UCH org's login screen would render
   // with UCH's terminology_overrides (e.g. "Resident") instead of that
-  // org's own (e.g. "Doctor"), since activeTenantId would otherwise always
-  // bottom out at DEFAULT_TENANT_ID until after login.
+  // org's own (e.g. "Doctor").
+  //
+  // Priority-0 Tenant Surface slice P0-2: no DEFAULT_TENANT_ID fallback at
+  // the end of this chain anymore — when none of the above resolve to a
+  // real tenant (genuinely pre-login, no tenant picked yet), activeTenantId
+  // is null and TerminologyProvider renders neutral defaults instead of
+  // fetching UCH's terminology_overrides for every anonymous visitor.
   const incomingLoginTenantId =
     (location.state as { tenantId?: string } | null)?.tenantId ||
     new URLSearchParams(location.search).get('tenant') ||
@@ -208,8 +213,7 @@ function MainAppContent() {
   const activeTenantId =
     currentResident?.tenant_id ||
     (isChiefAuthenticated ? localStorage.getItem('fm_chief_tenant_id') : null) ||
-    incomingLoginTenantId ||
-    DEFAULT_TENANT_ID;
+    incomingLoginTenantId;
 
   // DevHelper Preset triggers
   const [presetResident, setPresetResident] = useState<WorkforceMember | null>(null);

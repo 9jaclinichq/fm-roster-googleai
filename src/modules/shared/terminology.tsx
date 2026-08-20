@@ -58,18 +58,30 @@ export function useTerminology() {
   return useContext(TerminologyContext);
 }
 
-// tenantId is now passed by App.tsx's MainAppContent from the actual active
-// session (see the header note above) — the DEFAULT_TENANT_ID fallback
-// below only fires pre-login or for a tenant-less individual-doctor session.
-export const TerminologyProvider: React.FC<{ children: React.ReactNode; tenantId?: string }> = ({
+// tenantId is passed by App.tsx's MainAppContent from the actual active
+// session (see that file's activeTenantId comment). Priority-0 Tenant
+// Surface slice P0-2 (docs/TENANT_SURFACE_SECURITY_SPEC.md §3): there is no
+// default tenant fallback here anymore — when no real tenant context is
+// known yet (pre-login, or a tenant-less individual-doctor session),
+// tenantId is null/undefined and this provider renders TERMINOLOGY_DEFAULTS
+// immediately with no tenant fetch at all, rather than fetching
+// DEFAULT_TENANT_ID's (UCH's) terminology_overrides for every anonymous
+// visitor.
+export const TerminologyProvider: React.FC<{ children: React.ReactNode; tenantId?: string | null }> = ({
   children,
-  tenantId = DEFAULT_TENANT_ID,
+  tenantId,
 }) => {
   const [overrides, setOverrides] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!tenantId);
 
   useEffect(() => {
+    if (!tenantId) {
+      setOverrides({});
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
+    setLoading(true);
     databaseService
       .getTenant(tenantId)
       .then(tenant => {
@@ -87,7 +99,7 @@ export const TerminologyProvider: React.FC<{ children: React.ReactNode; tenantId
   const t = (key: string, fallback?: string) => overrides[key] || fallback || TERMINOLOGY_DEFAULTS[key] || key;
 
   return (
-    <TerminologyContext.Provider value={{ t, loading, tenantId }}>
+    <TerminologyContext.Provider value={{ t, loading, tenantId: tenantId || DEFAULT_TENANT_ID }}>
       {children}
     </TerminologyContext.Provider>
   );

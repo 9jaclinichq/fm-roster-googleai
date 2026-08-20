@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Stethoscope, ChevronRight, AlertCircle, Loader2 } from 'lucide-react';
 import { databaseService } from '../../../lib/databaseService';
-import { Tenant } from '../../../types';
+import { PublicTenant } from '../../../types';
 import { useTerminology } from '../../shared/terminology';
 
 // Tenant-first login step ("select your institution" before name+code entry
@@ -19,7 +19,7 @@ import { useTerminology } from '../../shared/terminology';
 export const TenantSelectorView: React.FC = () => {
   const navigate = useNavigate();
   const { t } = useTerminology();
-  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenants, setTenants] = useState<PublicTenant[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -27,8 +27,11 @@ export const TenantSelectorView: React.FC = () => {
     let cancelled = false;
     async function loadTenants() {
       try {
-        const data = await databaseService.getTenants();
-        if (!cancelled) setTenants(data.filter((tn) => tn.status === 'active'));
+        // list_public_tenants() (migration 58) already filters to
+        // active/discoverable tenants server-side — no client-side status
+        // filter needed or possible (status isn't part of this projection).
+        const data = await databaseService.listPublicTenants();
+        if (!cancelled) setTenants(data);
       } catch (err) {
         console.warn('Error loading organizations:', err);
         if (!cancelled) setError('Failed to fetch the organization list from server.');
@@ -42,7 +45,7 @@ export const TenantSelectorView: React.FC = () => {
     };
   }, []);
 
-  const selectTenant = (tenant: Tenant) => {
+  const selectTenant = (tenant: PublicTenant) => {
     navigate('/workspace/login', { state: { tenantId: tenant.id } });
   };
 
