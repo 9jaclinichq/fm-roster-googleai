@@ -13,7 +13,8 @@
     "verify": "npm run typecheck && npm run build",
     "supabase:version": "supabase --version",
     "supabase:functions:list": "supabase functions list --project-ref gdumksfffewpdqqwvcdo",
-    "verify:tenant-surface": "node scripts/verify-tenant-surface.cjs"
+    "verify:tenant-surface": "node scripts/verify-tenant-surface.cjs",
+    "verify:roster-reconciliation": "tsx scripts/verify-roster-reconciliation.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.6",

@@ -55,17 +55,26 @@ export const UCH_FAMILY_MEDICINE_ON_FLOOR_ADAPTER: RotationOnFloorAdapter = {
 type RotationExpectation = 'expected_on_floor' | 'expected_off_floor' | 'unclassified';
 
 // Resolves a submission's rotation to an exact rotation name, or null if
-// it cannot be resolved. Deterministic only — no fuzzy matching.
-// current_rotation_id is used when present (whether or not it actually
-// resolves against the current rotations list — no fallback in that
-// case, per the locked spec); the free-text current_rotation column is
-// only consulted when current_rotation_id is null (covers submissions
-// that predate the FK backfill).
+// it cannot be resolved. Deterministic only — no fuzzy matching, no
+// case-folding, no aliasing. current_rotation_id is used when present
+// (whether or not it actually resolves against the current rotations
+// list — no fallback in that case, per the locked spec); the free-text
+// current_rotation column is only consulted when current_rotation_id is
+// null (covers submissions that predate the FK backfill).
+//
+// Hardening (adversarial finding, 2026-08-20): the free-text side is
+// trimmed of leading/trailing whitespace before the exact-string
+// comparison — a submission of "Family Medicine Clinic " (trailing
+// space, e.g. from copy-paste) was previously misclassified as Needs
+// Review instead of resolving. This is whitespace normalization only —
+// still an exact match, still no case-folding/fuzzy/alias/AI matching.
+// Canonical rotation names (`rotations.name`) are not trimmed — they are
+// controlled, seeded data, not user input.
 function resolveRotationName(submission: SubmissionWithWorkforce, rotations: Rotation[]): string | null {
   if (submission.current_rotation_id) {
     return rotations.find(r => r.id === submission.current_rotation_id)?.name ?? null;
   }
-  return rotations.find(r => r.name === submission.current_rotation)?.name ?? null;
+  return rotations.find(r => r.name === submission.current_rotation.trim())?.name ?? null;
 }
 
 function classifyRotation(rotationName: string, adapter: RotationOnFloorAdapter): RotationExpectation {
@@ -205,23 +214,41 @@ export function computeReconciliationIssues(
 
     // --- Issue type 3: declared leave overlapping a grid appearance ---
     if (submission.taking_leave && submission.leave_start && submission.leave_end && masterRoster) {
-      const appearances = findGridAppearancesForMember(member, masterRoster);
-      for (const appearance of appearances) {
-        const candidateDates = resolveWeekdayNameToDatesInMonth(appearance.dayName, masterRoster.month, masterRoster.year);
-        for (const date of candidateDates) {
-          if (dateInRange(date, submission.leave_start, submission.leave_end)) {
-            issues.push({
-              type: 'leave_roster_overlap',
-              workforceId: member.id,
-              memberName: member.full_name,
-              message: `Leave period overlaps a draft roster assignment: ${member.full_name} declared leave ${submission.leave_start}–${submission.leave_end}; appears in the ${appearance.gridLabel} on ${date} (${appearance.dayName}).`,
-              evidence: {
-                declared_leave_start: submission.leave_start,
-                declared_leave_end: submission.leave_end,
-                grid: appearance.gridLabel,
-                overlapping_date: date,
-              },
-            });
+      // Hardening (adversarial finding, 2026-08-20): a reversed range
+      // (leave_start after leave_end — a data-entry error) previously
+      // made the overlap check below mathematically unsatisfiable,
+      // silently producing zero findings even when a real overlap
+      // existed. Surfaced explicitly instead — never silently swapped,
+      // never silently suppressed. Overlap detection is skipped for this
+      // submission once flagged, since computing "overlap" against an
+      // invalid range would be meaningless.
+      if (submission.leave_start > submission.leave_end) {
+        issues.push({
+          type: 'invalid_declared_leave_range',
+          workforceId: member.id,
+          memberName: member.full_name,
+          message: `Needs Review: ${member.full_name}'s declared leave range is invalid — start date (${submission.leave_start}) is after end date (${submission.leave_end}).`,
+          evidence: { declared_leave_start: submission.leave_start, declared_leave_end: submission.leave_end },
+        });
+      } else {
+        const appearances = findGridAppearancesForMember(member, masterRoster);
+        for (const appearance of appearances) {
+          const candidateDates = resolveWeekdayNameToDatesInMonth(appearance.dayName, masterRoster.month, masterRoster.year);
+          for (const date of candidateDates) {
+            if (dateInRange(date, submission.leave_start, submission.leave_end)) {
+              issues.push({
+                type: 'leave_roster_overlap',
+                workforceId: member.id,
+                memberName: member.full_name,
+                message: `Leave period overlaps a draft roster assignment: ${member.full_name} declared leave ${submission.leave_start}–${submission.leave_end}; appears in the ${appearance.gridLabel} on ${date} (${appearance.dayName}).`,
+                evidence: {
+                  declared_leave_start: submission.leave_start,
+                  declared_leave_end: submission.leave_end,
+                  grid: appearance.gridLabel,
+                  overlapping_date: date,
+                },
+              });
+            }
           }
         }
       }

@@ -642,7 +642,11 @@ export interface RosterParseResult<T> {
 // src/modules/roster-engine/lib/rosterReconciliation.ts, rendered inside
 // MultiRosterManagerView.tsx. Never written anywhere — this is a pure
 // display type, not a database row shape.
-export type ReconciliationIssueType = 'rotation_conflict' | 'unrecognised_rotation' | 'leave_roster_overlap';
+// invalid_declared_leave_range added as a hardening slice (2026-08-20,
+// adversarial finding): leave_start > leave_end previously made the
+// overlap check mathematically unsatisfiable and silently produced zero
+// findings. Now surfaced explicitly instead of suppressed.
+export type ReconciliationIssueType = 'rotation_conflict' | 'unrecognised_rotation' | 'leave_roster_overlap' | 'invalid_declared_leave_range';
 
 export interface ReconciliationIssue {
   type: ReconciliationIssueType;
