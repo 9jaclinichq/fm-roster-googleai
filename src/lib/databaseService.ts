@@ -1881,12 +1881,26 @@ export const databaseService = {
 
   // Creates a Paystack subaccount via the platform-operator-subaccount Edge
   // Function (renamed from paystack-subaccount 2026-08-15, see
-  // docs/MODULARIZATION_ARCHITECTURE.md), then inserts the tenant row with
-  // the returned subaccount_code. If the Paystack call fails, no tenant row
-  // is created — surfaced to the caller as a thrown error so the operator
-  // console can show it plainly rather than leaving a tenant with no
-  // billing configured.
-  async provisionTenantWithSubaccount(tenant: {
+  // docs/MODULARIZATION_ARCHITECTURE.md), then creates the tenant row with
+  // the returned subaccount_code via platformOperatorCreateTenant() below
+  // — a single capability-checked RPC call, not a direct insert (migration
+  // 62, Priority-0 Tenant Surface slice P0-7A: this used to be the one
+  // remaining tenant write with no operator-code verification at all,
+  // inert only because the Edge Function call above fails closed under
+  // Emergency Slice E0 containment). If the Paystack call fails, no tenant
+  // row is created — surfaced to the caller as a thrown error so the
+  // operator console can show it plainly rather than leaving a tenant with
+  // no billing configured.
+  //
+  // TRANSITIONAL, E0-ERA DESIGN — see migration 62's own header: the
+  // subaccount_code passed to platformOperatorCreateTenant() below is
+  // whatever fnData.subaccount_code contains, trusted as-is with no
+  // independent verification that Paystack actually issued it. This call
+  // only adds verification of the operator's own authority, not of the
+  // subaccount code's authenticity. Any future work reassessing/lifting E0
+  // containment must also reassess server-side binding/verification of
+  // this payment-provider metadata — not redesigned here.
+  async provisionTenantWithSubaccount(operatorCode: string, tenant: {
     name: string;
     short_code: string;
     institution?: string | null;
@@ -1921,24 +1935,14 @@ export const databaseService = {
       throw new Error('Payment setup is temporarily unavailable.');
     }
 
-    const { data, error } = await supabase!
-      .from('tenants')
-      .insert([{
-        name: tenant.name,
-        short_code: tenant.short_code,
-        institution: tenant.institution || null,
-        department: tenant.department || null,
-        plan_type: tenant.plan_type || 'free_seeded',
-        paystack_subaccount_code: fnData.subaccount_code,
-      }])
-      .select()
-      .single();
-
-    if (error) {
-      console.warn('Error inserting tenant after subaccount creation:', error);
-      throw error;
-    }
-    return data;
+    return databaseService.platformOperatorCreateTenant(operatorCode, {
+      name: tenant.name,
+      short_code: tenant.short_code,
+      institution: tenant.institution || null,
+      department: tenant.department || null,
+      plan_type: tenant.plan_type || 'free_seeded',
+      paystack_subaccount_code: fnData.subaccount_code,
+    });
   },
 
   // Unsafe — depends on tenants' permissive direct-write RLS (migration
@@ -2055,15 +2059,21 @@ export const databaseService = {
   // verifyPlatformOperatorLogin() call is never treated as sufficient
   // authorization on its own. p_operator_code is explicitly transitional
   // compatibility, not the target API contract — see
-  // docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md §11. Does not cover
-  // provisionTenantWithSubaccount() (Paystack path) — that remains under
-  // Emergency Slice E0 containment, untouched by this slice.
+  // docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md §11.
+  //
+  // paystack_subaccount_code (migration 62, slice P0-7A) is optional and
+  // used only by provisionTenantWithSubaccount() above — a client-supplied
+  // value trusted as-is, with no independent verification that Paystack
+  // actually issued it. See migration 62's header: this call adds
+  // verification of the operator's authority, not of the subaccount
+  // code's authenticity; that remains a transitional, E0-era design.
   async platformOperatorCreateTenant(operatorCode: string, tenant: {
     name: string;
     short_code: string;
     institution?: string | null;
     department?: string | null;
     plan_type?: TenantPlanType;
+    paystack_subaccount_code?: string | null;
   }): Promise<Tenant> {
     checkSupabase();
 
@@ -2074,6 +2084,7 @@ export const databaseService = {
       p_institution: tenant.institution ?? null,
       p_department: tenant.department ?? null,
       p_plan_type: tenant.plan_type ?? 'free_seeded',
+      p_paystack_subaccount_code: tenant.paystack_subaccount_code ?? null,
     });
 
     if (error) {

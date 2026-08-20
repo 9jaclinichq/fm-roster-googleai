@@ -211,7 +211,7 @@ const OperatorConsole: React.FC<{
       setProvisionError('Name and short code are required.');
       return;
     }
-    if (!withBilling && !operatorCode) {
+    if (!operatorCode) {
       setProvisionError('Your operator session has expired. Please sign out and sign in again.');
       return;
     }
@@ -224,12 +224,15 @@ const OperatorConsole: React.FC<{
           setProvisioning(false);
           return;
         }
-        // Unmigrated in this slice — provisionTenantWithSubaccount() calls
+        // provisionTenantWithSubaccount() still calls
         // platform-operator-subaccount, which remains under Emergency Slice
         // E0 fail-closed containment (see
-        // docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md). Not touched by
-        // P0-4.
-        tenant = await databaseService.provisionTenantWithSubaccount({
+        // docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md) — unchanged by
+        // P0-7A. What P0-7A closed is the tenant-creation step after that
+        // call: it now goes through the same capability-checked
+        // platformOperatorCreateTenant() RPC path as the non-billing branch
+        // below, instead of a direct table insert (migration 62).
+        tenant = await databaseService.provisionTenantWithSubaccount(operatorCode, {
           name: newName.trim(),
           short_code: newShortCode.trim(),
           institution: newInstitution.trim() || null,
