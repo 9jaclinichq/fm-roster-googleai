@@ -239,7 +239,17 @@ function checkNoActiveConsumersOfUnsafeMethods() {
   // genuine, approved consumer of CasebookBuilderView.tsx/terminology.tsx
   // pending institutional Auth. Flagging it here would be a false positive.
 
-  const files = listSourceFiles('src').filter(f => path.basename(f) !== 'databaseService.ts');
+  // Modularization Phase 4A: these 8 methods' implementations now live in
+  // src/lib/services/tenantService.ts, spread into the databaseService
+  // facade (databaseService.ts) rather than defined there directly — both
+  // files jointly constitute "the implementation," so both are excluded
+  // from the consumer scan on the same basis databaseService.ts always was:
+  // an implementation file referencing its own method isn't evidence of an
+  // application-level consumer adopting the unsafe legacy path.
+  const files = listSourceFiles('src').filter(f => {
+    const base = path.basename(f);
+    return base !== 'databaseService.ts' && base !== 'tenantService.ts';
+  });
 
   for (const method of unsafeMethods) {
     const re = new RegExp(`databaseService\\.${method}\\(`);
@@ -251,7 +261,7 @@ function checkNoActiveConsumersOfUnsafeMethods() {
       }
     }
     if (hits.length === 0) {
-      pass(`databaseService.${method}() has no active consumers outside databaseService.ts`);
+      pass(`databaseService.${method}() has no active consumers outside its own implementation (databaseService.ts/tenantService.ts)`);
     } else {
       fail(`databaseService.${method}() is still called from: ${hits.join(', ')}`);
     }
@@ -328,7 +338,13 @@ function checkProvisionTenantWithSubaccountHasNoDirectWrite() {
   // 'tenants')` access inside this specific method — INSERT, UPDATE, or
   // otherwise — fails this check, regardless of what else in the file
   // changes around it.
-  const content = readFile('src/lib/databaseService.ts');
+  //
+  // Modularization Phase 4A: the implementation moved from databaseService.ts
+  // to src/lib/services/tenantService.ts (spread into the databaseService
+  // facade) — the public databaseService.provisionTenantWithSubaccount(...)
+  // call shape callers use is unchanged, so this check now reads its new
+  // physical location.
+  const content = readFile('src/lib/services/tenantService.ts');
   if (content === null) return;
 
   const body = extractMethodBody(content, 'provisionTenantWithSubaccount');
@@ -361,7 +377,12 @@ function checkGetTenantProjectionAllowlist() {
   // anon/authenticated has never been narrowed to a column allow-list
   // (unlike workforce/settings — see migration 02) — so this check says
   // nothing about, and does not close, that database-level exposure.
-  const content = readFile('src/lib/databaseService.ts');
+  //
+  // Modularization Phase 4A: the implementation moved from databaseService.ts
+  // to src/lib/services/tenantService.ts (spread into the databaseService
+  // facade) — the public databaseService.getTenant(...) call shape callers
+  // use is unchanged, so this check now reads its new physical location.
+  const content = readFile('src/lib/services/tenantService.ts');
   if (content === null) return;
 
   const body = extractMethodBody(content, 'getTenant');
