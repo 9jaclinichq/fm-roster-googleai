@@ -79,6 +79,7 @@ import {
 import { buildDefaultFolderTree } from '../modules/research/lib/folderStructure';
 import { tenantService } from './services/tenantService';
 import { announcementService } from './services/announcementService';
+import { examReadinessService } from './services/examReadinessService';
 
 // Read from import.meta.env
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -950,64 +951,13 @@ export const databaseService = {
     return publicUrlData.publicUrl;
   },
 
-  // --- EXAM READINESS ---
-  async getOrCreateExamReadiness(workforceId: string): Promise<ExamReadiness> {
-    checkSupabase();
-
-    const { data, error } = await supabase!
-      .from('exam_readiness')
-      .select('*')
-      .eq('workforce_id', workforceId)
-      .maybeSingle();
-
-    if (error) {
-      console.warn('Error fetching exam readiness:', error);
-      throw error;
-    }
-    if (data) return data;
-
-    // Upsert rather than a plain insert: two near-simultaneous callers (two
-    // tabs opening the Exam Readiness view) can both see no existing row
-    // above before either write lands. A plain insert would throw a raw
-    // 23505 on the loser (exam_readiness.workforce_id is UNIQUE — see
-    // upsertExamReadiness's onConflict target below); upserting on the same
-    // conflict target makes the loser just return the winner's row instead.
-    const { data: created, error: createErr } = await supabase!
-      .from('exam_readiness')
-      .upsert([{ workforce_id: workforceId }], { onConflict: 'workforce_id', ignoreDuplicates: true })
-      .select()
-      .maybeSingle();
-
-    if (createErr) {
-      console.warn('Error creating exam readiness record:', createErr);
-      throw createErr;
-    }
-    if (created) return created;
-
-    // ignoreDuplicates:true returns no row when another request already won
-    // the race — fetch what that request created.
-    const existing = await this.getOrCreateExamReadiness(workforceId);
-    return existing;
-  },
-
-  async upsertExamReadiness(
-    workforceId: string,
-    updates: Partial<Pick<ExamReadiness, 'evidemy_completed_count' | 'evidemy_total_required' | 'physical_logbook_verified' | 'exam_fees_paid' | 'college_forms_submitted'>>
-  ): Promise<ExamReadiness> {
-    checkSupabase();
-
-    const { data, error } = await supabase!
-      .from('exam_readiness')
-      .upsert([{ workforce_id: workforceId, ...updates }], { onConflict: 'workforce_id' })
-      .select()
-      .single();
-
-    if (error) {
-      console.warn('Error updating exam readiness:', error);
-      throw error;
-    }
-    return data;
-  },
+  // EXAM READINESS domain functions (getOrCreateExamReadiness,
+  // upsertExamReadiness) moved verbatim to
+  // src/lib/services/examReadinessService.ts (Modularization Phase 4C) and
+  // spread in here so every existing databaseService.X(...) call site keeps
+  // working unchanged. See that file for their bodies/comments, including
+  // an explicit note on why the this-based retry self-call stays unrewritten.
+  ...examReadinessService,
 
   // --- MOCK VIVA ORAL EXAM SIMULATOR ---
   async createVivaSimulation(entry: {
