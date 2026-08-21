@@ -78,6 +78,7 @@ import {
 } from '../types';
 import { buildDefaultFolderTree } from '../modules/research/lib/folderStructure';
 import { tenantService } from './services/tenantService';
+import { announcementService } from './services/announcementService';
 
 // Read from import.meta.env
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -732,97 +733,13 @@ export const databaseService = {
     return data;
   },
 
-  // --- ANNOUNCEMENTS ---
-  // tenantId defaults to DEFAULT_TENANT_ID for resident-facing call sites;
-  // Chief-facing callers pass their resolved tenant explicitly.
-  async getAnnouncements(tenantId: string = DEFAULT_TENANT_ID): Promise<Announcement[]> {
-    checkSupabase();
-
-    const { data, error } = await supabase!
-      .from('announcements')
-      .select('*')
-      .eq('tenant_id', tenantId)
-      .order('pinned', { ascending: false })
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.warn('Error fetching announcements:', error);
-      throw error;
-    }
-    return data || [];
-  },
-
-  async createAnnouncement(entry: {
-    title: string;
-    body: string;
-    category: Announcement['category'];
-    pinned?: boolean;
-    created_by_workforce_id?: string | null;
-  }, tenantId: string = DEFAULT_TENANT_ID): Promise<Announcement> {
-    checkSupabase();
-
-    const { data, error } = await supabase!
-      .from('announcements')
-      .insert([{ pinned: false, ...entry, tenant_id: tenantId }])
-      .select()
-      .single();
-
-    if (error) {
-      console.warn('Error creating announcement:', error);
-      throw error;
-    }
-    return data;
-  },
-
-  async updateAnnouncement(id: string, updates: Partial<Pick<Announcement, 'title' | 'body' | 'category' | 'pinned'>>): Promise<Announcement> {
-    checkSupabase();
-
-    const { data, error } = await supabase!
-      .from('announcements')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      console.warn('Error updating announcement:', error);
-      throw error;
-    }
-    return data;
-  },
-
-  async markAnnouncementRead(announcementId: string, workforceId: string): Promise<AnnouncementRead> {
-    checkSupabase();
-
-    const { data, error } = await supabase!
-      .from('announcement_reads')
-      .upsert([{ announcement_id: announcementId, workforce_id: workforceId }], {
-        onConflict: 'announcement_id,workforce_id',
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.warn('Error recording announcement read receipt:', error);
-      throw error;
-    }
-    return data;
-  },
-
-  async getAnnouncementReadsForWorkforce(workforceId: string): Promise<AnnouncementRead[]> {
-    checkSupabase();
-
-    const { data, error } = await supabase!
-      .from('announcement_reads')
-      .select('*')
-      .eq('workforce_id', workforceId);
-
-    if (error) {
-      console.warn('Error fetching announcement read receipts:', error);
-      throw error;
-    }
-    return data || [];
-  },
+  // ANNOUNCEMENTS domain functions (getAnnouncements, createAnnouncement,
+  // updateAnnouncement, markAnnouncementRead, getAnnouncementReadsForWorkforce)
+  // moved verbatim to src/lib/services/announcementService.ts
+  // (Modularization Phase 4B) and spread in here so every existing
+  // databaseService.X(...) call site keeps working unchanged. See that
+  // file for their bodies/comments.
+  ...announcementService,
 
   // --- DISSERTATION ASSISTANT ---
   async getDissertationForWorkforce(workforceId: string): Promise<Dissertation | null> {
