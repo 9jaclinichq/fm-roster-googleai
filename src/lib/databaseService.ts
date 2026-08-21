@@ -1851,8 +1851,8 @@ export const databaseService = {
   // Surface slice P0-1) — the locked public projection via
   // `list_public_tenants()`, which server-side filters to active/
   // discoverable tenants and returns only id/name/institution/department.
-  // Not yet called by any consumer (that migration is P0-2); added
-  // alongside getTenants() without changing it, per P0-1's own scope.
+  // P0-2 migrated both real consumers (TenantSelectorView.tsx,
+  // ResidentLoginView.tsx) onto this method.
   async listPublicTenants(): Promise<PublicTenant[]> {
     checkSupabase();
 
@@ -1873,10 +1873,33 @@ export const databaseService = {
   // today, so they remain on this method pending institutional Auth
   // (explicitly deferred from P0-5 — see docs/TENANT_SURFACE_SECURITY_SPEC.md).
   // Do not remove until every caller is migrated.
-  async getTenant(tenantId: string): Promise<Tenant | null> {
+  //
+  // TENANT CLIENT-SURFACE MINIMIZATION / DEFENSE-IN-DEPTH (not the final
+  // confidentiality boundary): projection narrowed from select('*') to
+  // exactly what those two callers read (terminology_overrides,
+  // module_flags), mirroring the WORKFORCE_PUBLIC_COLUMNS/ChiefTenantConfig
+  // narrow-projection convention already used elsewhere in this file. This
+  // stops the helper itself from requesting or re-exposing sensitive
+  // columns (paystack_subaccount_code, plan_type, status, short_code) and
+  // prevents silent re-expansion through this specific call site. It does
+  // NOT close database-level exposure: tenants_select RLS remains `USING
+  // (true)` (migration 11, deliberately untouched by migration 63 pending
+  // institutional Auth), and `tenants` has never had its default
+  // table-level GRANT narrowed to a column allow-list the way migration 02
+  // did for workforce/settings — so any anon-key caller querying `tenants`
+  // directly, outside this helper, can still independently select
+  // paystack_subaccount_code/plan_type/status/short_code today. That
+  // remaining gap stays deferred debt pending the institutional-Auth-
+  // dependent tenant-read-authorization slice (see
+  // docs/TENANT_SURFACE_SECURITY_SPEC.md, docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md).
+  async getTenant(tenantId: string): Promise<Pick<Tenant, 'id' | 'terminology_overrides' | 'module_flags'> | null> {
     checkSupabase();
 
-    const { data, error } = await supabase!.from('tenants').select('*').eq('id', tenantId).maybeSingle();
+    const { data, error } = await supabase!
+      .from('tenants')
+      .select('id, terminology_overrides, module_flags')
+      .eq('id', tenantId)
+      .maybeSingle();
     if (error) {
       console.warn('Error fetching tenant:', error);
       throw error;

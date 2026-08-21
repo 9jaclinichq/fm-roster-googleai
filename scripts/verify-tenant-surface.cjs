@@ -344,6 +344,61 @@ function checkProvisionTenantWithSubaccountHasNoDirectWrite() {
   }
 }
 
+function checkGetTenantProjectionAllowlist() {
+  // Tenant Client-Surface Minimization / defense-in-depth slice:
+  // databaseService.getTenant() must request only the exact column
+  // allow-list its two real consumers (CasebookBuilderView.tsx,
+  // terminology.tsx) read — id, terminology_overrides, module_flags —
+  // never select('*') and never a field outside this allow-list, so a
+  // future edit can't silently re-expand what this one helper requests/
+  // re-exposes. This asserts the APPROVED allow-list rather than merely
+  // blacklisting today's known-sensitive fields (paystack_subaccount_code/
+  // plan_type/status/short_code), so a future column added to `tenants`
+  // cannot silently become exposed through this helper either.
+  //
+  // NOTE: this is application-layer defense-in-depth only. tenants_select
+  // RLS remains USING(true) and the table's default table-level GRANT to
+  // anon/authenticated has never been narrowed to a column allow-list
+  // (unlike workforce/settings — see migration 02) — so this check says
+  // nothing about, and does not close, that database-level exposure.
+  const content = readFile('src/lib/databaseService.ts');
+  if (content === null) return;
+
+  const body = extractMethodBody(content, 'getTenant');
+  if (body === null) {
+    fail('databaseService.getTenant() not found — cannot verify its projection allow-list (method renamed/removed/restructured?)');
+    return;
+  }
+
+  if (/\.select\(\s*['"]\*['"]\s*\)/.test(body)) {
+    fail("databaseService.getTenant() requests select('*') — must request only the approved column allow-list");
+    return;
+  }
+
+  const selectMatch = body.match(/\.select\(\s*['"]([^'"]*)['"]\s*\)/);
+  if (!selectMatch) {
+    fail("databaseService.getTenant() has no recognizable .select('...') call — cannot verify its projection allow-list");
+    return;
+  }
+
+  const columns = selectMatch[1].split(',').map(c => c.trim()).filter(Boolean);
+  const APPROVED = ['id', 'terminology_overrides', 'module_flags'];
+
+  const missing = APPROVED.filter(c => !columns.includes(c));
+  const extra = columns.filter(c => !APPROVED.includes(c));
+
+  if (missing.length === 0 && extra.length === 0) {
+    pass(`databaseService.getTenant() projection is exactly [${APPROVED.join(', ')}]`);
+  } else {
+    if (extra.length > 0) {
+      fail(`databaseService.getTenant() projection includes unapproved field(s): ${extra.join(', ')} — narrow it back to the approved allow-list [${APPROVED.join(', ')}], or add a new field here only after confirming it is genuinely required by a current consumer`);
+    }
+    if (missing.length > 0) {
+      fail(`databaseService.getTenant() projection is missing approved field(s): ${missing.join(', ')}`);
+    }
+  }
+}
+
 function checkCliToolingHealth() {
   // Optional, non-blocking: confirms the pinned repo-local CLI (tooling
   // slice, docs/DATABASE_AND_SECURITY.md) is at least invocable. Does not
@@ -484,6 +539,7 @@ async function main() {
   checkOperatorRpcsSelfVerify();
   checkNoActiveConsumersOfUnsafeMethods();
   checkProvisionTenantWithSubaccountHasNoDirectWrite();
+  checkGetTenantProjectionAllowlist();
   checkNoPermissivePolicyReintroduced();
   checkCliToolingHealth();
 
