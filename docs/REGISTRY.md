@@ -128,6 +128,40 @@ slice; flagged here so a future slice doesn't have to rediscover it.
 
 ---
 
+**Governance/Registry Reconciliation pass (2026-08-21)**: brought current
+through migration `65_seed_workforce_emails.sql` and today's local HEAD. This
+pass adds the Priority-0 Tenant Surface security work (migrations 58–63), the
+resident email/login contract (migrations 64/65), Workforce Option A
+(commits `0e6cbed`/`b733d87`, no migration), and one local-only commit past
+production. Every fact this pass added or changed is tagged inline with one
+of the three markers below — untagged prior-pass text is unchanged by this
+pass, not silently re-verified.
+
+**Deployment-boundary tags used from this pass forward**:
+- **[LIVE]** — applied to and verified against the production Supabase
+  project at `origin/main @ c4d29c6`.
+- **[LOCAL-ONLY]** — exists in this worktree's local git history past that
+  commit, not deployed, not pushed. Do not infer it is live.
+- **[PLANNED/DEFERRED]** — specified or scoped but deliberately not
+  implemented yet, per an explicit locked decision.
+
+**Deployment boundary, stated plainly**: production is **[LIVE]** `origin/main
+@ c4d29c6`, migrations 58–65 manually applied/verified at that commit. Local
+development HEAD sits one commit past that — **[LOCAL-ONLY]** `01bb0aa`
+(tenant client-surface minimization, see S4 below). The Supabase CLI migration
+ledger remains unreconciled against this linear file history (see
+`docs/DATABASE_AND_SECURITY.md`); `supabase db push` remains prohibited.
+
+**Harness inventory, current (see `docs/TESTING_AND_VERIFICATION.md` for the
+full classification of each)**: `scripts/verify-tenant-surface.cjs` (static/
+string tripwire, plus opt-in read-only-remote and local/test-mutation modes),
+`scripts/verify-resident-email-login.cjs` (static tripwire + logic-level),
+`scripts/verify-e0-containment.cjs` (static tripwire), `scripts/verify-roster-
+reconciliation.ts` (logic-level). None are integration tests against a real
+Postgres instance or a formal proof.
+
+---
+
 ## L5 Faces
 
 ### F1 Auth Landing
@@ -148,11 +182,11 @@ face: landing
 path: `src/modules/auth/components/ResidentLoginView.tsx`
 owner engine: none
 tenant scope: org
-consumes: `tenants` (active list, migration 26), `workforce` (by tenant), terminology overrides
+consumes: `tenants` — now via `list_public_tenants()` (migration 58, **[LIVE]**, see S4), not the raw `getTenants()` table read; `workforce` (by tenant), terminology overrides
 emits: none (writes session to localStorage client-side only, not an event)
 udr fields: none (no formal UDR write path yet — see S3)
 gates: none
-status: stable — already does tenant → member → code → registered-email order (migration 26).
+status: stable — already does tenant → member → code → registered-email order (migration 26). **Updated this pass — [LIVE], migrations 64/65**: `verify_resident_login()` now returns a `has_email` boolean (never the stored email value); a blank/missing email never blocks a valid-PIN login for a member whose `workforce.email` is still NULL; a seeded email must still match. `PostLoginEmailPrompt.tsx` (new component, not independently registered elsewhere in this file) offers a lightweight, dismissible post-login capture calling `resident_set_email()` — which independently re-verifies `workforce_id + resident_code + active` server-side and is the sole write path for `workforce.email`. This is explicitly transitional resident-code-based identity, not Institutional Auth. Migration 65 seeded 23 of 31 active workforce rows with a real email (Dr. Olanipekun's own row was already correct and deliberately left untouched by 65); 24 active members now have email, 7 remain unseeded by design.
 
 ### F3 Chief/Org-Admin Login
 layer: L5
@@ -248,7 +282,7 @@ consumes: `raw_roster_uploads`, `combined_master_rosters`, `roster_types`, `work
 emits: none
 udr fields: none
 gates: Chief session
-status: fragmented — **path corrected**: moved out of `src/components/` in the org-admin split, but into `org-admin/components/dashboard/`, not into its own module's `roster-engine/components/`. `roster-engine` (M11 below) is still lib-only (`uchRosterParser.ts`); this face lives in a different module's folder than the lib it calls, which is itself a cross-module import (`org-admin` face importing `roster-engine`'s lib) — not a new problem, just re-homed rather than resolved.
+status: fragmented — **path corrected**: moved out of `src/components/` in the org-admin split, but into `org-admin/components/dashboard/`, not into its own module's `roster-engine/components/`. `roster-engine` (M11 below) is still lib-only (`uchRosterParser.ts`); this face lives in a different module's folder than the lib it calls, which is itself a cross-module import (`org-admin` face importing `roster-engine`'s lib) — not a new problem, just re-homed rather than resolved. **New this pass — [LIVE], no migration, commits `0e6cbed`/`b733d87` (Workforce Option A)**: now also renders a read-only reconciliation checklist (`src/modules/roster-engine/lib/rosterReconciliation.ts`) surfacing rotation-vs-on-floor conflicts, unmatched rotations, and declared-leave/roster-overlap discrepancies — deterministic, conservative matching, no writes anywhere. Hardened against adversarial findings (whitespace-tolerant matching, reversed-leave-range detection) with its own regression harness, `scripts/verify-roster-reconciliation.ts` (10/10 passing). Matches its own spec's (`docs/WORKFORCE_V1_RECOVERY_SPEC.md`) acceptance criteria; real-cycle validation is underway now. **Workforce Option B (write-through/derive `on_floor` from submissions) remains [PLANNED/DEFERRED]** pending that real-cycle evidence, per the spec's own §8 — not started.
 
 ### F11 Org-Admin: Template Manager
 layer: L5
@@ -664,6 +698,10 @@ layer: L3
 face: shared
 path: partially — `databaseService.getTenant()`/`getTenants()` + the `tenants` table's `module_flags`/`terminology_overrides`/`call_duty_rules` columns; **now also `org_groups` (migration 36)** for the delegatable-role-vocabulary slice, **and `workforce_categories` (migration 39)** for the workforce-grade-vocabulary slice
 status: fragmented, **one real sub-gap narrowed this wave**. Config still exists as ad hoc columns/tables read directly by whichever face needs them (F12 `TenantCustomizationView`, `terminology.tsx`, each Edge Function's `tenantAdaptation.ts`), not a single service with its own contract — that part is unchanged. What's new: the spec's own rule 10 ("groups are org-defined vocabulary, not a fixed hierarchy") was previously violated by a genuinely global, hardcoded 4-row `roles` table duplicated in three frontend places plus a hardcoded RPC IN-list (per migration 36's own header, confirmed by reading `App.tsx` before that migration was written). Migration 36 adds tenant-scoped `org_groups` (seeded per-tenant with the 4 previous defaults as editable-but-not-deletable rows, `grants_review_approval boolean` as the one real permission bit in use today), three Chief-only SECURITY DEFINER RPCs (`chief_create_org_group`/`chief_update_org_group`/`chief_delete_org_group`), and rewires `chief_assign_user_role` to take an `org_group_id` instead of a hardcoded role-id string. Wired into `RoleDelegationPanel.tsx` (composed into F9). Migration 36 also fixes a latent bug found in the same investigation: `user_roles`' RLS was `TO authenticated` only, but this app has no Supabase Auth session for the plaintext-code flow, so `getDelegatedRoles()` had been returning zero rows unconditionally since migration 01 — widened to the app's established permissive posture.
+
+**New this pass — Priority-0 Tenant Surface security work, migrations 58–63, all [LIVE]**: public pre-login discovery now goes through `list_public_tenants()` (migration 58, locked projection `id, name, institution, department`, no private field ever included), consumed by both real call sites (`TenantSelectorView.tsx`, `ResidentLoginView.tsx`) — `databaseService.getTenants()` (raw `select('*')`) has zero remaining consumers outside `databaseService.ts` itself, confirmed by the harness's static grep. Chief-scoped tenant config reads/writes go through `chief_get_tenant`/`chief_update_tenant_terminology`/`chief_update_tenant_module_flags` (migration 59); platform-operator tenant creation/status/plan changes go through their own capability-checked RPCs (migrations 60/62), each independently re-verifying `shared_code`/`admin_code` server-side rather than trusting prior login state. Migration 63 **[LIVE]** dropped the permissive `tenants_insert`/`tenants_update` policies outright — no client anywhere retains a direct write path to `tenants`. `tenants_select` **remains `USING(true)`, [PLANNED/DEFERRED]** pending Institutional Auth (residents/members have no server-verifiable credential today for a real per-tenant read policy to check against) — this is the single largest remaining tenant-surface gap, not closed by any of the above.
+
+**Local-only, not live — [LOCAL-ONLY] commit `01bb0aa`**: `databaseService.getTenant()` (the one remaining full-row consumer, still used by `terminology.tsx`/`CasebookBuilderView.tsx` pending Institutional Auth) is narrowed from `select('*')` to exactly `id, terminology_overrides, module_flags`, with a new allow-list regression guard in `scripts/verify-tenant-surface.cjs`. Classified explicitly as **tenant client-surface minimization / defense-in-depth, not database-level closure** — `tenants` has never had a `REVOKE`/column-allow-list applied (unlike `workforce`/`settings`, migration 02), so a direct anon-key query against `tenants` outside this helper can still read `paystack_subaccount_code`/`plan_type`/`status` today. See `docs/DATABASE_AND_SECURITY.md`'s Tenant-Surface Posture section.
 
 **`workforce_categories` (migration 39) — CRUD panel now wired in, confirmed this pass.** Same pattern as `org_groups` one migration later: tenant-scoped table seeded per-tenant with the 3 legacy `Category` union values (Registrar/Senior Registrar/Medical Officer) as editable-but-not-deletable `is_system_default` rows, three Chief-only SECURITY DEFINER RPCs (`chief_create_workforce_category`/`chief_update_workforce_category`/`chief_delete_workforce_category`), and a new nullable `workforce.category_id` FK added alongside the existing free-text `workforce.category` column rather than replacing it. `CategoryManagerPanel.tsx` (`src/modules/org-admin/components/dashboard/CategoryManagerPanel.tsx`, 220 lines) is that CRUD panel — **it was standalone/not composed into any dashboard at the previous registry snapshot; it is now directly imported into `ChiefDashboardView.tsx` (F9, see above) as the "Categories" tab.** The rewire this unblocks is still a followup, exactly as flagged in CLAUDE.md's own note on migration 36-40: `WorkforceRegistryPanel.tsx` (confirmed directly, line ~92/116) still reads and edits `member.category`, the old free-text column, not `category_id` — same gap `org_groups` had before `RoleDelegationPanel`/`App.tsx`'s `canApprove` checks were rewired onto it, just not yet closed for categories. CSV export and role-delegation forms were not independently re-checked this pass but are very likely on the same old column given `WorkforceRegistryPanel.tsx`'s own state.
 

@@ -1,22 +1,60 @@
 # Handoff To Claude
 
-Snapshot: 2026-08-19
+Snapshot: 2026-08-21
 Branch: `main`
-Commit: `40cecd4`
+Local HEAD (this snapshot): `01bb0aa`
 
 This is a commit-stamped handoff snapshot. It is not an architectural authority;
-use `AGENTS.md` and the source-of-truth hierarchy defined there.
+use `AGENTS.md` and the source-of-truth hierarchy defined there. This snapshot
+supersedes the prior 2026-08-19 (`40cecd4`) one in place — this is a disposable
+onboarding aid, not a historical record; see `docs/REGISTRY.md` and
+`docs/LIVING_SYSTEM_GAP_AUDIT.md` for the append-only historical trail.
+
+## Deployment Boundary (read this first)
+
+- **Production: `origin/main @ c4d29c6`.** Migrations 58–65 manually
+  applied/verified live at that commit.
+- **Local-only development HEAD: `01bb0aa`** (one commit past production —
+  tenant client-surface minimization in `databaseService.getTenant()`; see
+  `docs/REGISTRY.md`'s S4 entry). Do not infer this, or any future local-only
+  commit, is deployed.
+- **Migration ledger remains unreconciled** between the linear
+  `supabase/migrations/` file history and the Supabase CLI's own applied-
+  migration table — see `docs/DATABASE_AND_SECURITY.md`. `supabase db push`
+  remains prohibited until that reconciliation is separately completed and
+  approved.
 
 ## Repository State
 
 PrivyDoc Workspace is a React/Vite/TypeScript/Tailwind app backed by Supabase.
 The repo has a module tree under `src/modules/`, a large residual
 `src/lib/databaseService.ts`, Supabase Edge Functions, and migrations through
-`57_doctor_ownership_rls_newer_modules.sql`.
+`65_seed_workforce_emails.sql`.
 
 The worktree had unrelated untracked files before this governance pass,
 including `.claude/`, `.tmp-run-migration.cjs`, and several historical task
 notes. Do not assume they were created by this handoff.
+
+## Current Decision State (not a prescribed next slice)
+
+Do not treat any single item below as unquestionably "next." Future slice
+selection must go through DISCOVER → RECONCILE → HUMAN REVIEW using the
+refreshed `docs/REGISTRY.md` and current source, per `docs/ENGINEERING_WORKFLOW.md`.
+
+- **Workforce Option A** is implemented and hardened (commits `0e6cbed`/
+  `b733d87`), currently awaiting real-cycle evidence from the live submission
+  cycle now underway. Do not wait on that evidence before doing unrelated work.
+- **Workforce Option B** remains blocked pending that same real-cycle
+  evidence, per `docs/WORKFORCE_V1_RECOVERY_SPEC.md`'s own §8.
+- **Institutional Auth** (`docs/INSTITUTIONAL_AUTH_MIGRATION_SPEC.md`) remains
+  a major available architectural stream — its own spec calls itself the
+  final foundational document before implementation begins — but it is **not
+  automatically next** simply because the spec exists.
+- **Tenant database-level SELECT/column exposure remains open and
+  intentionally deferred** (`tenants_select USING(true)`, no column-level
+  `REVOKE`) — see `docs/DATABASE_AND_SECURITY.md`'s Tenant-Surface Posture
+  section. Local-only commit `01bb0aa` is defense-in-depth only, not a
+  database-level close.
 
 ## Authoritative Documents
 
@@ -69,21 +107,18 @@ Known boundary debt:
 
 ## Migration State Uncertainty
 
-Migration files exist through 57. That does not prove live application. Some
-older headers saying "NOT APPLIED LIVE" are known to be stale; some older docs
-were written before later migrations existed. Always distinguish:
+Migration files exist through 65. Migrations 58–65 are separately stated as
+manually applied/verified live at production commit `c4d29c6` (see Deployment
+Boundary above) — that is a recorded fact from the live submission cycle, not
+a re-derivation from migration headers. Some older headers (32–57 range)
+saying "NOT APPLIED LIVE" are known to be stale; some older docs were written
+before later migrations existed. Always distinguish:
 
 - migration file exists on disk
 - code expects the schema
 - live database state has been verified
 
 Do not apply migrations or mutate live data without explicit approval.
-
-## First Recommended Recovery Slice
-
-Refresh `docs/REGISTRY.md` against current `src/modules/` and migrations 44-57
-without changing product code. The registry currently lags newer scheduling,
-meetings, clinical-writing, productivity, and doctor-ownership RLS work.
 
 ## Do Not Touch Yet
 

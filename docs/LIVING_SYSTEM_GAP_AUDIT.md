@@ -491,3 +491,80 @@ The RLS-tightening item alone touches dozens of tables and needs careful per-tab
 avoid breaking the live app (see this file's own RLS findings above and CLAUDE.md's Security Notes on
 why RLS changes have historically required explicit user sign-off). Rungs 2-4 autonomous agents are
 close to greenfield work. Recommend phasing rather than attempting all of this in one pass.
+
+---
+
+## Addendum (2026-08-21) — migrations 55–65 + local-only work, Governance/Registry Reconciliation
+
+This audit's most recent prior pass stopped at migration 54 (with a same-day
+2026-08-20 Slice-2 reconciliation touching S2/S3/M19, cross-referenced against
+`docs/REGISTRY.md` through migration 57). Migrations 55–65, and one local-only
+commit past production, are new since that pass and are not covered anywhere
+above. Recorded here as a labeled addendum, not folded into the sections
+above, per this file's own established convention.
+
+**§2 Tenancy — write-side update.** The `tenants` INSERT/UPDATE permissive-RLS
+gap this file's earlier sections and `docs/TENANCY_AUTH_RLS_RECOVERY_SPEC.md`
+both named is now **closed live**: migrations 58–63 (Priority-0 Tenant Surface
+slice) added `list_public_tenants()` (public discovery, locked projection),
+Chief-scoped and platform-operator-scoped `SECURITY DEFINER` RPCs for tenant
+config reads/mutations, and migration 63 dropped the permissive
+`tenants_insert`/`tenants_update` policies outright. **`tenants_select`
+remains `USING(true)`, unchanged, by design** — pending Institutional Auth,
+since residents/members have no server-verifiable credential to write a real
+per-tenant read policy against today. Institutional-table RLS
+(workforce/submissions/collections/etc.) remains exactly as open as before —
+this addition only closes the `tenants` table's write side, not the larger
+institutional-RLS gap this file already names as the single largest open
+item.
+
+**New work outside this spec's original 10 modules, confirmed by source
+read:**
+- **Resident email/login contract (migrations 64/65)**: `verify_resident_login()`
+  now returns a `has_email` boolean without ever exposing the stored email
+  value; a missing/blank email never blocks a valid-PIN login; `resident_set_email()`
+  is the sole write path for `workforce.email`, independently re-verifying
+  `workforce_id + resident_code + active` server-side. Migration 65 seeded 23
+  of 31 active workforce rows with a real email (Dr. Olanipekun's own row was
+  already correct and deliberately left untouched by 65); 24 active members
+  now have email, 7 remain unseeded by design, relying on the post-login
+  capture prompt. This is
+  explicitly **transitional resident-code-based identity**, not Institutional
+  Auth — it does not create an `auth.uid()` for any institutional flow.
+- **Workforce Option A** (commits `0e6cbed`/`b733d87`, no migration): a
+  read-only reconciliation checklist (`rosterReconciliation.ts`) wired into
+  `MultiRosterManagerView.tsx`, hardened against adversarial findings
+  (whitespace-tolerant rotation matching, reversed-leave-range detection), with
+  its own regression harness (`scripts/verify-roster-reconciliation.ts`,
+  10/10 passing). Matches its own spec's acceptance criteria. Real-cycle
+  validation is underway now per the live submission cycle; Option B remains
+  explicitly deferred pending that evidence, unchanged from this file's
+  earlier §7 note.
+- **E0 financial containment** (migration/commit predates this addendum but
+  wasn't previously logged here): both `platform-operator-subaccount` and
+  `payment-checkout` Edge Functions remain fail-closed (503) before any
+  credential/provider/DB action — confirmed live-verified, not merely
+  file-exists. This is containment, not a fix: the underlying no-server-
+  verifiable-identity gap for these functions is unresolved.
+
+**Local-only work, not live**: commit `01bb0aa` (past production baseline
+`origin/main @ c4d29c6`) narrows `databaseService.getTenant()`'s own
+projection to `id, terminology_overrides, module_flags` — application
+client-surface minimization / defense-in-depth only, explicitly not a
+database-level confidentiality boundary. See
+`docs/DATABASE_AND_SECURITY.md`'s Tenant-Surface Posture section for the full
+current-state record.
+
+**Harness inventory grew**: `scripts/verify-tenant-surface.cjs`,
+`scripts/verify-resident-email-login.cjs`, `scripts/verify-e0-containment.cjs`,
+and `scripts/verify-roster-reconciliation.ts` all now exist — see
+`docs/TESTING_AND_VERIFICATION.md` for their exact classification
+(static/string tripwire vs. logic-level vs. read-only-remote vs.
+local/test-mutation). None of them are a substitute for the browser/e2e or
+migration-verification harness this file's §7 already names as still
+missing.
+
+**Deployment boundary, stated plainly for whoever reads this next**:
+production is `origin/main @ c4d29c6` (migrations 58–65 manually
+applied/verified live at that commit). Local development HEAD sits one commit
+past that (`01bb0aa`). Do not infer that any local-only commit is deployed.

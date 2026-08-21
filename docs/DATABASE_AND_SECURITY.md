@@ -27,6 +27,31 @@ implemented system is mixed:
 - Edge Functions may use service-role access; treat them as high-risk.
 - `.env` may point at live Supabase resources. Treat it as sensitive.
 
+### Tenant-Surface Posture (updated 2026-08-21, Governance/Registry Reconciliation)
+
+- `public.tenants` direct client INSERT/UPDATE is closed live (migration 63
+  dropped the permissive `tenants_insert`/`tenants_update` policies). Every
+  legitimate mutation now goes through a `SECURITY DEFINER` RPC
+  (`chief_update_tenant_terminology`/`chief_update_tenant_module_flags`,
+  migration 59; `platform_operator_create_tenant`/`update_tenant_status`/
+  `update_tenant_plan`, migrations 60/62).
+- `public.tenants` SELECT remains open (`tenants_select USING (true)`),
+  deliberately, pending Institutional Auth — residents/members have no
+  server-verifiable credential today to write a real per-tenant read policy
+  against. This is a recorded, deferred gap, not an oversight.
+- `tenants` has never had a `REVOKE`/column-allow-list applied (unlike
+  `workforce`/`settings`, migration 02) — it still carries Supabase's default
+  blanket table-level `GRANT` to `anon`/`authenticated`. Combined with the
+  open SELECT policy above, any anon-key holder can independently select
+  every column of `tenants` directly, including `paystack_subaccount_code`,
+  `plan_type`, and `status`, outside any application helper.
+- Local-only commit `01bb0aa` narrowed `databaseService.getTenant()`'s own
+  projection to `id, terminology_overrides, module_flags`. This is
+  **application client-surface minimization / defense-in-depth only** — it
+  stops that one helper from requesting or re-exposing sensitive columns, but
+  it is **not** database-level confidentiality and does not change what a
+  direct anon-key query against `tenants` can still read.
+
 ## Prohibited Without Explicit Approval
 
 - Applying migrations.
