@@ -11,4 +11,8 @@ supabase/.temp/
 # Harness 1 — local task-lifecycle state; churns every phase transition,
 # never committed. See docs discussion in scripts/harness.cjs.
 .workspc-engineering/active-task.json
-.workspc-engineering/.active-task.json.tmp-*
+# Harness 4 — transient temp-file-then-rename artifacts for any atomic
+# jsonl/JSON write under .workspc-engineering/ (active-task.json,
+# notes.jsonl, findings.jsonl, decisions.jsonl); a crash mid-write could
+# otherwise leave one of these visible as an untracked file.
+.workspc-engineering/.*.tmp-*

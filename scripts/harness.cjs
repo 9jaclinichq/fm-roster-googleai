@@ -359,7 +359,7 @@ const ALLOWED_TRANSITIONS = {
   BLOCKED: [],
 };
 
-const TASK_SUBCOMMANDS = ['new', 'plan', 'phase', 'approve', 'block', 'clear', 'status', 'ack'];
+const TASK_SUBCOMMANDS = ['new', 'plan', 'phase', 'approve', 'block', 'clear', 'status', 'ack', 'complete'];
 
 function loadActiveTask() {
   return loadJSON(ACTIVE_TASK_FILE, null);
@@ -569,6 +569,9 @@ function cmdTaskPhase(rest) {
   if (target === 'COMMITTED_LOCAL') {
     return taskError('COMMITTED_LOCAL cannot be set via `task phase` — use `commit --message "<text>"`, which only sets it after a real git commit');
   }
+  if (target === 'COMPLETE_LOCAL') {
+    return taskError('COMPLETE_LOCAL cannot be set via `task phase` — use `task complete`, which checks a commit and a durable report exist first');
+  }
   if (task.phase === 'BLOCKED') {
     if (target !== task.blockedFrom) {
       return taskError(`task is BLOCKED — the only valid resume target is ${task.blockedFrom}`);
@@ -638,6 +641,14 @@ function cmdTaskClear(rest) {
   if (flags.force && (!flags.reason || !String(flags.reason).trim())) {
     return taskError('--force requires --reason "<why>"');
   }
+  // Durable-handoff gate: a committed task must have a durable report before
+  // its volatile local state disappears, unless explicitly overridden.
+  if (!flags.force && task.phase === 'COMPLETE_LOCAL' && task.commit && task.commit.hash) {
+    const reportExists = findExistingReportFilenames(task.taskId).length > 0;
+    if (!reportExists) {
+      return taskError('this committed task has no durable report yet — run `report` first, or pass --force --reason "<why>" to clear anyway');
+    }
+  }
   deleteActiveTask();
   process.stdout.write(`cleared ${task.taskId}\n`);
 }
@@ -674,6 +685,29 @@ function cmdTaskAck(rest) {
   }
   writeActiveTaskAtomic(touchTask(task));
   process.stdout.write(`acknowledged ${checkId ? `check ${checkId}` : `scope file ${scopeFile}`}\n`);
+}
+
+// Harness 4: requires a real commit and a durable report (or an explicit,
+// reasoned skip) before a task can be marked COMPLETE_LOCAL. Pure fs/logic,
+// like every other task handler — no git call of any kind.
+function cmdTaskComplete(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task');
+  if (task.phase !== 'COMMITTED_LOCAL') return taskError(`task complete requires phase COMMITTED_LOCAL (current: ${task.phase})`);
+  if (!task.commit || !task.commit.hash) return taskError('no commit recorded on this task — complete requires a real local commit');
+  const reportExists = findExistingReportFilenames(task.taskId).length > 0;
+  if (!reportExists) {
+    if (!flags['no-report']) {
+      return taskError('no report has been generated for this task — run `report` first, or pass --no-report --reason "<why>" to explicitly skip');
+    }
+    if (!flags.reason || !String(flags.reason).trim()) return taskError('--no-report requires --reason "<why>"');
+  }
+  task.phase = 'COMPLETE_LOCAL';
+  task.completedAt = new Date().toISOString();
+  if (!reportExists) task.reportSkippedReason = flags.reason;
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(`${task.taskId} — COMPLETE_LOCAL\n`);
 }
 
 function renderActiveTaskSection(lines, activeTask, workingTree) {
@@ -776,7 +810,10 @@ const CHECK_REGISTRY = [
     safety: SAFETY.LOCAL_LOGIC,
     command: ['node', 'scripts/harness.cjs', 'self-test'],
     aliases: ['harness self-test', 'npm run harness -- self-test'],
-    timeoutMs: 120000,
+    // The suite spawns many subprocess-level checks (temp git repos, npx
+    // supabase version probes) and measured ~3m34s on this machine as of
+    // Harness 4 — timeoutMs gives real headroom above that, not a guess.
+    timeoutMs: 480000,
   },
   {
     id: 'verify-tenant-surface',
@@ -1370,6 +1407,448 @@ function getPushGuardrailState() {
 }
 
 // ---------------------------------------------------------------------
+// Harness 4 — durable reports, notes/findings, next-prompt, completion.
+//
+// Report-commit rationale (Part A trade-off): Harness 3's `commit` already
+// transitions the task to COMMITTED_LOCAL as its own, separate step, before
+// this file's `report` command can run (report requires phase
+// COMMITTED_LOCAL/COMPLETE_LOCAL) — so the report literally cannot exist
+// yet at implementation-commit time under the current, already-shipped
+// lifecycle. Changing that ordering now would be a lifecycle rewrite, not
+// a Harness-4-sized change. Given "reports are committed durable history"
+// is a hard requirement (must survive laptop/session/conversation loss),
+// the only remaining safe option is B: one small, explicitly-designed
+// follow-up commit containing exactly the one new report file, made by
+// commitReportFile() below — never product files, never a batch add.
+// ---------------------------------------------------------------------
+
+const NOTE_STATUSES = ['OPEN', 'INCORPORATED', 'DISMISSED'];
+const FINDING_STATUSES = ['OBSERVED', 'VERIFIED', 'DEFERRED', 'PROMOTED_TO_SLICE', 'CLOSED', 'STALE'];
+const REPORTS_DIR = path.join(ENG_DIR, 'reports');
+
+// Decisions always worth a fresh agent's attention regardless of the
+// active task — deliberately a short, hand-picked, hardcoded list rather
+// than an auto-derived "everything" dump. Extend only when a decision is
+// genuinely globally safety-critical (production/freeze/migration/tenancy/
+// auth-shaped), not for routine engineering constraints.
+const GLOBAL_SAFETY_CRITICAL_DECISION_IDS = [
+  'institutional-auth',
+  'workforce-option-b',
+  'tenant-select-confidentiality',
+  'resident-email-login-protection',
+  'rubric-assessor-integrity-constraint',
+];
+
+function genEntryId(prefix) {
+  return `${prefix}-${crypto.randomBytes(4).toString('hex')}`;
+}
+
+// Same temp-file + rename discipline as writeActiveTaskAtomic, applied to
+// an append-only jsonl file.
+function appendJSONLAtomic(file, record) {
+  if (!fs.existsSync(ENG_DIR)) fs.mkdirSync(ENG_DIR, { recursive: true });
+  const target = path.join(ENG_DIR, file);
+  let existing = '';
+  try {
+    existing = fs.readFileSync(target, 'utf8');
+  } catch (e) {
+    // file does not exist yet — start fresh
+  }
+  const tmp = path.join(ENG_DIR, `.${file}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`);
+  const sep = existing && !existing.endsWith('\n') ? '\n' : '';
+  fs.writeFileSync(tmp, existing + sep + JSON.stringify(record) + '\n', 'utf8');
+  fs.renameSync(tmp, target);
+}
+
+// Rewrites one record in place (by id), same atomic strategy. Returns the
+// updated record, or null if no record with that id exists.
+function updateJSONLRecordAtomic(file, id, mutateFn) {
+  const records = loadJSONL(file);
+  const idx = records.findIndex((r) => r.id === id);
+  if (idx === -1) return null;
+  mutateFn(records[idx]);
+  const target = path.join(ENG_DIR, file);
+  const tmp = path.join(ENG_DIR, `.${file}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`);
+  fs.writeFileSync(tmp, records.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+  fs.renameSync(tmp, target);
+  return records[idx];
+}
+
+function readTextInput(flags, inlineFlagName) {
+  if (flags[inlineFlagName]) return String(flags[inlineFlagName]);
+  if (flags.file) return fs.readFileSync(String(flags.file), 'utf8').trim();
+  if (flags.stdin) return fs.readFileSync(0, 'utf8').trim();
+  return null;
+}
+
+// Notes are an inbox, not a command surface: nothing here ever touches
+// task.expectedFiles, task.declaredVerification, decisions.jsonl, or any
+// implementation file — only notes.jsonl itself.
+function cmdNote(argv) {
+  const sub = argv[0] && !argv[0].startsWith('--') ? argv[0] : null;
+  if (sub === 'list') {
+    const notes = loadJSONL('notes.jsonl');
+    if (!notes.length) {
+      process.stdout.write('(no notes)\n');
+      return;
+    }
+    for (const n of notes) {
+      process.stdout.write(`${n.id} [${n.status}] ${n.timestamp}${n.taskId ? ` (task ${n.taskId})` : ''} — ${n.text}\n`);
+    }
+    return;
+  }
+  if (sub === 'resolve') {
+    const { positional, flags } = parseFlags(argv.slice(1));
+    const id = positional[0];
+    const status = flags.status;
+    if (!id || !status) return taskError('usage: note resolve <id> --status INCORPORATED|DISMISSED');
+    if (!['INCORPORATED', 'DISMISSED'].includes(status)) return taskError('status must be INCORPORATED or DISMISSED');
+    const updated = updateJSONLRecordAtomic('notes.jsonl', id, (r) => {
+      r.status = status;
+      r.resolvedAt = new Date().toISOString();
+    });
+    if (!updated) return taskError(`no note found with id ${id}`);
+    process.stdout.write(`note ${id} -> ${status}\n`);
+    return;
+  }
+  const { flags } = parseFlags(argv);
+  const text = readTextInput(flags, 'text');
+  if (!text || !text.trim()) return taskError('provide --text "<note>", --file <path>, or --stdin');
+  const task = loadActiveTask();
+  const record = {
+    schemaVersion: SCHEMA_VERSION,
+    id: genEntryId('note'),
+    timestamp: new Date().toISOString(),
+    text: text.trim(),
+    taskId: flags['task-id'] || (task ? task.taskId : null),
+    status: 'OPEN',
+  };
+  appendJSONLAtomic('notes.jsonl', record);
+  process.stdout.write(`recorded note ${record.id}\n`);
+}
+
+// Same "inbox, not a command" discipline as notes.
+function cmdFinding(argv) {
+  const sub = argv[0] && !argv[0].startsWith('--') ? argv[0] : null;
+  if (sub === 'list') {
+    const findings = loadJSONL('findings.jsonl');
+    if (!findings.length) {
+      process.stdout.write('(no findings)\n');
+      return;
+    }
+    for (const f of findings) process.stdout.write(`${f.id} [${f.status}] ${f.summary}\n`);
+    return;
+  }
+  if (sub === 'set-status') {
+    const { positional, flags } = parseFlags(argv.slice(1));
+    const id = positional[0];
+    const status = flags.status;
+    if (!id || !status) return taskError('usage: finding set-status <id> --status <STATUS>');
+    if (!FINDING_STATUSES.includes(status)) return taskError(`status must be one of: ${FINDING_STATUSES.join(', ')}`);
+    const updated = updateJSONLRecordAtomic('findings.jsonl', id, (r) => {
+      r.status = status;
+      r.updatedAt = new Date().toISOString();
+    });
+    if (!updated) return taskError(`no finding found with id ${id}`);
+    process.stdout.write(`finding ${id} -> ${status}\n`);
+    return;
+  }
+  const { flags } = parseFlags(argv);
+  const summary = readTextInput(flags, 'summary');
+  if (!summary || !summary.trim()) return taskError('provide --summary "<text>", --file <path>, or --stdin');
+  const task = loadActiveTask();
+  const record = {
+    schemaVersion: SCHEMA_VERSION,
+    id: genEntryId('finding'),
+    timestamp: new Date().toISOString(),
+    summary: summary.trim(),
+    status: 'OBSERVED',
+    relatedFiles: flags['related-files'] ? String(flags['related-files']).split(',').map((s) => s.trim()).filter(Boolean) : [],
+    sourceTask: flags['source-task'] || (task ? task.taskId : null),
+  };
+  appendJSONLAtomic('findings.jsonl', record);
+  process.stdout.write(`recorded finding ${record.id}\n`);
+}
+
+function slugify(text) {
+  const s = String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  return s || 'task';
+}
+
+function findExistingReportFilenames(taskId) {
+  try {
+    return fs.readdirSync(REPORTS_DIR).filter((f) => f.includes(taskId));
+  } catch (e) {
+    return [];
+  }
+}
+
+// Never silently overwrites: if the base name is taken, a -v2/-v3/... name
+// is used instead. Combined with the {flag:'wx'} write in cmdReport, which
+// fails outright rather than clobbering if this still somehow collided.
+function reportFilenameFor(task, dateStr) {
+  const base = `${dateStr}-${task.taskId}-${slugify(task.title)}`;
+  const existing = new Set(findExistingReportFilenames(task.taskId));
+  let candidate = `${base}.md`;
+  let rev = 2;
+  while (existing.has(candidate)) {
+    candidate = `${base}-v${rev}.md`;
+    rev++;
+  }
+  return candidate;
+}
+
+function fmtList(items, empty) {
+  return items && items.length ? items.map((i) => `- ${i}`).join('\n') : empty;
+}
+
+// Deterministic fields come from task/Harness/Git state only. decisionsMade
+// and nextAction are the two genuinely narrative fields — supplied only via
+// explicit --decisions-made/--next-action flags, defaulting to UNKNOWN, and
+// never inferred or fabricated from anything else.
+function computeReportFields(task, opts) {
+  const freeze = loadJSON('freeze.json', null);
+  const evidence = (loadJSON('migration-evidence.json', { entries: [] }) || { entries: [] }).entries;
+  const migFiles = getMigrationFiles();
+  const ceiling = migFiles.length ? migFiles[migFiles.length - 1].number : null;
+  const coverage = summarizeMigrationCoverage(ceiling, evidence);
+
+  const verificationResults = (task.verification && task.verification.results) || [];
+  const manualAcks = (task.acknowledgments || []).filter((a) => a.kind === 'manual-check');
+  const manualRemaining = verificationResults.filter((r) => r.status === 'MANUAL_REQUIRED');
+  const liveChecks = verificationResults.filter((r) => {
+    const check = findCheck(r.checkId);
+    return check && check.safety === SAFETY.REMOTE_READ_ONLY && (r.status === 'PASS' || r.status === 'FAIL');
+  });
+
+  const outsideScope = task.lastDiffReview
+    ? [...task.lastDiffReview.staged, ...task.lastDiffReview.modifiedUnstaged, ...task.lastDiffReview.deleted, ...task.lastDiffReview.newUntracked]
+        .filter((e) => e.classification && e.classification.startsWith('OUTSIDE_DECLARED_SCOPE'))
+    : [];
+  const protectedHits = task.lastDiffReview ? task.lastDiffReview.protectedSurfaceHits : (task.protectedSurfaceHits || []);
+  const migrationsCreated = (task.commit && task.commit.migrationFilesCreated)
+    || (task.lastDiffReview ? task.lastDiffReview.migrationAdditions.map((m) => m.file) : []);
+  const migrationsApplied = migrationsCreated.filter((f) => {
+    const m = f.match(/(\d+)_/);
+    const num = m ? parseInt(m[1], 10) : null;
+    return num !== null && resolveMigrationStatus(num, evidence) === 'VERIFIED_APPLIED';
+  });
+  const newFindings = loadJSONL('findings.jsonl').filter((f) => f.sourceTask === task.taskId);
+
+  return {
+    task, freeze, coverage, verificationResults, manualAcks, manualRemaining, liveChecks,
+    outsideScope, protectedHits, migrationsCreated, migrationsApplied, newFindings,
+    decisionsMade: opts.decisionsMade || 'UNKNOWN',
+    nextAction: opts.nextAction || 'UNKNOWN',
+  };
+}
+
+function renderReportMarkdown(f) {
+  const t = f.task;
+  const lines = [];
+  lines.push(`# Task Report — ${t.taskId}`);
+  lines.push('');
+  lines.push(`**TASK**: ${t.title} (\`${t.taskId}\`)`);
+  lines.push(`**TASK CLASS**: ${t.taskClass}`);
+  lines.push(`**FINAL STATUS**: ${t.phase}`);
+  lines.push(`**SOURCE COMMIT**: ${t.sourceCommit || 'UNKNOWN'}`);
+  lines.push(`**APPROVED SCOPE**: ${t.approvedScope || 'UNKNOWN'}`);
+  lines.push('');
+  lines.push('## FILES CHANGED');
+  lines.push(fmtList((t.commit && t.commit.files) || [], 'UNKNOWN'));
+  lines.push('');
+  lines.push('## FILES OUTSIDE EXPECTED SCOPE');
+  lines.push(fmtList(f.outsideScope.map((e) => `${e.path} [${e.classification}]`), 'NONE'));
+  lines.push('');
+  lines.push('## PROTECTED SURFACE HITS');
+  lines.push(fmtList(f.protectedHits.map((h) => `${h.surfaceId} — ${h.expectedFile}`), 'NONE'));
+  lines.push('');
+  lines.push('## VERIFICATION RESULTS');
+  lines.push(fmtList(f.verificationResults.map((r) => `${r.checkId} — ${r.status}${r.status === 'MANUAL_ACKNOWLEDGED' ? ` (ack: "${r.ackNote}")` : ''} — ${r.message}`), 'NONE'));
+  lines.push('');
+  lines.push('## MANUAL ACKNOWLEDGEMENTS');
+  lines.push(fmtList(f.manualAcks.map((a) => `${a.target} — "${a.note}" (${a.at})`), 'NONE'));
+  lines.push('');
+  lines.push('## LIVE CHECKS');
+  lines.push(fmtList(f.liveChecks.map((r) => `${r.checkId} — ${r.status}`), 'NONE'));
+  lines.push('');
+  lines.push('## MIGRATIONS CREATED');
+  lines.push(fmtList(f.migrationsCreated, 'NONE'));
+  lines.push('');
+  lines.push('## MIGRATIONS APPLIED');
+  lines.push(fmtList(f.migrationsApplied, 'NONE'));
+  lines.push('');
+  lines.push('## UNAPPLIED MIGRATIONS');
+  lines.push(fmtList(f.coverage.filter((c) => c.status !== 'VERIFIED_APPLIED').map((c) => `${c.range}: ${c.status}`), 'NONE'));
+  lines.push('');
+  lines.push(`**LOCAL COMMIT**: ${(t.commit && t.commit.hash) || 'UNKNOWN'}`);
+  lines.push(`**PUSH STATUS**: ${(t.commit && t.commit.pushStatus) || 'UNKNOWN'}`);
+  lines.push(`**PRODUCTION BASELINE**: ${(f.freeze && f.freeze.productionCodeBaseline) || 'UNKNOWN'}`);
+  lines.push('');
+  lines.push('## DECISIONS MADE');
+  lines.push(f.decisionsMade);
+  lines.push('');
+  lines.push('## NEW FINDINGS');
+  lines.push(fmtList(f.newFindings.map((n) => `${n.id} [${n.status}] ${n.summary}`), 'NONE'));
+  lines.push('');
+  lines.push('## BLOCKERS');
+  lines.push(fmtList((t.blockers || []).map((b) => `${b.reason} (from ${b.blockedFromPhase}, ${b.blockedAt})`), 'NONE'));
+  lines.push('');
+  lines.push('## MANUAL CHECKS REMAINING');
+  lines.push(fmtList(f.manualRemaining.map((r) => `${r.checkId} — ${r.message}`), 'NONE'));
+  lines.push('');
+  lines.push('## NEXT RECOMMENDED ACTION');
+  lines.push(f.nextAction);
+  lines.push('');
+  lines.push(`_Generated ${new Date().toISOString()} by \`scripts/harness.cjs report\`. Deterministic fields come from Harness/Git state. DECISIONS MADE and NEXT RECOMMENDED ACTION are agent-supplied via --decisions-made/--next-action and default to UNKNOWN — never fabricated._`);
+  return lines.join('\n') + '\n';
+}
+
+// The second (and only other) function allowed to call git(add)/git(commit)
+// — see self-test's structural audit. Stages and commits exactly the one
+// report file just written; never anything else.
+function commitReportFile(reportRelPath, taskId) {
+  const addRes = git(['add', '--', reportRelPath]);
+  if (addRes.status !== 0) return { ok: false, error: addRes.stderr || addRes.stdout };
+  const commitRes = git(['commit', '-m', `docs(harness): add report for ${taskId}`]);
+  if (commitRes.status !== 0) return { ok: false, error: commitRes.stderr || commitRes.stdout };
+  return { ok: true, hash: getHead() };
+}
+
+function cmdReport(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task — report requires a task in COMMITTED_LOCAL or COMPLETE_LOCAL');
+  if (!['COMMITTED_LOCAL', 'COMPLETE_LOCAL'].includes(task.phase)) {
+    return taskError(`report requires phase COMMITTED_LOCAL or COMPLETE_LOCAL (current: ${task.phase})`);
+  }
+  if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const filename = reportFilenameFor(task, dateStr);
+  const relPath = `.workspc-engineering/reports/${filename}`;
+  const fullPath = path.join(REPORTS_DIR, filename);
+
+  const fields = computeReportFields(task, { decisionsMade: flags['decisions-made'], nextAction: flags['next-action'] });
+  const markdown = renderReportMarkdown(fields);
+  try {
+    fs.writeFileSync(fullPath, markdown, { flag: 'wx' });
+  } catch (e) {
+    return taskError(`report file already exists and was not overwritten: ${relPath} (${e.code})`);
+  }
+
+  const committed = commitReportFile(relPath, task.taskId);
+  if (!committed.ok) {
+    process.stdout.write(`report written to ${relPath} but the follow-up commit failed: ${committed.error}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  task.reportPath = relPath;
+  task.reportCommit = committed.hash;
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(`report written and committed: ${relPath} (${committed.hash})\n`);
+}
+
+// Read-only. Parses only the fields this file itself writes into a report
+// — never a general Markdown parser, just the exact labeled lines.
+function findLatestReportInfo() {
+  let files = [];
+  try {
+    files = fs.readdirSync(REPORTS_DIR).filter((f) => f.endsWith('.md'));
+  } catch (e) {
+    return null;
+  }
+  if (!files.length) return null;
+  files.sort();
+  const latestFile = files[files.length - 1];
+  let text = '';
+  try {
+    text = fs.readFileSync(path.join(REPORTS_DIR, latestFile), 'utf8');
+  } catch (e) {
+    return { filename: latestFile, path: `.workspc-engineering/reports/${latestFile}` };
+  }
+  const taskIdMatch = text.match(/\(`(t-[0-9a-f]+)`\)/);
+  const commitMatch = text.match(/\*\*LOCAL COMMIT\*\*:\s*(\S+)/);
+  const pushMatch = text.match(/\*\*PUSH STATUS\*\*:\s*(\S+)/);
+  const nextActionMatch = text.match(/## NEXT RECOMMENDED ACTION\n([^\n]*)/);
+  return {
+    filename: latestFile,
+    path: `.workspc-engineering/reports/${latestFile}`,
+    taskId: taskIdMatch ? taskIdMatch[1] : null,
+    localCommit: commitMatch ? commitMatch[1] : null,
+    pushStatus: pushMatch ? pushMatch[1] : null,
+    nextRecommendedAction: nextActionMatch ? nextActionMatch[1].trim() : null,
+  };
+}
+
+function renderNextPromptText(data) {
+  const f = data.facts;
+  const lines = [];
+  lines.push('WORKSPC ENGINEERING — RESUME');
+  lines.push('');
+  lines.push(`Production baseline: ${short(f.code.productionCodeBaseline)}`);
+  lines.push(`Local HEAD: ${short(f.code.head)} (${f.code.ahead === null ? 'UNKNOWN' : f.code.ahead} ahead / ${f.code.behind === null ? 'UNKNOWN' : f.code.behind} behind origin/main — local is NOT production)`);
+  lines.push(`Deployment freeze: ${f.freeze && f.freeze.active ? `ACTIVE — ${f.freeze.reason}` : 'INACTIVE/UNKNOWN'}`);
+  lines.push(`Push guardrail: ${f.pushGuardrail.state}`);
+  const unapplied = f.migrations.coverage.filter((c) => c.status !== 'VERIFIED_APPLIED');
+  lines.push(`Unapplied/unknown migrations: ${unapplied.length ? unapplied.map((c) => `${c.range}:${c.status}`).join(', ') : 'NONE'}`);
+  lines.push('');
+  if (f.activeTask) {
+    const t = f.activeTask;
+    lines.push(`Active task: ${t.taskId} "${t.title}" [${t.taskClass}] — phase ${t.phase}`);
+    lines.push(`  approved scope: ${t.approvedScope || 'UNKNOWN'}`);
+    lines.push(`  protected-surface hits: ${t.liveProtectedSurfaceHits.length ? t.liveProtectedSurfaceHits.map((h) => h.surfaceId).join(', ') : 'none'}`);
+    lines.push(`  blockers: ${t.blockers.length ? t.blockers.map((b) => b.reason).join('; ') : 'none'}`);
+    lines.push(`  human decisions remaining: ${t.humanDecisionsRequired.length ? t.humanDecisionsRequired.join('; ') : 'none'}`);
+    if (t.verification && t.verification.results.length) {
+      const counts = {};
+      for (const r of t.verification.results) counts[r.status] = (counts[r.status] || 0) + 1;
+      lines.push(`  verification: ${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}`);
+    } else {
+      lines.push('  verification: not yet run');
+    }
+  } else {
+    lines.push('Active task: NONE');
+  }
+  lines.push('');
+  if (data.latestReport) {
+    lines.push(`Latest completed task report: ${data.latestReport.path}`);
+    lines.push(`  commit ${data.latestReport.localCommit || 'UNKNOWN'}, push status ${data.latestReport.pushStatus || 'UNKNOWN'}`);
+    if (data.latestReport.nextRecommendedAction) lines.push(`  next recommended action (from that report): ${data.latestReport.nextRecommendedAction}`);
+  } else {
+    lines.push('Latest completed task report: NONE');
+  }
+  lines.push('');
+  lines.push('Safety-critical locked decisions:');
+  lines.push(data.decisions.length ? data.decisions.map((d) => `  - [${d.status}] ${d.id}: ${d.summary}`).join('\n') : '  (none)');
+  lines.push('');
+  lines.push('Open findings:');
+  lines.push(data.openFindings.length ? data.openFindings.map((x) => `  - [${x.status}] ${x.id}: ${x.summary}`).join('\n') : '  (none)');
+  lines.push('');
+  lines.push('Read the doc pointed to by each relevant decision/protected-surface entry before touching that area — do not treat this prompt as a substitute for AGENTS.md/CLAUDE.md/the docs it names.');
+  lines.push('');
+  lines.push('*** DO NOT push, deploy, or apply any migration while the freeze above is ACTIVE. ***');
+  return lines.join('\n') + '\n';
+}
+
+function computeNextPromptFacts() {
+  const facts = computeFacts();
+  const decisions = facts.decisions.filter((d) => GLOBAL_SAFETY_CRITICAL_DECISION_IDS.includes(d.id));
+  const openFindings = facts.findings.filter((x) => !['CLOSED', 'STALE'].includes(x.status));
+  const latestReport = findLatestReportInfo();
+  return { facts, decisions, openFindings, latestReport };
+}
+
+function cmdNextPrompt(rest) {
+  const { flags } = parseFlags(rest);
+  const data = computeNextPromptFacts();
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ schemaVersion: SCHEMA_VERSION, ...data }, null, 2) + '\n');
+  } else {
+    process.stdout.write(renderNextPromptText(data));
+  }
+}
+
+// ---------------------------------------------------------------------
 // Fact assembly — read-only. Nothing in this function, or anything it
 // calls, writes to git or to disk.
 // ---------------------------------------------------------------------
@@ -1460,6 +1939,7 @@ function computeFacts() {
     tools,
     handoff,
     pushGuardrail,
+    latestCompletedReport: findLatestReportInfo(),
     warnings,
   };
 }
@@ -1509,6 +1989,16 @@ function renderHuman(f) {
 
   renderActiveTaskSection(lines, f.activeTask, f.code.workingTree);
 
+  hdr('LATEST COMPLETED TASK');
+  if (f.latestCompletedReport) {
+    lines.push(`  report : ${f.latestCompletedReport.path}`);
+    lines.push(`  commit : ${f.latestCompletedReport.localCommit || 'UNKNOWN'}`);
+    lines.push(`  push   : ${f.latestCompletedReport.pushStatus || 'UNKNOWN'}`);
+    if (f.latestCompletedReport.nextRecommendedAction) lines.push(`  next   : ${f.latestCompletedReport.nextRecommendedAction}`);
+  } else {
+    lines.push('  (none)');
+  }
+
   hdr('CURRENT ENGINEERING CONSTRAINTS');
   if (!f.decisions.length) lines.push('  (none recorded)');
   for (const d of f.decisions) lines.push(`  - [${d.status}] ${d.id}: ${d.summary}`);
@@ -1536,7 +2026,7 @@ function renderHuman(f) {
 // Commands — status and self-test only. Nothing else is dispatched.
 // ---------------------------------------------------------------------
 
-const COMMANDS = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks'];
+const COMMANDS = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt'];
 
 function cmdStatus(argv) {
   const facts = computeFacts();
@@ -1557,6 +2047,7 @@ function cmdTask(argv) {
   if (sub === 'block') return cmdTaskBlock(rest);
   if (sub === 'clear') return cmdTaskClear(rest);
   if (sub === 'ack') return cmdTaskAck(rest);
+  if (sub === 'complete') return cmdTaskComplete(rest);
   if (sub === 'status') {
     const lines = [];
     renderActiveTaskSection(lines, loadActiveTask(), getWorkingTree());
@@ -1664,7 +2155,7 @@ function cmdVerify(rest) {
 }
 
 function printUsage() {
-  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand> | verify [--plan|--only <id>|--remote-read] | diff-review | commit --message "<text>" | hooks install>\n');
+  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand> | verify [--plan|--only <id>|--remote-read] | diff-review | commit --message "<text>" | hooks install | report [--decisions-made <t>] [--next-action <t>] | note [list|resolve] | finding [list|set-status] | next-prompt [--json]>\n');
 }
 
 // ---------------------------------------------------------------------
@@ -1694,8 +2185,8 @@ function cmdSelfTest() {
   // --- command surface: exactly the 7 Harness 0-3 commands, and 'push'/
   //     'deploy'/'apply'/'migrate'/'db-push' are never a command name.
   //     'commit' IS now intentionally present — Harness 3's entire point. ---
-  check('exposed command set is exactly the 7 Harness 0-3 commands, never push/deploy/apply/migrate', () => {
-    const expected = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks'];
+  check('exposed command set is exactly the 11 Harness 0-4 commands, never push/deploy/apply/migrate', () => {
+    const expected = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt'];
     const neverAllowed = ['push', 'deploy', 'apply', 'migrate', 'db-push'];
     return COMMANDS.length === expected.length && expected.every((c) => COMMANDS.includes(c))
       && !neverAllowed.some((f) => COMMANDS.includes(f));
@@ -1783,7 +2274,7 @@ function cmdSelfTest() {
   // --- task subcommand surface never contains a mutating-outside-state verb ---
   check('task subcommands contain no commit/push/deploy/apply verb', () => {
     const forbidden = ['commit', 'push', 'deploy', 'apply', 'migrate', 'db-push'];
-    return TASK_SUBCOMMANDS.length === 8 && !forbidden.some((f) => TASK_SUBCOMMANDS.includes(f));
+    return TASK_SUBCOMMANDS.length === 9 && !forbidden.some((f) => TASK_SUBCOMMANDS.includes(f));
   });
 
   // --- APPROVED is only reachable via cmdTaskApprove, never the generic table ---
@@ -1838,7 +2329,7 @@ function cmdSelfTest() {
     // status invokes several tool --version checks (notably npx supabase,
     // which can take several seconds cold) — give it real headroom.
     const runStatusJson = (dir) => spawnSync(process.execPath, [__filename, 'status', '--json'], {
-      cwd: REPO_ROOT, encoding: 'utf8', timeout: 20000,
+      cwd: REPO_ROOT, encoding: 'utf8', timeout: 30000,
       env: { ...process.env, WORKSPC_ENG_DIR_OVERRIDE: dir },
     });
     const readSandboxTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, ACTIVE_TASK_FILE), 'utf8'));
@@ -2010,6 +2501,46 @@ function cmdSelfTest() {
           ? true : `mig=${mig && mig.status} npm=${npmv && npmv.status}`;
       });
 
+      const runNote = (dir, args) => spawnSync(process.execPath, [__filename, 'note', ...args], {
+        cwd: REPO_ROOT, encoding: 'utf8', timeout: 10000, env: { ...process.env, WORKSPC_ENG_DIR_OVERRIDE: dir },
+      });
+      const runFinding = (dir, args) => spawnSync(process.execPath, [__filename, 'finding', ...args], {
+        cwd: REPO_ROOT, encoding: 'utf8', timeout: 10000, env: { ...process.env, WORKSPC_ENG_DIR_OVERRIDE: dir },
+      });
+
+      const sbNote = newSandbox();
+      check('a note can be added and listed', () => {
+        const r = runNote(sbNote, ['--text', 'remember to check X']);
+        const listed = runNote(sbNote, ['list']);
+        return r.status === 0 && /remember to check X/.test(listed.stdout) ? true : `add exit=${r.status} list=${listed.stdout}`;
+      });
+
+      check('a note never modifies task scope, decisions, or verification requirements', () => {
+        runTask(sbNote, ['new', '--title', 'note-scope test', '--class', 'BUG_FIX']);
+        const planFile = path.join(os.tmpdir(), `workspc-note-test-plan-${crypto.randomBytes(4).toString('hex')}.json`);
+        fs.writeFileSync(planFile, JSON.stringify({ expectedFiles: ['allowed.txt'], declaredVerification: ['npm run verify:tenant-surface'] }));
+        runTask(sbNote, ['plan', '--file', planFile]);
+        fs.unlinkSync(planFile);
+        const before = readSandboxTask(sbNote);
+        runNote(sbNote, ['--text', 'an incidental thought, should not touch anything above']);
+        const after = readSandboxTask(sbNote);
+        return JSON.stringify(before.expectedFiles) === JSON.stringify(after.expectedFiles)
+          && JSON.stringify(before.declaredVerification) === JSON.stringify(after.declaredVerification)
+          && before.phase === after.phase
+          ? true : 'task state changed after adding a note';
+      });
+
+      const sbFinding = newSandbox();
+      check('a finding can be added, listed, and its status persists', () => {
+        const r = runFinding(sbFinding, ['--summary', 'discovered stale doc claim', '--related-files', 'docs/FOO.md,docs/BAR.md']);
+        const idMatch = r.stdout.match(/recorded finding (finding-[0-9a-f]+)/);
+        const id = idMatch && idMatch[1];
+        if (!id) return `no id parsed from: ${r.stdout}`;
+        runFinding(sbFinding, ['set-status', id, '--status', 'VERIFIED']);
+        const listed = runFinding(sbFinding, ['list']);
+        return new RegExp(`${id} \\[VERIFIED\\]`).test(listed.stdout) ? true : `status did not persist: ${listed.stdout}`;
+      });
+
       check('no secret-like values appear in any sandboxed task state produced by these tests', () => {
         for (const dir of sandboxes) {
           const p = path.join(dir, ACTIVE_TASK_FILE);
@@ -2088,13 +2619,15 @@ function cmdSelfTest() {
   // Scoped to the operational code only (everything before cmdSelfTest) —
   // self-test's own rejection-shape assertions deliberately contain these
   // same literal call shapes and would otherwise self-match.
-  check('only cmdCommit calls git(commit) and git(add); only cmdHooksInstall writes git(config)', () => {
+  check('only cmdCommit and commitReportFile call git(commit)/git(add); only cmdHooksInstall writes git(config)', () => {
     const full = fs.readFileSync(__filename, 'utf8');
     const operational = full.slice(0, full.indexOf('function cmdSelfTest'));
     const commitCallSites = (operational.match(/git\(\['commit'/g) || []).length;
     const addCallSites = (operational.match(/git\(\['add'/g) || []).length;
     const configWriteCallSites = (operational.match(/git\(\['config', '--local', 'core\.hooksPath', '\.githooks'\]\)/g) || []).length;
-    return commitCallSites === 1 && addCallSites === 1 && configWriteCallSites === 1
+    // exactly two reviewed call sites each for commit/add (cmdCommit,
+    // commitReportFile), exactly one for the config write (cmdHooksInstall).
+    return commitCallSites === 2 && addCallSites === 2 && configWriteCallSites === 1
       ? true : `commit=${commitCallSites} add=${addCallSites} configWrite=${configWriteCallSites}`;
   });
 
@@ -2398,6 +2931,206 @@ function cmdSelfTest() {
     }
   }
 
+  // --- Harness 4: report / task complete / task clear / next-prompt /
+  //     status-after-clear, each against a fresh disposable temp git repo
+  //     (WORKSPC_REPO_ROOT_OVERRIDE), never the real repo. ---
+  {
+    const tempRepos2 = [];
+    const tempPlanFiles2 = [];
+    const makeTempRepo2 = () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspc-harness-h4-repo-'));
+      spawnSync('git', ['init', '-q'], { cwd: dir });
+      spawnSync('git', ['config', 'user.email', 'harness-self-test@example.com'], { cwd: dir });
+      spawnSync('git', ['config', 'user.name', 'Harness Self-Test'], { cwd: dir });
+      fs.mkdirSync(path.join(dir, '.workspc-engineering'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.workspc-engineering', 'freeze.json'), JSON.stringify({ schemaVersion: 1, active: true, reason: 'fixture', productionCodeBaseline: '0000000' }));
+      fs.writeFileSync(path.join(dir, '.workspc-engineering', 'protected-surfaces.json'), JSON.stringify({ surfaces: [] }));
+      fs.writeFileSync(path.join(dir, '.workspc-engineering', 'migration-evidence.json'), JSON.stringify({ entries: [] }));
+      fs.writeFileSync(path.join(dir, 'README.md'), 'fixture repo for harness self-test\n');
+      spawnSync('git', ['add', 'README.md'], { cwd: dir });
+      spawnSync('git', ['commit', '-q', '-m', 'initial'], { cwd: dir });
+      tempRepos2.push(dir);
+      return dir;
+    };
+    // status/next-prompt both call computeFacts(), which probes tool
+    // versions including a cold `npx supabase --version` — give every call
+    // here real headroom rather than tuning per-command.
+    const runIn2 = (dir, args, timeoutMs) => spawnSync(process.execPath, [__filename, ...args], {
+      cwd: dir, encoding: 'utf8', timeout: timeoutMs || 30000,
+      env: { ...process.env, WORKSPC_REPO_ROOT_OVERRIDE: dir },
+    });
+    const readTask2 = (dir) => JSON.parse(fs.readFileSync(path.join(dir, '.workspc-engineering', 'active-task.json'), 'utf8'));
+    const writeTask2 = (dir, task) => fs.writeFileSync(path.join(dir, '.workspc-engineering', 'active-task.json'), JSON.stringify(task, null, 2));
+    const taskExists2 = (dir) => fs.existsSync(path.join(dir, '.workspc-engineering', 'active-task.json'));
+
+    const advanceToCommitted = (dir, expectedFiles, workFile) => {
+      runIn2(dir, ['task', 'new', '--title', 'report fixture task', '--class', 'DOCUMENTATION_GOVERNANCE']);
+      const planFile = path.join(os.tmpdir(), `workspc-h4-plan-${crypto.randomBytes(4).toString('hex')}.json`);
+      fs.writeFileSync(planFile, JSON.stringify({ expectedFiles: expectedFiles || [workFile] }));
+      tempPlanFiles2.push(planFile);
+      runIn2(dir, ['task', 'plan', '--file', planFile]);
+      runIn2(dir, ['task', 'phase', 'AWAITING_HUMAN_REVIEW']);
+      runIn2(dir, ['task', 'approve', '--note', 'fixture', '--ack-protected-surfaces']);
+      runIn2(dir, ['task', 'phase', 'IMPLEMENTING']);
+      fs.writeFileSync(path.join(dir, workFile), 'fixture change\n');
+      spawnSync('git', ['add', workFile], { cwd: dir });
+      runIn2(dir, ['task', 'phase', 'VERIFYING']);
+      runIn2(dir, ['task', 'phase', 'DIFF_REVIEW']);
+      runIn2(dir, ['diff-review']);
+      return runIn2(dir, ['commit', '--message', 'fixture implementation commit']);
+    };
+
+    try {
+      const dirReport = makeTempRepo2();
+      check('report requires an active task', () => {
+        const r = runIn2(dirReport, ['report']);
+        return r.status !== 0 && /no active task/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      check('report refuses before COMMITTED_LOCAL/COMPLETE_LOCAL', () => {
+        runIn2(dirReport, ['task', 'new', '--title', 'x', '--class', 'BUG_FIX']);
+        const r = runIn2(dirReport, ['report']);
+        return r.status !== 0 && /COMMITTED_LOCAL/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+      runIn2(dirReport, ['task', 'clear', '--force', '--reason', 'reset fixture']);
+
+      const commitResult = advanceToCommitted(dirReport, ['work.txt'], 'work.txt');
+      check('committing the fixture implementation succeeded (test precondition)', () => {
+        return commitResult.status === 0 ? true : `commit failed: ${commitResult.stderr}`;
+      });
+
+      // Seed a PASS and a MANUAL_ACKNOWLEDGED verification result directly
+      // so the report's PASS-vs-MANUAL_ACKNOWLEDGED distinction is
+      // deterministically testable rather than depending on which real
+      // checks happen to apply to this fixture.
+      const seeded = readTask2(dirReport);
+      seeded.verification = {
+        lastRunAt: new Date().toISOString(),
+        results: [
+          { checkId: 'migration-state-check', selectedBecause: ['TASK_CLASS'], status: 'PASS', startedAt: null, finishedAt: null, exitCode: null, message: 'ok' },
+          { checkId: 'ui-visual-verification', selectedBecause: ['TASK_CLASS'], status: 'MANUAL_ACKNOWLEDGED', startedAt: null, finishedAt: null, exitCode: null, message: 'desktop/mobile/console/reload', ackNote: 'checked manually', ackAt: new Date().toISOString() },
+        ],
+      };
+      writeTask2(dirReport, seeded);
+
+      let firstReportPath = null;
+      check('report generates a file and commits it, with correct production baseline/commit fields and PASS-vs-MANUAL_ACKNOWLEDGED distinction', () => {
+        const r = runIn2(dirReport, ['report', '--next-action', 'nothing further needed']);
+        if (r.status !== 0) return `exit ${r.status}: ${r.stdout} ${r.stderr}`;
+        const dirFiles = fs.readdirSync(path.join(dirReport, '.workspc-engineering', 'reports'));
+        if (dirFiles.length !== 1) return `expected exactly 1 report file, found ${dirFiles.length}`;
+        firstReportPath = path.join(dirReport, '.workspc-engineering', 'reports', dirFiles[0]);
+        const text = fs.readFileSync(firstReportPath, 'utf8');
+        const hasBaseline = /\*\*PRODUCTION BASELINE\*\*: 0000000/.test(text);
+        const hasCommit = /\*\*LOCAL COMMIT\*\*: [0-9a-f]{7,40}/.test(text);
+        const hasPass = /migration-state-check — PASS/.test(text);
+        const hasAck = /ui-visual-verification — MANUAL_ACKNOWLEDGED/.test(text);
+        const neverClaimsAckAsPass = !/ui-visual-verification — PASS/.test(text);
+        return hasBaseline && hasCommit && hasPass && hasAck && neverClaimsAckAsPass
+          ? true : `baseline=${hasBaseline} commit=${hasCommit} pass=${hasPass} ack=${hasAck} neverAckAsPass=${neverClaimsAckAsPass}`;
+      });
+
+      check('the report was actually committed (git log shows it), not left as an uncommitted file', () => {
+        const log = spawnSync('git', ['log', '--oneline', '-1'], { cwd: dirReport, encoding: 'utf8' }).stdout;
+        return /docs\(harness\): add report for/.test(log) ? true : `unexpected HEAD commit: ${log}`;
+      });
+
+      check('report does not silently overwrite — a second call creates a revision-suffixed file', () => {
+        const before = fs.readdirSync(path.join(dirReport, '.workspc-engineering', 'reports')).length;
+        const r = runIn2(dirReport, ['report']);
+        const after = fs.readdirSync(path.join(dirReport, '.workspc-engineering', 'reports'));
+        return r.status === 0 && after.length === before + 1 && after.some((f) => /-v2\.md$/.test(f))
+          ? true : `exit ${r.status} before=${before} after=${JSON.stringify(after)}`;
+      });
+
+      check('task complete refuses without a commit', () => {
+        const dir = makeTempRepo2();
+        runIn2(dir, ['task', 'new', '--title', 'no commit', '--class', 'BUG_FIX']);
+        const r = runIn2(dir, ['task', 'complete']);
+        return r.status !== 0 && /COMMITTED_LOCAL/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      check('task complete succeeds once committed and reported, transitions to COMPLETE_LOCAL', () => {
+        const r = runIn2(dirReport, ['task', 'complete']);
+        const t = readTask2(dirReport);
+        return r.status === 0 && t.phase === 'COMPLETE_LOCAL' ? true : `exit ${r.status} phase=${t.phase}`;
+      });
+
+      check('task clear refuses a committed task with no durable report, until --force', () => {
+        const dirNoReport = makeTempRepo2();
+        const c = advanceToCommitted(dirNoReport, ['work2.txt'], 'work2.txt');
+        if (c.status !== 0) return `precondition failed: commit did not succeed: ${c.stderr}`;
+        const completeR = runIn2(dirNoReport, ['task', 'complete', '--no-report', '--reason', 'testing the clear gate']);
+        if (completeR.status !== 0) return `precondition failed: complete refused: ${completeR.stderr}`;
+        const clearR = runIn2(dirNoReport, ['task', 'clear']);
+        const forcedClearR = runIn2(dirNoReport, ['task', 'clear', '--force', '--reason', 'override for test']);
+        return clearR.status !== 0 && /no durable report/.test(clearR.stderr) && forcedClearR.status === 0
+          ? true : `clear=${clearR.status}/${clearR.stderr} forced=${forcedClearR.status}`;
+      });
+
+      check('the latest completed report remains discoverable via `status` after `task clear`', () => {
+        const r = runIn2(dirReport, ['task', 'clear']);
+        const statusJson = runIn2(dirReport, ['status', '--json'], 30000);
+        let latest = null;
+        try {
+          latest = JSON.parse(statusJson.stdout).latestCompletedReport;
+        } catch (e) {
+          // leave null
+        }
+        return r.status === 0 && !taskExists2(dirReport) && latest && latest.localCommit
+          ? true : `clearExit=${r.status} taskStillExists=${taskExists2(dirReport)} latest=${JSON.stringify(latest)}`;
+      });
+
+      check('`status` remains read-only even with a discoverable latest report', () => {
+        const before = fs.readFileSync(firstReportPath, 'utf8');
+        runIn2(dirReport, ['status', '--json'], 30000);
+        const after = fs.readFileSync(firstReportPath, 'utf8');
+        return before === after ? true : 'the report file changed after a status call';
+      });
+
+      check('next-prompt includes freeze, production/local distinction, unapplied migrations, and active-task state', () => {
+        const r = runIn2(dirReport, ['next-prompt']);
+        return r.status === 0
+          && /Deployment freeze: ACTIVE/.test(r.stdout)
+          && /Production baseline: 0000000/.test(r.stdout)
+          && /Active task: NONE/.test(r.stdout)
+          ? true : r.stdout;
+      });
+
+      check('next-prompt excludes irrelevant CLOSED findings but includes open ones', () => {
+        const addOpen = runIn2(dirReport, ['finding', '--summary', 'an open finding that should appear']);
+        const addClosedRaw = runIn2(dirReport, ['finding', '--summary', 'a closed finding that should NOT appear']);
+        const closedIdMatch = addClosedRaw.stdout.match(/recorded finding (finding-[0-9a-f]+)/);
+        if (!closedIdMatch) return `could not parse finding id: ${addClosedRaw.stdout}`;
+        runIn2(dirReport, ['finding', 'set-status', closedIdMatch[1], '--status', 'CLOSED']);
+        const r = runIn2(dirReport, ['next-prompt']);
+        return addOpen.status === 0 && /an open finding that should appear/.test(r.stdout) && !/a closed finding that should NOT appear/.test(r.stdout)
+          ? true : r.stdout;
+      });
+
+      check('next-prompt contains no secret-shaped values', () => {
+        const r = runIn2(dirReport, ['next-prompt']);
+        const hit = SECRET_PATTERNS.find((re) => re.test(r.stdout));
+        return !hit ? true : `matched ${hit}`;
+      });
+    } finally {
+      for (const dir of tempRepos2) {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch (e) {
+          // best-effort
+        }
+      }
+      for (const f of tempPlanFiles2) {
+        try {
+          fs.unlinkSync(f);
+        } catch (e) {
+          // best-effort
+        }
+      }
+    }
+  }
+
   // --- git() wrapper actually enforces the allowlist at runtime ---
   check('git() throws on a subcommand outside the allowlist', () => {
     try {
@@ -2544,6 +3277,10 @@ function main() {
   if (cmd === 'diff-review') return cmdDiffReview();
   if (cmd === 'commit') return cmdCommit(argv.slice(1));
   if (cmd === 'hooks') return cmdHooks(argv.slice(1));
+  if (cmd === 'report') return cmdReport(argv.slice(1));
+  if (cmd === 'note') return cmdNote(argv.slice(1));
+  if (cmd === 'finding') return cmdFinding(argv.slice(1));
+  if (cmd === 'next-prompt') return cmdNextPrompt(argv.slice(1));
   printUsage();
   process.exitCode = 1;
 }

@@ -1,2 +1,2 @@
-{"schemaVersion":1,"id":"local-secret-hygiene","status":"NEEDS_REVIEW","summary":"local-secret-hygiene | NEEDS_REVIEW | sensitive local credential-storage issue previously observed"}
-{"schemaVersion":1,"id":"stale-agent-worktrees","status":"DEFERRED","summary":"Multiple stale .claude/worktrees/agent-* directories from prior subagent runs remain on disk. Disk-hygiene debt only; not cleaned up here."}
+{"schemaVersion":1,"id":"local-secret-hygiene","status":"OBSERVED","timestamp":"2026-08-21T00:00:00.000Z","summary":"Sensitive local credential-storage issue previously observed in a local, git-ignored Claude Code permissions file; not committed or pushed. Recommend rotation and cleanup review."}
+{"schemaVersion":1,"id":"stale-agent-worktrees","status":"DEFERRED","timestamp":"2026-08-21T00:00:00.000Z","summary":"Multiple stale .claude/worktrees/agent-* directories from prior subagent runs remain on disk. Disk-hygiene debt only; not cleaned up here."}
