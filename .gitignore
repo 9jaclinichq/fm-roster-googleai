@@ -7,3 +7,8 @@ coverage/
 .env*
 !.env.example
 supabase/.temp/
+
+# Harness 1 — local task-lifecycle state; churns every phase transition,
+# never committed. See docs discussion in scripts/harness.cjs.
+.workspc-engineering/active-task.json
+.workspc-engineering/.active-task.json.tmp-*

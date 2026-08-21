@@ -11,10 +11,17 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
-const ENG_DIR = path.join(REPO_ROOT, '.workspc-engineering');
+// Overridable only for self-test isolation (see cmdSelfTest) — every real
+// invocation of this CLI leaves WORKSPC_ENG_DIR_OVERRIDE unset and resolves
+// the real .workspc-engineering/ directory.
+const ENG_DIR = process.env.WORKSPC_ENG_DIR_OVERRIDE
+  ? path.resolve(process.env.WORKSPC_ENG_DIR_OVERRIDE)
+  : path.join(REPO_ROOT, '.workspc-engineering');
 const SCHEMA_VERSION = 1;
 const IS_WIN = process.platform === 'win32';
 
@@ -99,11 +106,12 @@ function getAheadBehind() {
 // Names only — never reads file contents.
 function getWorkingTree() {
   const res = git(['status', '--porcelain']);
-  if (res.status !== 0) return { staged: 0, modified: 0, untracked: 0, untrackedFiles: [], error: true };
+  if (res.status !== 0) return { staged: 0, modified: 0, untracked: 0, untrackedFiles: [], changedTrackedFiles: [], error: true };
   const lines = res.stdout.split('\n').filter(Boolean);
   let staged = 0;
   let modified = 0;
   const untrackedFiles = [];
+  const changedTrackedFiles = [];
   for (const line of lines) {
     const x = line[0];
     const y = line[1];
@@ -114,8 +122,9 @@ function getWorkingTree() {
     }
     if (x !== ' ') staged++;
     if (y !== ' ') modified++;
+    changedTrackedFiles.push(file);
   }
-  return { staged, modified, untracked: untrackedFiles.length, untrackedFiles };
+  return { staged, modified, untracked: untrackedFiles.length, untrackedFiles, changedTrackedFiles };
 }
 
 function getMigrationFiles() {
@@ -245,6 +254,349 @@ function summarizeMigrationCoverage(ceiling, evidenceEntries) {
 }
 
 // ---------------------------------------------------------------------
+// Harness 1 — durable task lifecycle. active-task.json is local/gitignored
+// (churns every phase transition) and is written via temp-file + rename so
+// a shutdown mid-write can never leave a half-written file in its place.
+// ---------------------------------------------------------------------
+
+const ACTIVE_TASK_FILE = 'active-task.json';
+
+const TASK_CLASSES = [
+  'CODE_REFACTOR', 'PRODUCT_FEATURE', 'BUG_FIX', 'SECURITY_HARDENING',
+  'DATABASE_MIGRATION', 'DOCUMENTATION_GOVERNANCE', 'SPECIFICATION_ONLY',
+  'LIVE_READ_ONLY_AUDIT', 'TOOLING_INFRASTRUCTURE', 'UI_UX_CHANGE',
+];
+
+const PHASES = [
+  'DISCOVERED', 'PLAN_READY', 'AWAITING_HUMAN_REVIEW', 'APPROVED',
+  'IMPLEMENTING', 'VERIFYING', 'DIFF_REVIEW', 'BLOCKED',
+  'COMMITTED_LOCAL', 'COMPLETE_LOCAL',
+];
+
+// APPROVED is deliberately reachable only through cmdTaskApprove(), never
+// through this table — see the human-review rule below.
+const ALLOWED_TRANSITIONS = {
+  DISCOVERED: ['PLAN_READY'],
+  PLAN_READY: ['PLAN_READY', 'AWAITING_HUMAN_REVIEW'],
+  AWAITING_HUMAN_REVIEW: ['PLAN_READY'],
+  APPROVED: ['IMPLEMENTING'],
+  IMPLEMENTING: ['VERIFYING'],
+  VERIFYING: ['IMPLEMENTING', 'DIFF_REVIEW'],
+  DIFF_REVIEW: ['IMPLEMENTING', 'COMMITTED_LOCAL'],
+  COMMITTED_LOCAL: ['COMPLETE_LOCAL'],
+  COMPLETE_LOCAL: [],
+  BLOCKED: [],
+};
+
+const TASK_SUBCOMMANDS = ['new', 'plan', 'phase', 'approve', 'block', 'clear', 'status'];
+
+function loadActiveTask() {
+  return loadJSON(ACTIVE_TASK_FILE, null);
+}
+
+// Atomic write: same-directory temp file + rename. rename() is atomic on
+// both NTFS and POSIX filesystems when source/target share a volume, so a
+// shutdown mid-write leaves either the old file or the new one, never a
+// half-written one.
+function writeActiveTaskAtomic(task) {
+  if (!fs.existsSync(ENG_DIR)) fs.mkdirSync(ENG_DIR, { recursive: true });
+  const target = path.join(ENG_DIR, ACTIVE_TASK_FILE);
+  const tmp = path.join(ENG_DIR, `.active-task.json.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`);
+  fs.writeFileSync(tmp, JSON.stringify(task, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmp, target);
+}
+
+function deleteActiveTask() {
+  const target = path.join(ENG_DIR, ACTIVE_TASK_FILE);
+  if (fs.existsSync(target)) fs.unlinkSync(target);
+}
+
+function genTaskId() {
+  return `t-${crypto.randomBytes(4).toString('hex')}`;
+}
+
+// Minimal glob support — '**' matches across path separators, '*' matches
+// within one segment. Enough for the literal patterns this repo's own
+// protected-surfaces.json uses; not a general-purpose glob library.
+function globToRegExp(glob) {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*' && glob[i + 1] === '*') {
+      re += '.*';
+      i++;
+      if (glob[i + 1] === '/') i++;
+    } else if (c === '*') {
+      re += '[^/]*';
+    } else if ('.+^$()|{}[]\\'.includes(c)) {
+      re += '\\' + c;
+    } else {
+      re += c;
+    }
+  }
+  return new RegExp(`^${re}$`);
+}
+
+function matchesAnyGlob(filePath, globs) {
+  return (globs || []).some((g) => globToRegExp(g).test(filePath));
+}
+
+// Warning-only — never blocks anything in Harness 1.
+function computeProtectedSurfaceHits(expectedFiles) {
+  const doc = loadJSON('protected-surfaces.json', { surfaces: [] });
+  const surfaces = (doc.surfaces || []).filter((s) => s.active);
+  const hits = [];
+  for (const file of expectedFiles || []) {
+    for (const surface of surfaces) {
+      if (matchesAnyGlob(file, surface.glob)) {
+        hits.push({ surfaceId: surface.id, expectedFile: file, reason: surface.reason });
+      }
+    }
+  }
+  return hits;
+}
+
+// Warning-only — never blocks anything in Harness 1.
+function computeScopeMismatch(expectedFiles, changedTrackedFiles) {
+  if (!expectedFiles || !expectedFiles.length) {
+    return { checked: false, inScope: [], outsideScope: [] };
+  }
+  const inScope = [];
+  const outsideScope = [];
+  for (const file of changedTrackedFiles || []) {
+    if (matchesAnyGlob(file, expectedFiles)) inScope.push(file);
+    else outsideScope.push(file);
+  }
+  return { checked: true, inScope, outsideScope };
+}
+
+function taskError(message) {
+  process.stderr.write(`error: ${message}\n`);
+  process.exitCode = 1;
+}
+
+function parseFlags(args) {
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith('--')) {
+        flags[key] = true;
+      } else {
+        flags[key] = next;
+        i++;
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+  return { flags, positional };
+}
+
+function readPlanInput(flags) {
+  if (flags.file) {
+    return JSON.parse(fs.readFileSync(String(flags.file), 'utf8'));
+  }
+  if (flags.stdin) {
+    return JSON.parse(fs.readFileSync(0, 'utf8'));
+  }
+  return null;
+}
+
+function touchTask(task) {
+  task.updatedAt = new Date().toISOString();
+  return task;
+}
+
+function cmdTaskNew(rest) {
+  const { flags } = parseFlags(rest);
+  if (loadActiveTask()) {
+    return taskError('a task is already active — run `task status` to see it, or `task clear` once it is COMPLETE_LOCAL');
+  }
+  const title = flags.title;
+  const taskClass = flags.class;
+  if (!title || typeof title !== 'string') return taskError('--title <text> is required');
+  if (!taskClass || !TASK_CLASSES.includes(taskClass)) {
+    return taskError(`--class must be one of: ${TASK_CLASSES.join(', ')}`);
+  }
+  const now = new Date().toISOString();
+  const task = {
+    schemaVersion: SCHEMA_VERSION,
+    taskId: genTaskId(),
+    title,
+    taskClass,
+    phase: 'DISCOVERED',
+    createdAt: now,
+    updatedAt: now,
+    sourceCommit: getHead(),
+    approvedScope: null,
+    expectedFiles: [],
+    explicitNonGoals: [],
+    declaredVerification: [],
+    humanDecisionsRequired: [],
+    protectedSurfaceHits: [],
+    blockers: [],
+    blockedFrom: null,
+    approval: { approvedAt: null, approvalNote: null, acknowledgedProtectedSurfaces: false },
+  };
+  writeActiveTaskAtomic(task);
+  process.stdout.write(`created task ${task.taskId} (${taskClass}) — phase DISCOVERED\n`);
+}
+
+function cmdTaskPlan(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task — run `task new` first');
+  if (!['DISCOVERED', 'PLAN_READY'].includes(task.phase)) {
+    return taskError(`cannot plan from phase ${task.phase} — run \`task phase PLAN_READY\` first if revising after review`);
+  }
+  let input;
+  try {
+    input = readPlanInput(flags);
+  } catch (e) {
+    return taskError(`could not read plan input: ${e.message}`);
+  }
+  if (!input) return taskError('provide a plan via --file <path.json> or --stdin (piped JSON)');
+
+  const arr = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  task.approvedScope = typeof input.approvedScope === 'string' ? input.approvedScope : task.approvedScope;
+  task.expectedFiles = arr(input.expectedFiles);
+  task.explicitNonGoals = arr(input.explicitNonGoals);
+  task.declaredVerification = arr(input.declaredVerification);
+  task.humanDecisionsRequired = arr(input.humanDecisionsRequired);
+  task.protectedSurfaceHits = computeProtectedSurfaceHits(task.expectedFiles);
+  task.phase = 'PLAN_READY';
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(`plan recorded for ${task.taskId} — phase PLAN_READY\n`);
+  if (task.protectedSurfaceHits.length) {
+    process.stdout.write(`PROTECTED SURFACE HIT(S): ${task.protectedSurfaceHits.map((h) => h.surfaceId).join(', ')}\n`);
+  }
+}
+
+function cmdTaskPhase(rest) {
+  const { positional } = parseFlags(rest);
+  const target = positional[0];
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task');
+  if (!target || !PHASES.includes(target)) {
+    return taskError(`phase must be one of: ${PHASES.join(', ')}`);
+  }
+  if (target === 'APPROVED') {
+    return taskError('APPROVED cannot be set via `task phase` — use `task approve --note "<text>"`');
+  }
+  if (target === 'BLOCKED') {
+    return taskError('use `task block --reason "<text>"` instead');
+  }
+  if (task.phase === 'BLOCKED') {
+    if (target !== task.blockedFrom) {
+      return taskError(`task is BLOCKED — the only valid resume target is ${task.blockedFrom}`);
+    }
+  } else {
+    const allowed = ALLOWED_TRANSITIONS[task.phase] || [];
+    if (!allowed.includes(target)) {
+      return taskError(`cannot move from ${task.phase} to ${target} — allowed: ${allowed.join(', ') || '(none)'}`);
+    }
+  }
+  task.phase = target;
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(`${task.taskId} — phase now ${target}\n`);
+}
+
+function cmdTaskApprove(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task');
+  if (task.phase !== 'AWAITING_HUMAN_REVIEW') {
+    return taskError(`can only approve from AWAITING_HUMAN_REVIEW (current phase: ${task.phase})`);
+  }
+  const note = flags.note;
+  if (!note || typeof note !== 'string' || !note.trim()) {
+    return taskError('--note "<approval note>" is required');
+  }
+  if (task.protectedSurfaceHits.length && !flags['ack-protected-surfaces']) {
+    const ids = task.protectedSurfaceHits.map((h) => h.surfaceId).join(', ');
+    return taskError(`this task hits protected surface(s) [${ids}] — re-run with --ack-protected-surfaces to acknowledge and approve`);
+  }
+  task.phase = 'APPROVED';
+  task.approval = {
+    approvedAt: new Date().toISOString(),
+    approvalNote: note,
+    acknowledgedProtectedSurfaces: task.protectedSurfaceHits.length > 0,
+  };
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(`${task.taskId} — APPROVED\n`);
+}
+
+function cmdTaskBlock(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task');
+  if (task.phase === 'BLOCKED') return taskError('task is already BLOCKED');
+  if (['COMMITTED_LOCAL', 'COMPLETE_LOCAL'].includes(task.phase)) {
+    return taskError(`cannot block a task in phase ${task.phase}`);
+  }
+  const reason = flags.reason;
+  if (!reason || typeof reason !== 'string' || !reason.trim()) {
+    return taskError('--reason "<why>" is required');
+  }
+  task.blockers.push({ reason, blockedAt: new Date().toISOString(), blockedFromPhase: task.phase });
+  task.blockedFrom = task.phase;
+  task.phase = 'BLOCKED';
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(`${task.taskId} — BLOCKED (was ${task.blockedFrom})\n`);
+}
+
+function cmdTaskClear(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task to clear');
+  if (task.phase !== 'COMPLETE_LOCAL' && !flags.force) {
+    return taskError(`task is not COMPLETE_LOCAL (phase: ${task.phase}) — pass --force --reason "<why>" to override`);
+  }
+  if (flags.force && (!flags.reason || !String(flags.reason).trim())) {
+    return taskError('--force requires --reason "<why>"');
+  }
+  deleteActiveTask();
+  process.stdout.write(`cleared ${task.taskId}\n`);
+}
+
+function renderActiveTaskSection(lines, activeTask, workingTree) {
+  lines.push('');
+  lines.push('=== ACTIVE TASK ===');
+  if (!activeTask) {
+    lines.push('  (none)');
+    return;
+  }
+  const t = activeTask;
+  const scope = computeScopeMismatch(t.expectedFiles, workingTree.changedTrackedFiles);
+  const liveHits = computeProtectedSurfaceHits(t.expectedFiles);
+  lines.push(`  id / title     : ${t.taskId} — ${t.title}`);
+  lines.push(`  class          : ${t.taskClass}`);
+  if (t.taskClass === 'DATABASE_MIGRATION') {
+    lines.push('  *** DEPLOYMENT FREEZE ACTIVE — migration may be created locally but must not be applied ***');
+  }
+  lines.push(`  phase          : ${t.phase}${t.phase === 'BLOCKED' ? ` (blocked from ${t.blockedFrom})` : ''}`);
+  lines.push(`  source commit  : ${short(t.sourceCommit)}`);
+  lines.push(`  approval       : ${t.approval && t.approval.approvedAt ? `APPROVED at ${t.approval.approvedAt} — "${t.approval.approvalNote}"` : 'not approved'}`);
+  lines.push(`  declared scope : ${t.approvedScope || '(none recorded)'}`);
+  lines.push(`  expected files : ${t.expectedFiles.length ? t.expectedFiles.join(', ') : '(none recorded)'}`);
+  lines.push(`  non-goals      : ${t.explicitNonGoals.length ? t.explicitNonGoals.join(', ') : '(none recorded)'}`);
+  lines.push(`  declared verify: ${t.declaredVerification.length ? t.declaredVerification.join(', ') : '(none recorded)'}`);
+  if (!scope.checked) {
+    lines.push('  scope check    : (no expectedFiles declared yet — nothing to compare)');
+  } else {
+    lines.push(`  scope check    : ${scope.inScope.length} IN_SCOPE, ${scope.outsideScope.length} OUTSIDE_DECLARED_SCOPE`);
+    for (const f of scope.outsideScope) lines.push(`    OUTSIDE_DECLARED_SCOPE: ${f}`);
+  }
+  lines.push(`  protected hits : ${liveHits.length ? liveHits.map((h) => h.surfaceId).join(', ') : '(none)'}`);
+  lines.push(`  blockers       : ${t.blockers.length ? t.blockers.map((b) => `${b.reason} (from ${b.blockedFromPhase})`).join('; ') : '(none)'}`);
+  lines.push(`  human decisions: ${t.humanDecisionsRequired.length ? t.humanDecisionsRequired.join('; ') : '(none recorded)'}`);
+}
+
+// ---------------------------------------------------------------------
 // Fact assembly — read-only. Nothing in this function, or anything it
 // calls, writes to git or to disk.
 // ---------------------------------------------------------------------
@@ -272,6 +624,15 @@ function computeFacts() {
   const tools = getToolCapabilities();
   const handoff = checkHandoffStaleness(head);
 
+  const activeTask = loadActiveTask();
+  const activeTaskView = activeTask
+    ? {
+        ...activeTask,
+        liveProtectedSurfaceHits: computeProtectedSurfaceHits(activeTask.expectedFiles),
+        liveScopeCheck: computeScopeMismatch(activeTask.expectedFiles, workingTree.changedTrackedFiles),
+      }
+    : null;
+
   const warnings = [];
   if (workingTree.staged > 0 || workingTree.modified > 0) {
     warnings.push(`working tree has uncommitted tracked changes (staged=${workingTree.staged}, modified=${workingTree.modified})`);
@@ -290,6 +651,12 @@ function computeFacts() {
   }
   if (!freeze) warnings.push('freeze.json missing or unreadable — freeze status cannot be confirmed');
   if (originMain === null) warnings.push('origin/main could not be resolved locally (fetch may be needed)');
+  if (activeTaskView && activeTaskView.liveScopeCheck.outsideScope.length) {
+    warnings.push(`active task has ${activeTaskView.liveScopeCheck.outsideScope.length} changed file(s) OUTSIDE_DECLARED_SCOPE`);
+  }
+  if (activeTaskView && activeTaskView.liveProtectedSurfaceHits.length) {
+    warnings.push(`active task hits protected surface(s): ${activeTaskView.liveProtectedSurfaceHits.map((h) => h.surfaceId).join(', ')}`);
+  }
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -311,6 +678,7 @@ function computeFacts() {
     decisions,
     findings,
     protectedSurfaces,
+    activeTask: activeTaskView,
     verification,
     tools,
     handoff,
@@ -360,6 +728,8 @@ function renderHuman(f) {
     lines.push('freeze              : UNKNOWN (freeze.json missing/unreadable)');
   }
 
+  renderActiveTaskSection(lines, f.activeTask, f.code.workingTree);
+
   hdr('CURRENT ENGINEERING CONSTRAINTS');
   if (!f.decisions.length) lines.push('  (none recorded)');
   for (const d of f.decisions) lines.push(`  - [${d.status}] ${d.id}: ${d.summary}`);
@@ -387,7 +757,7 @@ function renderHuman(f) {
 // Commands — status and self-test only. Nothing else is dispatched.
 // ---------------------------------------------------------------------
 
-const COMMANDS = ['status', 'self-test'];
+const COMMANDS = ['status', 'self-test', 'task'];
 
 function cmdStatus(argv) {
   const facts = computeFacts();
@@ -398,8 +768,27 @@ function cmdStatus(argv) {
   }
 }
 
+function cmdTask(argv) {
+  const sub = argv[0];
+  const rest = argv.slice(1);
+  if (sub === 'new') return cmdTaskNew(rest);
+  if (sub === 'plan') return cmdTaskPlan(rest);
+  if (sub === 'phase') return cmdTaskPhase(rest);
+  if (sub === 'approve') return cmdTaskApprove(rest);
+  if (sub === 'block') return cmdTaskBlock(rest);
+  if (sub === 'clear') return cmdTaskClear(rest);
+  if (sub === 'status') {
+    const lines = [];
+    renderActiveTaskSection(lines, loadActiveTask(), getWorkingTree());
+    process.stdout.write(lines.join('\n') + '\n');
+    return;
+  }
+  process.stdout.write(`usage: node scripts/harness.cjs task <${TASK_SUBCOMMANDS.join('|')}>\n`);
+  process.exitCode = 1;
+}
+
 function printUsage() {
-  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test>\n');
+  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand>>\n');
 }
 
 // ---------------------------------------------------------------------
@@ -426,12 +815,185 @@ function cmdSelfTest() {
     }
   };
 
-  // --- command surface: exactly status + self-test, nothing else ---
-  check('exposed command set is exactly {status, self-test}', () => {
+  // --- command surface: exactly status + self-test + task, nothing else ---
+  check('exposed command set is exactly {status, self-test, task}', () => {
     const forbidden = ['commit', 'push', 'deploy', 'apply', 'migrate', 'db-push'];
-    return COMMANDS.length === 2 && COMMANDS.includes('status') && COMMANDS.includes('self-test')
+    return COMMANDS.length === 3 && ['status', 'self-test', 'task'].every((c) => COMMANDS.includes(c))
       && !forbidden.some((f) => COMMANDS.includes(f));
   });
+
+  // --- task subcommand surface never contains a mutating-outside-state verb ---
+  check('task subcommands contain no commit/push/deploy/apply verb', () => {
+    const forbidden = ['commit', 'push', 'deploy', 'apply', 'migrate', 'db-push'];
+    return TASK_SUBCOMMANDS.length === 7 && !forbidden.some((f) => TASK_SUBCOMMANDS.includes(f));
+  });
+
+  // --- APPROVED is only reachable via cmdTaskApprove, never the generic table ---
+  check('ALLOWED_TRANSITIONS never lists APPROVED as a generic target', () => {
+    const listsApproved = Object.values(ALLOWED_TRANSITIONS).some((targets) => targets.includes('APPROVED'));
+    return !listsApproved;
+  });
+
+  // --- pure-logic unit checks, deterministic regardless of ambient repo state ---
+  check('computeProtectedSurfaceHits detects a real intersection against committed protected-surfaces.json', () => {
+    const hits = computeProtectedSurfaceHits(['src/modules/auth/LoginView.tsx']);
+    return hits.some((h) => h.surfaceId === 'resident-login-email') ? true : 'no hit detected';
+  });
+  check('computeScopeMismatch classifies in-scope vs outside-declared-scope correctly', () => {
+    const r = computeScopeMismatch(['src/modules/auth/**'], ['src/modules/auth/LoginView.tsx', 'src/modules/billing/Invoice.tsx']);
+    return r.checked === true
+      && r.inScope.includes('src/modules/auth/LoginView.tsx')
+      && r.outsideScope.includes('src/modules/billing/Invoice.tsx')
+      ? true : JSON.stringify(r);
+  });
+
+  // --- structural: the active-task writer is temp-file + rename, never a direct write to the live path ---
+  check('writeActiveTaskAtomic uses a temp-file + renameSync strategy', () => {
+    const full = fs.readFileSync(__filename, 'utf8');
+    const fn = full.slice(full.indexOf('function writeActiveTaskAtomic'), full.indexOf('function deleteActiveTask'));
+    return /renameSync\(/.test(fn) && /writeFileSync\(tmp,/.test(fn) ? true : 'missing temp+rename pattern';
+  });
+
+  // --- structural: none of the task command handlers ever spawn a process ---
+  check('task command handlers never call spawnSync (fs/logic only, no git/push/deploy path)', () => {
+    const full = fs.readFileSync(__filename, 'utf8');
+    const fn = full.slice(full.indexOf('function cmdTaskNew'), full.indexOf('function renderActiveTaskSection'));
+    return /spawnSync\(/.test(fn) ? 'spawnSync found in task handlers' : true;
+  });
+
+  // --- sandboxed black-box lifecycle tests. WORKSPC_ENG_DIR_OVERRIDE isolates
+  //     every one of these from the real .workspc-engineering/active-task.json. ---
+  {
+    const realTaskFile = path.join(ENG_DIR, ACTIVE_TASK_FILE);
+    const realTaskBefore = fs.existsSync(realTaskFile) ? fs.readFileSync(realTaskFile, 'utf8') : null;
+    const sandboxes = [];
+    const newSandbox = () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspc-harness-selftest-'));
+      fs.copyFileSync(path.join(ENG_DIR, 'protected-surfaces.json'), path.join(dir, 'protected-surfaces.json'));
+      sandboxes.push(dir);
+      return dir;
+    };
+    const runTask = (dir, args) => spawnSync(process.execPath, [__filename, 'task', ...args], {
+      cwd: REPO_ROOT, encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, WORKSPC_ENG_DIR_OVERRIDE: dir },
+    });
+    // status invokes several tool --version checks (notably npx supabase,
+    // which can take several seconds cold) — give it real headroom.
+    const runStatusJson = (dir) => spawnSync(process.execPath, [__filename, 'status', '--json'], {
+      cwd: REPO_ROOT, encoding: 'utf8', timeout: 20000,
+      env: { ...process.env, WORKSPC_ENG_DIR_OVERRIDE: dir },
+    });
+    const readSandboxTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, ACTIVE_TASK_FILE), 'utf8'));
+
+    try {
+      const sbBasic = newSandbox();
+      check('new task can be created', () => {
+        const r = runTask(sbBasic, ['new', '--title', 'sandbox task', '--class', 'BUG_FIX']);
+        if (r.status !== 0) return `exit ${r.status}: ${r.stderr}`;
+        const t = readSandboxTask(sbBasic);
+        return t.phase === 'DISCOVERED' && t.taskClass === 'BUG_FIX' ? true : 'unexpected task state';
+      });
+
+      check('second active task is refused', () => {
+        const r = runTask(sbBasic, ['new', '--title', 'second', '--class', 'BUG_FIX']);
+        return r.status !== 0 && /already active/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      const sbInvalid = newSandbox();
+      check('invalid task class is refused', () => {
+        const r = runTask(sbInvalid, ['new', '--title', 'x', '--class', 'NOT_A_REAL_CLASS']);
+        return r.status !== 0 ? true : 'accepted an invalid class';
+      });
+
+      check('invalid phase transition is refused', () => {
+        runTask(sbInvalid, ['new', '--title', 'x', '--class', 'BUG_FIX']);
+        const r = runTask(sbInvalid, ['phase', 'IMPLEMENTING']);
+        return r.status !== 0 ? true : 'allowed DISCOVERED -> IMPLEMENTING directly';
+      });
+
+      check('AWAITING_HUMAN_REVIEW cannot silently become APPROVED via `task phase`', () => {
+        runTask(sbInvalid, ['phase', 'PLAN_READY']);
+        const planFile = path.join(sbInvalid, 'plan.json');
+        fs.writeFileSync(planFile, JSON.stringify({ expectedFiles: ['scripts/unrelated.ts'] }));
+        runTask(sbInvalid, ['plan', '--file', planFile]);
+        runTask(sbInvalid, ['phase', 'AWAITING_HUMAN_REVIEW']);
+        const r = runTask(sbInvalid, ['phase', 'APPROVED']);
+        return r.status !== 0 && /task approve/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      check('approval requires explicit metadata (no --note is refused)', () => {
+        const r = runTask(sbInvalid, ['approve']);
+        return r.status !== 0 ? true : 'approved with no --note at all';
+      });
+
+      const sbProtected = newSandbox();
+      check('protected-surface intersection is detected end-to-end via the CLI', () => {
+        runTask(sbProtected, ['new', '--title', 'touches auth', '--class', 'BUG_FIX']);
+        const planFile = path.join(sbProtected, 'plan.json');
+        fs.writeFileSync(planFile, JSON.stringify({ expectedFiles: ['src/modules/auth/LoginView.tsx'] }));
+        const r = runTask(sbProtected, ['plan', '--file', planFile]);
+        const t = readSandboxTask(sbProtected);
+        return r.status === 0 && t.protectedSurfaceHits.some((h) => h.surfaceId === 'resident-login-email') ? true : 'hit not recorded';
+      });
+
+      check('protected-surface task approval requires acknowledgement', () => {
+        runTask(sbProtected, ['phase', 'AWAITING_HUMAN_REVIEW']);
+        const withoutAck = runTask(sbProtected, ['approve', '--note', 'looks fine']);
+        const blockedWithoutAck = withoutAck.status !== 0;
+        const withAck = runTask(sbProtected, ['approve', '--note', 'looks fine, surface acknowledged', '--ack-protected-surfaces']);
+        const passedWithAck = withAck.status === 0;
+        return blockedWithoutAck && passedWithAck ? true : `withoutAck=${withoutAck.status} withAck=${withAck.status}: ${withAck.stderr}`;
+      });
+
+      check('fresh-agent `status --json` reconstructs the active task from disk alone', () => {
+        const r = runStatusJson(sbProtected);
+        const facts = JSON.parse(r.stdout);
+        return facts.activeTask
+          && facts.activeTask.phase === 'APPROVED'
+          && facts.activeTask.expectedFiles.includes('src/modules/auth/LoginView.tsx')
+          ? true : 'status --json did not reconstruct the sandboxed task';
+      });
+
+      check('`status --json` reports a well-shaped liveScopeCheck for the active task', () => {
+        const r = runStatusJson(sbProtected);
+        const facts = JSON.parse(r.stdout);
+        const s = facts.activeTask && facts.activeTask.liveScopeCheck;
+        return s && typeof s.checked === 'boolean' && Array.isArray(s.inScope) && Array.isArray(s.outsideScope)
+          ? true : 'liveScopeCheck missing or malformed';
+      });
+
+      check('`status` does not mutate a sandboxed active-task.json', () => {
+        const before = fs.readFileSync(path.join(sbProtected, ACTIVE_TASK_FILE), 'utf8');
+        runStatusJson(sbProtected);
+        const after = fs.readFileSync(path.join(sbProtected, ACTIVE_TASK_FILE), 'utf8');
+        return before === after ? true : 'sandboxed active-task.json changed after a status call';
+      });
+
+      check('no secret-like values appear in any sandboxed task state produced by these tests', () => {
+        for (const dir of sandboxes) {
+          const p = path.join(dir, ACTIVE_TASK_FILE);
+          if (!fs.existsSync(p)) continue;
+          const text = fs.readFileSync(p, 'utf8');
+          const hit = SECRET_PATTERNS.find((re) => re.test(text));
+          if (hit) return `${p} matched suspicious pattern ${hit}`;
+        }
+        return true;
+      });
+    } finally {
+      for (const dir of sandboxes) {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch (e) {
+          // best-effort cleanup of an OS temp dir; not fatal to the suite
+        }
+      }
+    }
+
+    check('the real .workspc-engineering/active-task.json was never touched by these tests', () => {
+      const realTaskAfter = fs.existsSync(realTaskFile) ? fs.readFileSync(realTaskFile, 'utf8') : null;
+      return realTaskBefore === realTaskAfter ? true : 'the real active-task.json changed — sandbox isolation leaked';
+    });
+  }
 
   // --- git allowlist never contains a mutating verb ---
   check('git() allowlist contains no mutating subcommand', () => {
@@ -540,7 +1102,7 @@ function cmdSelfTest() {
 
   // --- black-box: status --json is valid, versioned JSON ---
   check('`status --json` parses and carries a schemaVersion', () => {
-    const res = spawnSync(process.execPath, [__filename, 'status', '--json'], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 10000 });
+    const res = spawnSync(process.execPath, [__filename, 'status', '--json'], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 20000 });
     if (res.status !== 0) return `exit ${res.status}`;
     const parsed = JSON.parse(res.stdout);
     return parsed.schemaVersion === SCHEMA_VERSION;
@@ -551,7 +1113,7 @@ function cmdSelfTest() {
     const before = fs.readdirSync(ENG_DIR).sort();
     const beforeStat = before.map((f) => fs.statSync(path.join(ENG_DIR, f)).mtimeMs);
     const gitBefore = git(['status', '--porcelain']).stdout;
-    spawnSync(process.execPath, [__filename, 'status', '--json'], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 10000 });
+    spawnSync(process.execPath, [__filename, 'status', '--json'], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 20000 });
     const after = fs.readdirSync(ENG_DIR).sort();
     const afterStat = after.map((f) => fs.statSync(path.join(ENG_DIR, f)).mtimeMs);
     const gitAfter = git(['status', '--porcelain']).stdout;
@@ -580,6 +1142,7 @@ function main() {
   const cmd = argv[0];
   if (cmd === 'status') return cmdStatus(argv.slice(1));
   if (cmd === 'self-test') return cmdSelfTest();
+  if (cmd === 'task') return cmdTask(argv.slice(1));
   printUsage();
   process.exitCode = 1;
 }
