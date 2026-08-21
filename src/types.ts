@@ -57,6 +57,11 @@ export interface Collection {
   deadline: string; // ISO timestamp
   status: 'open' | 'closed';
   created_at: string;
+  // Already a real column (see createCollection's insert/filter in
+  // databaseService.ts) — added here so the submission-status shared
+  // primitive (src/modules/shared/lib/submissionStatus.ts) can verify a
+  // collection belongs to the requested tenant without a parallel type.
+  tenant_id: string;
 }
 
 export interface Submission {

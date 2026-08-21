@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { databaseService } from '../../../lib/databaseService';
+import { getSubmissionStatus, resolveCurrentCollection } from '../../shared/lib/submissionStatus';
 import { ComplianceNudge, DerivedNudge, NudgeSeverity } from '../../../types';
 import { AlertTriangle, CheckCircle2, X, ArrowRight, RefreshCw } from 'lucide-react';
 
 interface ComplianceNudgesViewProps {
-  resident: { id: string; name: string; category: string };
+  // tenant_id is optional/structural here, same pattern
+  // ResidentFormViewProps already uses — currentResident (App.tsx's
+  // ResidentSession) already carries it. Required (not defaulted) for the
+  // roster_pending signal specifically: see deriveNudges below, which no
+  // longer falls back to a hidden default tenant when it is absent.
+  resident: { id: string; name: string; category: string; tenant_id?: string };
   // Compact mode renders a short summary (top 3, no page chrome) for
   // embedding on the Resident Home Workspace. Full mode shows everything.
   compact?: boolean;
@@ -32,13 +38,11 @@ const ACTION_LABELS: Record<string, string> = {
   '/resident-form': 'Go to Roster Form',
 };
 
-async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
-  const [dissertation, caseReports, readiness, settings, collections] = await Promise.all([
+async function deriveNudges(workforceId: string, tenantId: string | undefined): Promise<DerivedNudge[]> {
+  const [dissertation, caseReports, readiness] = await Promise.all([
     databaseService.getDissertationForWorkforce(workforceId),
     databaseService.getCaseReports(workforceId),
     databaseService.getOrCreateExamReadiness(workforceId),
-    databaseService.getSettings(),
-    databaseService.getCollections(),
   ]);
 
   const nudges: DerivedNudge[] = [];
@@ -110,16 +114,35 @@ async function deriveNudges(workforceId: string): Promise<DerivedNudge[]> {
     });
   }
 
-  const activeColl = collections.find(c => c.id === settings.current_collection_id) || null;
-  if (activeColl) {
-    const submission = await databaseService.getSubmissionForWorkforceAndCollection(workforceId, activeColl.id);
-    if (!submission) {
-      nudges.push({
-        nudge_type: 'roster_pending',
-        severity: 'medium',
-        title: `Roster submission pending for "${activeColl.title}".`,
-        action_link: '/workspace/form',
+  // roster_pending — genuinely tenant-scoped (unlike the resident-only
+  // signals above), so it needs the resident's real tenant_id. No hidden
+  // default-tenant fallback: if tenant_id isn't available for some reason,
+  // this signal is skipped entirely rather than checking the wrong tenant.
+  if (tenantId) {
+    const [settings, collections] = await Promise.all([
+      databaseService.getSettings(tenantId),
+      databaseService.getCollections(tenantId),
+    ]);
+    const currentCollectionId = settings.current_collection_id;
+    const currentCollection = resolveCurrentCollection({ tenantId, currentCollectionId, collections });
+
+    if (currentCollection) {
+      const submission = await databaseService.getSubmissionForWorkforceAndCollection(workforceId, currentCollection.id);
+      const result = getSubmissionStatus({
+        tenantId,
+        workforceId,
+        currentCollectionId,
+        collections: [currentCollection],
+        submissions: submission ? [{ workforce_id: workforceId, collection_id: currentCollection.id }] : [],
       });
+      if (result.status === 'open_not_submitted') {
+        nudges.push({
+          nudge_type: 'roster_pending',
+          severity: 'medium',
+          title: `Roster submission pending for "${result.collection.title}".`,
+          action_link: '/workspace/form',
+        });
+      }
     }
   }
 
@@ -136,7 +159,7 @@ export const ComplianceNudgesView: React.FC<ComplianceNudgesViewProps> = ({ resi
     async function load() {
       setIsLoading(true);
       try {
-        const derived = await deriveNudges(resident.id);
+        const derived = await deriveNudges(resident.id, resident.tenant_id);
         const synced = await databaseService.syncComplianceNudges(resident.id, derived);
         if (!cancelled) setNudges(synced);
       } catch (err) {
@@ -147,7 +170,7 @@ export const ComplianceNudgesView: React.FC<ComplianceNudgesViewProps> = ({ resi
     }
     load();
     return () => { cancelled = true; };
-  }, [resident.id]);
+  }, [resident.id, resident.tenant_id]);
 
   const handleDismiss = async (nudge: ComplianceNudge) => {
     setNudges(prev => prev.filter(n => n.id !== nudge.id));

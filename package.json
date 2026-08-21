@@ -14,7 +14,8 @@
     "supabase:version": "supabase --version",
     "supabase:functions:list": "supabase functions list --project-ref gdumksfffewpdqqwvcdo",
     "verify:tenant-surface": "node scripts/verify-tenant-surface.cjs",
-    "verify:roster-reconciliation": "tsx scripts/verify-roster-reconciliation.ts"
+    "verify:roster-reconciliation": "tsx scripts/verify-roster-reconciliation.ts",
+    "verify:submission-status": "tsx scripts/verify-submission-status.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.6",

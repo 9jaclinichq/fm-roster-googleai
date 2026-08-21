@@ -14,6 +14,18 @@
 // submissions in the currently open collection), one insight shape. Not a
 // general-purpose rules engine.
 //
+// CURRENTLY-OPEN COLLECTION (2026-08-21 reconciliation with
+// ComplianceNudgesView.tsx): resolution now goes through the shared
+// submissionStatus.ts primitive's locked rule — the tenant's
+// settings.current_collection_id identifies WHICH collection is current;
+// that collection's own status determines whether it is open. This
+// REPLACES the previous "most recently created status='open' collection"
+// query, which could silently pick up an open collection the settings
+// pointer didn't actually reference. Deterministic detection here is free
+// product intelligence (Free = Operate); a future scheduled/notification
+// layer wrapping this same core would be the paid automation tier (Paid =
+// Automate) — not implemented here.
+//
 // STALENESS THRESHOLD: the task motivation for this agent talks about
 // members "past some staleness threshold," but doesn't operationalize a
 // specific one beyond "hasn't submitted yet." Rather than invent a new
@@ -49,6 +61,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { emitEvent } from './eventBus';
+import { getSubmissionStatus, resolveCurrentCollection, SubmissionRef } from './submissionStatus';
+import type { Collection } from '../../../types';
 
 export const SUBMISSION_CHASER_AGENT_KEY = 'babsbrain2_submission_chaser';
 const SUBMISSION_CHASER_RUNG = 1;
@@ -56,13 +70,6 @@ const COOLDOWN_DAYS = 3;
 
 function subjectRefFor(collectionId: string, workforceId: string): string {
   return `collection:${collectionId}:workforce:${workforceId}`;
-}
-
-interface OpenCollectionRow {
-  id: string;
-  title: string;
-  deadline: string;
-  status: string;
 }
 
 interface ActiveWorkforceRow {
@@ -123,21 +130,30 @@ export async function runSubmissionChaser(
   supabaseClient: SupabaseClient,
   tenantId: string
 ): Promise<SubmissionChaserRunResult> {
-  // 1. The tenant's currently-open collection. Mirrors
-  //    databaseService.getCollections() + ChiefDashboardView's
-  //    `collections.find(c => c.status === 'open')` fallback shape, scoped
-  //    directly to status='open' here since this agent only ever cares
-  //    about the live collection, not history.
-  const { data: openCollections, error: collErr } = await supabaseClient
-    .from('collections')
-    .select('id, title, deadline, status')
+  // 1. Resolve the tenant's settings pointer, then fetch that exact
+  //    collection row by id only — tenant/status validity is the shared
+  //    submissionStatus primitive's job (see getSubmissionStatus below),
+  //    not this query's. No fallback to "most recently created open
+  //    collection": see this file's header note.
+  const { data: settingsRow, error: settingsErr } = await supabaseClient
+    .from('settings')
+    .select('current_collection_id')
     .eq('tenant_id', tenantId)
-    .eq('status', 'open')
-    .order('created_at', { ascending: false })
-    .limit(1);
-  if (collErr) throw collErr;
+    .maybeSingle();
+  if (settingsErr) throw settingsErr;
+  const currentCollectionId: string | null = settingsRow?.current_collection_id ?? null;
 
-  const collection = (openCollections?.[0] as OpenCollectionRow | undefined) ?? null;
+  let collections: Collection[] = [];
+  if (currentCollectionId) {
+    const { data: collRows, error: collErr } = await supabaseClient
+      .from('collections')
+      .select('*')
+      .eq('id', currentCollectionId);
+    if (collErr) throw collErr;
+    collections = (collRows ?? []) as Collection[];
+  }
+
+  const collection = resolveCurrentCollection({ tenantId, currentCollectionId, collections });
   if (!collection) {
     return { collectionId: null, pastDeadline: false, pendingCount: 0, insightsCreated: 0 };
   }
@@ -167,11 +183,24 @@ export async function runSubmissionChaser(
     .eq('collection_id', collection.id)
     .eq('workforce.tenant_id', tenantId);
   if (subErr) throw subErr;
-  const submittedIds = new Set(
-    ((submissionRows ?? []) as SubmissionWorkforceIdRow[]).map((s) => s.workforce_id)
-  );
+  const submissions: SubmissionRef[] = ((submissionRows ?? []) as SubmissionWorkforceIdRow[]).map((s) => ({
+    workforce_id: s.workforce_id,
+    collection_id: collection.id,
+  }));
 
-  const pending = activeWorkforce.filter((w) => !submittedIds.has(w.id));
+  // Same shared submissionStatus.ts computation ComplianceNudgesView.tsx
+  // uses, called once per active member against the already-resolved
+  // collection/submissions — no per-member DB query, purely in-memory.
+  const pending = activeWorkforce.filter((w) => {
+    const result = getSubmissionStatus({
+      tenantId,
+      workforceId: w.id,
+      currentCollectionId,
+      collections,
+      submissions,
+    });
+    return result.status === 'open_not_submitted';
+  });
   if (pending.length === 0) {
     return { collectionId: collection.id, pastDeadline: true, pendingCount: 0, insightsCreated: 0 };
   }
