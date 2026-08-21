@@ -128,6 +128,21 @@ function getToolCapabilities() {
   ];
 }
 
+// The one command that actually pays the cold tool-version-probe cost
+// (dominated by `npx supabase --version`, ~6-8s measured) — status/
+// next-prompt/task lifecycle/verify --plan never call this. Never installs
+// anything (checkTool only ever runs `--version`), never reads .env or any
+// secret. A missing/erroring tool degrades to MISSING/UNKNOWN — see
+// checkTool — it never throws or aborts the command.
+function cmdDoctor() {
+  const tools = getToolCapabilities();
+  process.stdout.write('HARNESS DOCTOR — live capability probe (never installs anything, never reads secrets)\n\n');
+  for (const t of tools) {
+    process.stdout.write(`  ${t.label.padEnd(28)} ${t.status}${t.detail ? ' — ' + t.detail : ''}\n`);
+  }
+  process.stdout.write('\nClaude Code / Codex presence is not probed here — no reliable, safe way to detect either from inside this script; ask the invoking agent/session directly if that matters.\n');
+}
+
 // ---------------------------------------------------------------------
 // Dynamic git/filesystem facts — recomputed every call, never cached.
 // ---------------------------------------------------------------------
@@ -1873,7 +1888,11 @@ function computeFacts() {
   const protectedSurfaces = (protectedSurfacesDoc.surfaces || []).filter((s) => s.active);
 
   const verification = getVerificationInventory();
-  const tools = getToolCapabilities();
+  // Deliberately NOT getToolCapabilities() here — that probe costs ~6-8s
+  // (a cold `npx supabase --version` dominates it) and status/next-prompt
+  // are meant to be near-instant. Tool diagnostics are `doctor`'s job now;
+  // see capabilityNote below and the TOOL CAPABILITIES render section.
+  const capabilityNote = 'not probed this run — run `npm run harness -- doctor` for a live check';
   const handoff = checkHandoffStaleness(head);
   const pushGuardrail = getPushGuardrailState();
 
@@ -1898,10 +1917,10 @@ function computeFacts() {
   for (const row of migrationCoverage) {
     if (row.status === 'UNKNOWN') warnings.push(`migrations ${row.range} have UNKNOWN live-apply evidence (file existence is not proof)`);
   }
-  for (const t of tools) {
-    if (t.status === 'MISSING') warnings.push(`tool missing: ${t.label}`);
-    if (t.status === 'UNKNOWN') warnings.push(`tool status unknown: ${t.label} (${t.detail || 'no detail'})`);
-  }
+  // No tool-capability warnings here by design — this run never probed
+  // tool versions at all (see capabilityNote above); a fresh check is
+  // `npm run harness -- doctor`'s job, not something to fake from stale
+  // or absent data.
   if (!freeze) warnings.push('freeze.json missing or unreadable — freeze status cannot be confirmed');
   if (originMain === null) warnings.push('origin/main could not be resolved locally (fetch may be needed)');
   if (activeTaskView && activeTaskView.liveScopeCheck.outsideScope.length) {
@@ -1936,7 +1955,7 @@ function computeFacts() {
     protectedSurfaces,
     activeTask: activeTaskView,
     verification,
-    tools,
+    capabilities: { probed: false, note: capabilityNote },
     handoff,
     pushGuardrail,
     latestCompletedReport: findLatestReportInfo(),
@@ -2012,7 +2031,7 @@ function renderHuman(f) {
   for (const m of f.verification.manualOnly) lines.push(`  - node scripts/${m}  (manual only — not wired to an npm script)`);
 
   hdr('TOOL CAPABILITIES');
-  for (const t of f.tools) lines.push(`  - ${t.label.padEnd(28)} ${t.status}${t.detail ? ' — ' + t.detail : ''}`);
+  lines.push(`  ${f.capabilities.note}`);
 
   hdr('WARNINGS');
   if (!f.warnings.length) lines.push('  (none)');
@@ -2026,7 +2045,7 @@ function renderHuman(f) {
 // Commands — status and self-test only. Nothing else is dispatched.
 // ---------------------------------------------------------------------
 
-const COMMANDS = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt'];
+const COMMANDS = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt', 'doctor'];
 
 function cmdStatus(argv) {
   const facts = computeFacts();
@@ -2155,7 +2174,7 @@ function cmdVerify(rest) {
 }
 
 function printUsage() {
-  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand> | verify [--plan|--only <id>|--remote-read] | diff-review | commit --message "<text>" | hooks install | report [--decisions-made <t>] [--next-action <t>] | note [list|resolve] | finding [list|set-status] | next-prompt [--json]>\n');
+  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand> | verify [--plan|--only <id>|--remote-read] | diff-review | commit --message "<text>" | hooks install | report [--decisions-made <t>] [--next-action <t>] | note [list|resolve] | finding [list|set-status] | next-prompt [--json] | doctor>\n');
 }
 
 // ---------------------------------------------------------------------
@@ -2185,11 +2204,77 @@ function cmdSelfTest() {
   // --- command surface: exactly the 7 Harness 0-3 commands, and 'push'/
   //     'deploy'/'apply'/'migrate'/'db-push' are never a command name.
   //     'commit' IS now intentionally present — Harness 3's entire point. ---
-  check('exposed command set is exactly the 11 Harness 0-4 commands, never push/deploy/apply/migrate', () => {
-    const expected = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt'];
+  check('exposed command set is exactly the 12 Harness 0-4 commands (incl. doctor), never push/deploy/apply/migrate', () => {
+    const expected = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt', 'doctor'];
     const neverAllowed = ['push', 'deploy', 'apply', 'migrate', 'db-push'];
     return COMMANDS.length === expected.length && expected.every((c) => COMMANDS.includes(c))
       && !neverAllowed.some((f) => COMMANDS.includes(f));
+  });
+
+  // --- perf optimization slice: capability probing is isolated to `doctor`
+  //     only — status/next-prompt/task lifecycle/verify --plan never call
+  //     getToolCapabilities(), so they never pay the cold npx tax. ---
+  check('computeFacts() never calls getToolCapabilities() (structural)', () => {
+    const full = fs.readFileSync(__filename, 'utf8');
+    const fn = full.slice(full.indexOf('function computeFacts'), full.indexOf('function short('));
+    // Matches an actual invocation only — computeFacts()'s own explanatory
+    // comment mentions the function by name too, and must not self-match.
+    return !/=\s*getToolCapabilities\(\);/.test(fn) ? true : 'computeFacts() still calls getToolCapabilities()';
+  });
+  check('getToolCapabilities() has exactly one real call site, inside cmdDoctor', () => {
+    const full = fs.readFileSync(__filename, 'utf8');
+    const operational = full.slice(0, full.indexOf('function cmdSelfTest'));
+    // Matches actual invocations (`= getToolCapabilities();`), not the
+    // function's own declaration line or comments that merely mention it.
+    const callSites = (operational.match(/=\s*getToolCapabilities\(\);/g) || []).length;
+    const doctorSlice = full.slice(full.indexOf('function cmdDoctor'), full.indexOf('function cmdDoctor') + 800);
+    const insideDoctor = /=\s*getToolCapabilities\(\);/.test(doctorSlice);
+    return callSites === 1 && insideDoctor ? true : `callSites=${callSites} insideDoctor=${insideDoctor}`;
+  });
+  check('`doctor` actually performs a live probe (git/node/npm at least READY)', () => {
+    const r = spawnSync(process.execPath, [__filename, 'doctor'], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 20000 });
+    return r.status === 0 && /git\s+READY/.test(r.stdout) && /node\s+READY/.test(r.stdout) && /npm\s+READY/.test(r.stdout)
+      ? true : `exit ${r.status}: ${r.stdout}`;
+  });
+  check('checkTool() degrades a missing/nonexistent binary to MISSING without throwing', () => {
+    let result;
+    try {
+      result = checkTool('definitely-not-a-real-binary-xyz-123', ['--version']);
+    } catch (e) {
+      return `threw: ${e.message}`;
+    }
+    return result && result.status === 'MISSING' ? true : `unexpected result: ${JSON.stringify(result)}`;
+  });
+  check('`status` completes quickly and never shows a live tool version (capability probe skipped)', () => {
+    const t0 = Date.now();
+    const r = spawnSync(process.execPath, [__filename, 'status'], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 5000 });
+    const elapsedMs = Date.now() - t0;
+    const noLiveProbe = /not probed this run/.test(r.stdout) && !/supabase \(repo-local via npx\)\s+READY/.test(r.stdout);
+    return r.status === 0 && elapsedMs < 5000 && noLiveProbe
+      ? true : `exit ${r.status} elapsedMs=${elapsedMs} noLiveProbe=${noLiveProbe}`;
+  });
+  check('`next-prompt` completes quickly and performs no Supabase CLI probe', () => {
+    const t0 = Date.now();
+    const r = spawnSync(process.execPath, [__filename, 'next-prompt'], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 5000 });
+    const elapsedMs = Date.now() - t0;
+    const noLiveProbe = !/supabase \(repo-local via npx\)/.test(r.stdout);
+    return r.status === 0 && elapsedMs < 5000 && noLiveProbe
+      ? true : `exit ${r.status} elapsedMs=${elapsedMs} noLiveProbe=${noLiveProbe}`;
+  });
+  check('task lifecycle commands and `verify --plan` perform no capability probe (structural: neither cmdTaskNew..cmdTaskComplete nor cmdVerify call getToolCapabilities)', () => {
+    const full = fs.readFileSync(__filename, 'utf8');
+    const taskHandlers = full.slice(full.indexOf('function cmdTaskNew'), full.indexOf('function renderActiveTaskSection'));
+    const verifyFn = full.slice(full.indexOf('function cmdVerify'), full.indexOf('function printUsage'));
+    return !/getToolCapabilities\(/.test(taskHandlers) && !/getToolCapabilities\(/.test(verifyFn)
+      ? true : 'a task handler or cmdVerify references getToolCapabilities()';
+  });
+  check('status output still contains all safety-critical repo state (freeze/migrations/push guardrail/decisions) even without a capability probe', () => {
+    const r = spawnSync(process.execPath, [__filename, 'status'], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 5000 });
+    return r.status === 0
+      && /CODE STATE/.test(r.stdout) && /DATABASE MIGRATION STATE/.test(r.stdout)
+      && /DEPLOYMENT POLICY/.test(r.stdout) && /push guardrail/.test(r.stdout)
+      && /CURRENT ENGINEERING CONSTRAINTS/.test(r.stdout) && /PROTECTED SURFACES/.test(r.stdout)
+      ? true : `missing a required section: ${r.stdout.slice(0, 300)}`;
   });
 
   // --- the verification registry itself never has an executable route for
@@ -3281,6 +3366,7 @@ function main() {
   if (cmd === 'note') return cmdNote(argv.slice(1));
   if (cmd === 'finding') return cmdFinding(argv.slice(1));
   if (cmd === 'next-prompt') return cmdNextPrompt(argv.slice(1));
+  if (cmd === 'doctor') return cmdDoctor();
   printUsage();
   process.exitCode = 1;
 }
