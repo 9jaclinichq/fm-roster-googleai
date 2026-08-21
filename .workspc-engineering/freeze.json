@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "active": true,
+  "reason": "live submission cycle",
+  "productionCodeBaseline": "c4d29c67d5afa656e96f5f48fe70167c4d11e5ed",
+  "note": "Production CODE baseline only — independent from database migration state, which is recorded separately in migration-evidence.json. This freeze's original start date was not independently re-verified this session; the freeze is confirmed still active and the production code baseline confirmed current as of 2026-08-21."
+}

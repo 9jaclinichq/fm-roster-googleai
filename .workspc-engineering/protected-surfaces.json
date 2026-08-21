@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "note": "A slice touching one of these paths while active=true should surface that fact prominently and get explicit human approval before implementing. This does not mean the paths can never be edited.",
+  "surfaces": [
+    {
+      "id": "resident-login-email",
+      "glob": ["src/modules/auth/**"],
+      "reason": "resident email/login is live and stable; treat as protected during the current submission cycle",
+      "active": true
+    },
+    {
+      "id": "workforce-option-a-live-cycle",
+      "glob": ["src/modules/roster-engine/**"],
+      "reason": "Workforce Option A is undergoing real-cycle validation; Workforce Option B is blocked on that evidence",
+      "active": true
+    },
+    {
+      "id": "tenant-billing-surface",
+      "glob": ["src/modules/billing/**", "src/lib/databaseService.ts"],
+      "reason": "tenant DB-level SELECT/column confidentiality remains open/deferred; billing/payment paths are high blast-radius",
+      "active": true
+    },
+    {
+      "id": "rubric-assessor-primitive",
+      "glob": ["supabase/migrations/66_rubric_instances_assessor_not_both_check.sql", "docs/RUBRIC_ASSESSOR_OWNERSHIP_SPEC.md"],
+      "reason": "assessor identity-integrity constraint locked (at-most-one-of); migration 66 exists locally and is unapplied",
+      "active": true
+    }
+  ]
+}

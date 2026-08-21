@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "note": "Database migration-application state is independent from CODE deployment state (see freeze.json). A migration file existing on disk, or a range of migrations being missing from this file, is never treated as evidence of live application — only an explicit entry below counts. Any migration number with no matching entry is UNKNOWN, not assumed applied or unapplied.",
+  "entries": [
+    {
+      "migrationRange": "58-65",
+      "status": "VERIFIED_APPLIED",
+      "evidenceSource": "HANDOFF_TO_CLAUDE.md Deployment Boundary section — recorded manual live-application/verification, not derived from migration file headers",
+      "verifiedDate": "2026-08-21",
+      "note": "Several older migration headers (roughly the 32-57 range) are independently known to be stale about apply status; this entry is not derived from any header text."
+    },
+    {
+      "migrationRange": "66",
+      "status": "VERIFIED_UNAPPLIED",
+      "evidenceSource": "Session record: migration file authored and locally committed this cycle; no live-apply action has been taken against any environment in any session since",
+      "verifiedDate": "2026-08-21",
+      "note": "The file existing on disk is not itself treated as evidence either way; the evidence is the recorded absence of any apply action."
+    }
+  ]
+}

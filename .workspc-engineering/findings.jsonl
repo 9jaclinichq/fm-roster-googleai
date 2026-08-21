@@ -1,0 +1,2 @@
+{"schemaVersion":1,"id":"local-secret-hygiene","status":"NEEDS_REVIEW","summary":"local-secret-hygiene | NEEDS_REVIEW | sensitive local credential-storage issue previously observed"}
+{"schemaVersion":1,"id":"stale-agent-worktrees","status":"DEFERRED","summary":"Multiple stale .claude/worktrees/agent-* directories from prior subagent runs remain on disk. Disk-hygiene debt only; not cleaned up here."}
