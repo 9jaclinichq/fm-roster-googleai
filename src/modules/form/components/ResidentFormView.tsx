@@ -3,6 +3,7 @@ import { databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService
 import { getFormInstanceByName, createFormEntry } from '../lib/formService';
 import { ResidentActivityGraph } from './ResidentActivityGraph';
 import { ComplianceNudgesView } from '../../org-admin/components/ComplianceNudgesView';
+import { useTerminology } from '../../shared/terminology';
 import { Collection, Submission, Rotation } from '../../../types';
 import {
   ClipboardList,
@@ -35,6 +36,7 @@ interface ResidentFormViewProps {
 }
 
 export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, onLogout }) => {
+  const { t } = useTerminology();
   const [collection, setCollection] = useState<Collection | null>(null);
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -249,12 +251,12 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
 
     // Validation
     if (!currentRotation.trim()) {
-      setErrorMessage('Please specify your Current Rotation / Unit.');
+      setErrorMessage(`Please specify your Current ${t('rotation', 'Rotation')} / Unit.`);
       return;
     }
 
     if (!nextRotation.trim()) {
-      setErrorMessage('Please specify your Expected Rotation / Unit Next Month.');
+      setErrorMessage(`Please specify your Expected ${t('rotation', 'Rotation')} / Unit Next Month.`);
       return;
     }
 
@@ -470,7 +472,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
             {/* Current Rotation */}
             <div className="space-y-1.5">
               <label htmlFor="current-rotation" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Current Rotation / Unit
+                Current {t('rotation', 'Rotation')} / Unit
               </label>
               <select
                 id="current-rotation"
@@ -479,7 +481,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
                 onChange={(e) => setCurrentRotation(e.target.value)}
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition disabled:opacity-60 cursor-pointer"
               >
-                <option value="">Select your current rotation...</option>
+                <option value="">Select your current {t('rotation', 'rotation').toLowerCase()}...</option>
                 {currentRotation && !rotations.some(r => r.name === currentRotation) && (
                   <option value={currentRotation}>{currentRotation} (previously recorded)</option>
                 )}
@@ -487,13 +489,13 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
                   <option key={r.id} value={r.name}>{r.name}</option>
                 ))}
               </select>
-              <p className="text-[10px] text-slate-500">The unit or ward where you are deployed this current month.</p>
+              <p className="text-[10px] text-slate-500">The unit or {t('rotation', 'rotation').toLowerCase()} where you are deployed this current month.</p>
             </div>
 
             {/* Next Rotation */}
             <div className="space-y-1.5">
               <label htmlFor="next-rotation" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Expected Rotation / Unit Next Month
+                Expected {t('rotation', 'Rotation')} / Unit Next Month
               </label>
               <select
                 id="next-rotation"
@@ -502,7 +504,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
                 onChange={(e) => setNextRotation(e.target.value)}
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition disabled:opacity-60 cursor-pointer"
               >
-                <option value="">Select your expected rotation...</option>
+                <option value="">Select your expected {t('rotation', 'rotation').toLowerCase()}...</option>
                 {nextRotation && !rotations.some(r => r.name === nextRotation) && (
                   <option value={nextRotation}>{nextRotation} (previously recorded)</option>
                 )}
@@ -751,7 +753,7 @@ export const ResidentFormView: React.FC<ResidentFormViewProps> = ({ resident, on
               disabled={isFormReadOnly}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="e.g. Requesting specific weekend shifts off, or additional details about rotation swapping..."
+              placeholder={`e.g. Requesting specific weekend shifts off, or additional details about ${t('rotation', 'rotation').toLowerCase()} swapping...`}
               className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition disabled:opacity-60"
             />
           </div>
