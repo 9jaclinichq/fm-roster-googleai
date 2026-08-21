@@ -1,0 +1,55 @@
+#!/bin/sh
+# Workspc Engineering Harness — deployment-freeze pre-push guardrail.
+#
+# Refuses `git push` while .workspc-engineering/freeze.json has active:true.
+#
+# This is a LOCAL, repo-scoped safety net, not a security boundary: anyone
+# who runs `git push --no-verify`, deletes this file, or unsets
+# core.hooksPath bypasses it entirely. It exists to make an ACCIDENTAL push
+# during the freeze harder, not impossible. A committed copy of this file
+# does not activate itself — `npm run harness -- hooks install` (or
+# `git config --local core.hooksPath .githooks`) must be run once per clone.
+#
+# Reads exactly one local JSON file. No network call of any kind.
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+freeze_file="$repo_root/.workspc-engineering/freeze.json"
+
+if [ ! -f "$freeze_file" ]; then
+  exit 0
+fi
+
+result=$(node -e '
+  const fs = require("fs");
+  try {
+    const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (data.active === true) {
+      process.stdout.write("BLOCK::" + (data.reason || "(no reason recorded)"));
+    } else {
+      process.stdout.write("ALLOW");
+    }
+  } catch (e) {
+    process.stdout.write("ALLOW");
+  }
+' "$freeze_file" 2>/dev/null)
+
+case "$result" in
+  BLOCK::*)
+    reason="${result#BLOCK::}"
+    echo "" >&2
+    echo "*** DEPLOYMENT FREEZE ACTIVE — push refused ***" >&2
+    echo "reason: $reason" >&2
+    echo "" >&2
+    echo "This is a local, bypassable safety net (git push --no-verify skips it," >&2
+    echo "as does deleting this hook or unsetting core.hooksPath). It is not an" >&2
+    echo "absolute security boundary." >&2
+    echo "" >&2
+    echo "A human who truly intends to deploy should first deliberately lift the" >&2
+    echo "freeze through an explicitly reviewed process. This harness version does" >&2
+    echo "not implement a freeze-lift capability, so there is no built-in bypass." >&2
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac

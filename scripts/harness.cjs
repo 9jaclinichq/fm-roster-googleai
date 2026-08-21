@@ -15,10 +15,19 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
-const REPO_ROOT = path.resolve(__dirname, '..');
 // Overridable only for self-test isolation (see cmdSelfTest) — every real
-// invocation of this CLI leaves WORKSPC_ENG_DIR_OVERRIDE unset and resolves
-// the real .workspc-engineering/ directory.
+// invocation of this CLI leaves both overrides unset and resolves the real
+// repo/.workspc-engineering directory. WORKSPC_REPO_ROOT_OVERRIDE exists
+// specifically so Harness 3's git-mutating commands (commit, hooks install)
+// can be black-box tested against a disposable temp git repository without
+// any risk of touching this repository's real history.
+// Always the real repository, ignoring any override — used only by
+// self-test to locate the real .githooks/pre-push fixture source and to
+// confirm the real repo's own git config was never touched by a test.
+const REAL_REPO_ROOT = path.resolve(__dirname, '..');
+const REPO_ROOT = process.env.WORKSPC_REPO_ROOT_OVERRIDE
+  ? path.resolve(process.env.WORKSPC_REPO_ROOT_OVERRIDE)
+  : REAL_REPO_ROOT;
 const ENG_DIR = process.env.WORKSPC_ENG_DIR_OVERRIDE
   ? path.resolve(process.env.WORKSPC_ENG_DIR_OVERRIDE)
   : path.join(REPO_ROOT, '.workspc-engineering');
@@ -29,11 +38,51 @@ const IS_WIN = process.platform === 'win32';
 // Read-only process helpers. spawnSync only, argv arrays only, no shell.
 // ---------------------------------------------------------------------
 
-const ALLOWED_GIT_SUBCOMMANDS = ['rev-parse', 'status', 'rev-list'];
+// Harness 3 is the first slice permitted any local Git mutation. Every verb
+// below is still allow-listed, and the three mutating ones (add/commit/
+// config) are additionally shape-checked so the *only* possible invocation
+// is the one exact command this file's own commands construct — this is
+// not a suggestion enforced by convention, `git()` throws for anything
+// else. `push`, `fetch` (mutating forms), `remote`, and every other verb
+// remain entirely absent from this list — there is no flag or argument
+// that reaches them through this function.
+const ALLOWED_GIT_SUBCOMMANDS = ['rev-parse', 'status', 'rev-list', 'diff', 'add', 'commit', 'config'];
 
 function git(args) {
-  if (!ALLOWED_GIT_SUBCOMMANDS.includes(args[0])) {
-    throw new Error(`harness: git subcommand not allowed: ${args[0]}`);
+  const sub = args[0];
+  if (!ALLOWED_GIT_SUBCOMMANDS.includes(sub)) {
+    throw new Error(`harness: git subcommand not allowed: ${sub}`);
+  }
+  if (sub === 'diff') {
+    // Only ever `git diff --cached -- <one path>` (staged-secret scanning).
+    if (!(args.length === 4 && args[1] === '--cached' && args[2] === '--')) {
+      throw new Error('harness: git diff is restricted to `diff --cached -- <path>`');
+    }
+  }
+  if (sub === 'add') {
+    // Only ever `git add -- <path...>` — never `.`, `-A`, or a bare flag.
+    if (args[1] !== '--' || args.length < 3) {
+      throw new Error('harness: git add must be exactly ["add", "--", ...explicit paths]');
+    }
+    const paths = args.slice(2);
+    if (paths.some((p) => p === '.' || p.startsWith('-'))) {
+      throw new Error('harness: git add path list may not contain flags or "."');
+    }
+  }
+  if (sub === 'commit') {
+    // Only ever `git commit -m <message>` — no -a, --amend, --no-verify.
+    if (args.length !== 3 || args[1] !== '-m') {
+      throw new Error('harness: git commit must be exactly ["commit", "-m", message]');
+    }
+  }
+  if (sub === 'config') {
+    // Only ever reading or writing local core.hooksPath=.githooks — nothing
+    // else, no other key, no --global/--system.
+    const isRead = args.length === 4 && args[1] === '--local' && args[2] === '--get' && args[3] === 'core.hooksPath';
+    const isWrite = args.length === 4 && args[1] === '--local' && args[2] === 'core.hooksPath' && args[3] === '.githooks';
+    if (!isRead && !isWrite) {
+      throw new Error('harness: git config is restricted to local core.hooksPath=.githooks only');
+    }
   }
   return spawnSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8', timeout: 5000 });
 }
@@ -107,26 +156,44 @@ function getAheadBehind() {
   };
 }
 
+// Names only — never reads file contents. Renamed/copied paths collapse to
+// their destination path; that is enough for path/scope comparisons here.
+function getDetailedGitStatus() {
+  const res = git(['status', '--porcelain']);
+  if (res.status !== 0) return { ok: false, entries: [] };
+  const lines = res.stdout.split('\n').filter(Boolean);
+  const entries = lines.map((line) => {
+    const x = line[0];
+    const y = line[1];
+    let file = line.slice(3);
+    if (file.includes(' -> ')) file = file.split(' -> ')[1];
+    return {
+      path: file,
+      staged: x !== ' ' && x !== '?',
+      modified: y === 'M',
+      deleted: x === 'D' || y === 'D',
+      untracked: x === '?' && y === '?',
+    };
+  });
+  return { ok: true, entries };
+}
+
 // Names only — never reads file contents.
 function getWorkingTree() {
-  const res = git(['status', '--porcelain']);
-  if (res.status !== 0) return { staged: 0, modified: 0, untracked: 0, untrackedFiles: [], changedTrackedFiles: [], error: true };
-  const lines = res.stdout.split('\n').filter(Boolean);
+  const { ok, entries } = getDetailedGitStatus();
+  if (!ok) return { staged: 0, modified: 0, untracked: 0, untrackedFiles: [], changedTrackedFiles: [], error: true };
   let staged = 0;
   let modified = 0;
   const untrackedFiles = [];
   const changedTrackedFiles = [];
-  for (const line of lines) {
-    const x = line[0];
-    const y = line[1];
-    const file = line.slice(3);
-    if (x === '?' && y === '?') {
-      untrackedFiles.push(file);
+  for (const e of entries) {
+    if (e.untracked) {
+      untrackedFiles.push(e.path);
       continue;
     }
-    if (x !== ' ') staged++;
-    if (y !== ' ') modified++;
-    changedTrackedFiles.push(file);
+    if (e.staged) staged++;
+    if (e.modified) modified++;
+    changedTrackedFiles.push(e.path);
   }
   return { staged, modified, untracked: untrackedFiles.length, untrackedFiles, changedTrackedFiles };
 }
@@ -292,7 +359,7 @@ const ALLOWED_TRANSITIONS = {
   BLOCKED: [],
 };
 
-const TASK_SUBCOMMANDS = ['new', 'plan', 'phase', 'approve', 'block', 'clear', 'status'];
+const TASK_SUBCOMMANDS = ['new', 'plan', 'phase', 'approve', 'block', 'clear', 'status', 'ack'];
 
 function loadActiveTask() {
   return loadJSON(ACTIVE_TASK_FILE, null);
@@ -445,6 +512,11 @@ function cmdTaskNew(rest) {
     blockers: [],
     blockedFrom: null,
     approval: { approvedAt: null, approvalNote: null, acknowledgedProtectedSurfaces: false },
+    // Harness 3: the untracked-file baseline at task-creation time, so
+    // diff-review can distinguish pre-existing repo clutter from files this
+    // task actually created. Path/name only — never file contents.
+    baselineUntrackedFiles: getWorkingTree().untrackedFiles,
+    acknowledgments: [],
   };
   writeActiveTaskAtomic(task);
   process.stdout.write(`created task ${task.taskId} (${taskClass}) — phase DISCOVERED\n`);
@@ -493,6 +565,9 @@ function cmdTaskPhase(rest) {
   }
   if (target === 'BLOCKED') {
     return taskError('use `task block --reason "<text>"` instead');
+  }
+  if (target === 'COMMITTED_LOCAL') {
+    return taskError('COMMITTED_LOCAL cannot be set via `task phase` — use `commit --message "<text>"`, which only sets it after a real git commit');
   }
   if (task.phase === 'BLOCKED') {
     if (target !== task.blockedFrom) {
@@ -565,6 +640,40 @@ function cmdTaskClear(rest) {
   }
   deleteActiveTask();
   process.stdout.write(`cleared ${task.taskId}\n`);
+}
+
+// Harness 3: the one narrow acknowledgment mechanism diff-review needs.
+// Never converts a manual check to PASS — it moves it to the distinct
+// MANUAL_ACKNOWLEDGED status — and never silently expands declared scope;
+// an acknowledged out-of-scope file is still reported as
+// OUTSIDE_DECLARED_SCOPE, just no longer blocking.
+function cmdTaskAck(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task');
+  const note = flags.note;
+  if (!note || typeof note !== 'string' || !note.trim()) return taskError('--note "<why>" is required');
+  const checkId = flags.check;
+  const scopeFile = flags['scope-file'];
+  if ((checkId && scopeFile) || (!checkId && !scopeFile)) {
+    return taskError('pass exactly one of --check <checkId> or --scope-file <path>');
+  }
+  const now = new Date().toISOString();
+  if (checkId) {
+    const results = (task.verification && task.verification.results) || [];
+    const result = results.find((r) => r.checkId === checkId && r.status === 'MANUAL_REQUIRED');
+    if (!result) return taskError(`no MANUAL_REQUIRED verification result found for checkId ${checkId}`);
+    result.status = 'MANUAL_ACKNOWLEDGED';
+    result.ackNote = note;
+    result.ackAt = now;
+    task.acknowledgments = task.acknowledgments || [];
+    task.acknowledgments.push({ kind: 'manual-check', target: checkId, note, at: now });
+  } else {
+    task.acknowledgments = task.acknowledgments || [];
+    task.acknowledgments.push({ kind: 'scope-file', target: scopeFile, note, at: now });
+  }
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(`acknowledged ${checkId ? `check ${checkId}` : `scope file ${scopeFile}`}\n`);
 }
 
 function renderActiveTaskSection(lines, activeTask, workingTree) {
@@ -926,6 +1035,341 @@ function executeCheck(check, changedPaths) {
 }
 
 // ---------------------------------------------------------------------
+// Harness 3 — diff review. Pure inspection: nothing here writes to git or
+// mutates any file. `git diff --cached -- <path>` (via the constrained
+// git() wrapper) is the only read against staged content, used solely to
+// scan for secret-shaped *additions* — the file itself is never opened
+// merely to classify a pre-existing/unrelated untracked entry.
+// ---------------------------------------------------------------------
+
+const SECRET_FILENAME_PATTERNS = [
+  /^\.env/i, /\.pem$/i, /\.key$/i, /id_rsa/i, /id_dsa/i, /id_ecdsa/i, /id_ed25519/i,
+  /credential/i, /secret/i, /\.p12$/i, /\.pfx$/i, /\.pgpass$/i,
+];
+
+// Class label only — never the matched text itself (see scanDiffTextForSecrets).
+const SECRET_LINE_PATTERNS = {
+  'paystack-live-key': /sk_live_/,
+  'paystack-test-key': /sk_test_/,
+  'flutterwave-secret-key': /FLWSECK-/,
+  'pem-private-key-header': /-----BEGIN/,
+  'google-api-key-shaped': /AIza[0-9A-Za-z_-]{10,}/,
+  'github-token-shaped': /gh[pousr]_[0-9A-Za-z]{20,}/,
+  'generic-high-entropy-token': /[A-Za-z0-9_\-]{32,}/,
+};
+
+// Reports {line, class} only — matched text is deliberately discarded, and
+// is never assembled into the returned findings, never logged, and never
+// written to task state. This is a best-effort heuristic tripwire, not
+// comprehensive secret scanning.
+function scanDiffTextForSecrets(diffText) {
+  const findings = [];
+  let newLineNo = 0;
+  for (const line of diffText.split('\n')) {
+    const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+    if (hunk) {
+      newLineNo = parseInt(hunk[1], 10) - 1;
+      continue;
+    }
+    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    if (line.startsWith(' ')) {
+      newLineNo++;
+      continue;
+    }
+    if (!line.startsWith('+')) continue;
+    newLineNo++;
+    const content = line.slice(1);
+    for (const [cls, re] of Object.entries(SECRET_LINE_PATTERNS)) {
+      const m = content.match(re);
+      if (!m) continue;
+      if (cls === 'generic-high-entropy-token' && /^[0-9a-f]+$/i.test(m[0])) continue; // looks like a plain git hash
+      findings.push({ line: newLineNo, class: cls });
+      break;
+    }
+  }
+  return findings;
+}
+
+function scanStagedFileForSecrets(filePath) {
+  const res = git(['diff', '--cached', '--', filePath]);
+  if (res.status !== 0 || !res.stdout) return [];
+  return scanDiffTextForSecrets(res.stdout);
+}
+
+// Which auto-executable/manual checks the CURRENT plan requires, cross-
+// referenced against what has actually been recorded — never re-derived
+// from file existence, always from Harness 2's own persisted results.
+function computeRequiredVerificationGaps(task, changedPaths) {
+  const plan = buildVerificationPlan(task, changedPaths);
+  const requiredIds = plan.selected.filter(({ check }) => !check.manualOnly).map(({ check }) => check.id);
+  const results = (task.verification && task.verification.results) || [];
+  const byId = new Map(results.map((r) => [r.checkId, r]));
+  const gaps = [];
+  for (const id of requiredIds) {
+    const r = byId.get(id);
+    if (!r) {
+      gaps.push({ checkId: id, reason: 'required by the current plan but never run' });
+      continue;
+    }
+    if (r.status === 'FAIL') gaps.push({ checkId: id, reason: `FAILED — ${r.message}` });
+    if (r.status === 'BLOCKED') gaps.push({ checkId: id, reason: 'queued but never completed (an earlier verify run was interrupted)' });
+  }
+  for (const r of results) {
+    if (r.status === 'MANUAL_REQUIRED') {
+      gaps.push({ checkId: r.checkId, reason: `unresolved manual/remote requirement — ${r.message}` });
+    }
+  }
+  return gaps;
+}
+
+function classifyPath(path, expectedFiles, acknowledgedScope) {
+  if (matchesAnyGlob(path, expectedFiles)) return 'IN_SCOPE';
+  return acknowledgedScope.has(path) ? 'OUTSIDE_DECLARED_SCOPE_ACK' : 'OUTSIDE_DECLARED_SCOPE';
+}
+
+// Pure computation — the only I/O is read-only git/filesystem inspection.
+// Never writes task state itself; callers decide whether/what to persist.
+function computeDiffReview(task) {
+  const { entries } = getDetailedGitStatus();
+  const baseline = new Set(task.baselineUntrackedFiles || []);
+  const acknowledgedScope = new Set((task.acknowledgments || []).filter((a) => a.kind === 'scope-file').map((a) => a.target));
+  const expectedFiles = task.expectedFiles || [];
+
+  const staged = [];
+  const modifiedUnstaged = [];
+  const deleted = [];
+  const newUntracked = [];
+  const preExisting = [];
+
+  for (const e of entries) {
+    if (e.untracked) {
+      if (baseline.has(e.path)) preExisting.push({ path: e.path });
+      else newUntracked.push({ path: e.path, classification: classifyPath(e.path, expectedFiles, acknowledgedScope) });
+      continue;
+    }
+    if (e.deleted) {
+      deleted.push({ path: e.path, classification: classifyPath(e.path, expectedFiles, acknowledgedScope) });
+      continue;
+    }
+    if (e.staged) {
+      staged.push({ path: e.path, classification: classifyPath(e.path, expectedFiles, acknowledgedScope) });
+      continue;
+    }
+    if (e.modified) {
+      modifiedUnstaged.push({ path: e.path, classification: classifyPath(e.path, expectedFiles, acknowledgedScope) });
+    }
+  }
+
+  const allChanged = [...staged, ...modifiedUnstaged, ...deleted, ...newUntracked];
+  const changedPaths = allChanged.map((e) => e.path);
+  const protectedSurfaceHits = computeProtectedSurfaceHits(changedPaths);
+
+  const migFiles = getMigrationFiles();
+  const ceiling = migFiles.length ? migFiles[migFiles.length - 1].number : null;
+  const evidence = (loadJSON('migration-evidence.json', { entries: [] }) || { entries: [] }).entries;
+  const freeze = loadJSON('freeze.json', null);
+  const migrationAdditions = changedPaths
+    .filter((p) => p.startsWith('supabase/migrations/') && p.endsWith('.sql'))
+    .map((p) => {
+      const m = p.match(/(\d+)_/);
+      const number = m ? parseInt(m[1], 10) : null;
+      return {
+        file: p,
+        number,
+        ceiling,
+        freezeActive: !!(freeze && freeze.active),
+        evidenceStatus: number !== null ? resolveMigrationStatus(number, evidence) : 'UNKNOWN',
+      };
+    });
+
+  const secretFindings = [];
+  for (const e of allChanged) {
+    if (SECRET_FILENAME_PATTERNS.some((re) => re.test(e.path))) {
+      secretFindings.push({ file: e.path, line: null, class: 'secret-shaped-filename' });
+    }
+  }
+  for (const e of staged) {
+    for (const f of scanStagedFileForSecrets(e.path)) {
+      secretFindings.push({ file: e.path, line: f.line, class: f.class });
+    }
+  }
+
+  const verificationGaps = computeRequiredVerificationGaps(task, changedPaths);
+
+  const blockingReasons = [];
+  const warnings = [];
+
+  const unacked = allChanged.filter((e) => e.classification === 'OUTSIDE_DECLARED_SCOPE');
+  if (unacked.length) {
+    blockingReasons.push(`${unacked.length} file(s) OUTSIDE_DECLARED_SCOPE and not acknowledged: ${unacked.map((e) => e.path).join(', ')}`);
+  }
+  const acked = allChanged.filter((e) => e.classification === 'OUTSIDE_DECLARED_SCOPE_ACK');
+  if (acked.length) {
+    warnings.push(`${acked.length} acknowledged out-of-scope file(s): ${acked.map((e) => e.path).join(', ')}`);
+  }
+  if (protectedSurfaceHits.length) {
+    if (task.approval && task.approval.acknowledgedProtectedSurfaces) {
+      warnings.push(`protected-surface hit(s), acknowledged at approval: ${protectedSurfaceHits.map((h) => h.surfaceId).join(', ')}`);
+    } else {
+      blockingReasons.push(`protected-surface hit(s) not acknowledged at approval: ${protectedSurfaceHits.map((h) => h.surfaceId).join(', ')}`);
+    }
+  }
+  if (secretFindings.length) {
+    blockingReasons.push(`${secretFindings.length} secret-sensitive finding(s) — see secretFindings (best-effort, not comprehensive)`);
+  }
+  if (verificationGaps.length) {
+    blockingReasons.push(`${verificationGaps.length} unresolved verification requirement(s): ${verificationGaps.map((g) => `${g.checkId}(${g.reason})`).join('; ')}`);
+  }
+  if (migrationAdditions.length) {
+    warnings.push(`${migrationAdditions.length} new migration file(s) — not applied; freeze active=${migrationAdditions[0].freezeActive}`);
+  }
+  if (preExisting.length) {
+    warnings.push(`${preExisting.length} pre-existing/unrelated untracked file(s) present (not created by this task)`);
+  }
+
+  const state = blockingReasons.length ? 'BLOCKED' : warnings.length ? 'WARNINGS' : 'CLEAN';
+
+  return {
+    computedAt: new Date().toISOString(),
+    state,
+    staged, modifiedUnstaged, deleted, newUntracked, preExisting,
+    protectedSurfaceHits, migrationAdditions, secretFindings, verificationGaps,
+    blockingReasons, warnings,
+  };
+}
+
+function renderDiffReview(review) {
+  const lines = [];
+  lines.push(`DIFF REVIEW: ${review.state}`);
+  const section = (title, items, fmt) => {
+    if (!items.length) return;
+    lines.push(`  ${title}:`);
+    for (const it of items) lines.push(`    ${fmt(it)}`);
+  };
+  section('staged', review.staged, (e) => `${e.path} [${e.classification}]`);
+  section('modified (unstaged)', review.modifiedUnstaged, (e) => `${e.path} [${e.classification}]`);
+  section('deleted', review.deleted, (e) => `${e.path} [${e.classification}]`);
+  section('new untracked', review.newUntracked, (e) => `${e.path} [${e.classification}]`);
+  section('pre-existing/unrelated untracked', review.preExisting, (e) => `${e.path} [PRE_EXISTING_UNRELATED]`);
+  section('protected-surface hits', review.protectedSurfaceHits, (h) => `${h.surfaceId} — ${h.expectedFile}`);
+  section('migration additions', review.migrationAdditions, (m) => `${m.file} (ceiling=${m.ceiling}, evidence=${m.evidenceStatus}, freezeActive=${m.freezeActive})`);
+  section('secret-sensitive findings', review.secretFindings, (f) => `${f.file}${f.line ? `:${f.line}` : ''} [${f.class}]`);
+  section('verification gaps', review.verificationGaps, (g) => `${g.checkId} — ${g.reason}`);
+  section('blocking reasons', review.blockingReasons, (r) => r);
+  section('warnings', review.warnings, (r) => r);
+  return lines.join('\n') + '\n';
+}
+
+function cmdDiffReview() {
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task — diff-review requires an active task');
+  if (task.phase !== 'DIFF_REVIEW') {
+    return taskError(`diff-review requires phase DIFF_REVIEW (current: ${task.phase}) — run \`task phase DIFF_REVIEW\` first`);
+  }
+  const review = computeDiffReview(task);
+  task.lastDiffReview = review;
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(renderDiffReview(review));
+  if (review.state === 'BLOCKED') process.exitCode = 1;
+}
+
+function samePathSet(a, b) {
+  const norm = (arr) => JSON.stringify((arr || []).map((e) => e.path).slice().sort());
+  return norm(a) === norm(b);
+}
+
+// The only function in this file allowed to call git('add', ...) and
+// git('commit', ...). Always recomputes diff-review fresh rather than
+// trusting the possibly-stale stored one, and refuses outright if the
+// working tree has moved since that stored review was last produced.
+function cmdCommit(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task');
+  if (task.phase !== 'DIFF_REVIEW') return taskError(`commit requires phase DIFF_REVIEW (current: ${task.phase})`);
+  if (!task.lastDiffReview) return taskError('no diff-review result recorded — run `diff-review` first');
+  const message = flags.message;
+  if (!message || typeof message !== 'string' || !message.trim()) return taskError('--message "<text>" is required');
+
+  const fresh = computeDiffReview(task);
+  const stale = !samePathSet(fresh.staged, task.lastDiffReview.staged)
+    || !samePathSet(fresh.modifiedUnstaged, task.lastDiffReview.modifiedUnstaged)
+    || !samePathSet(fresh.deleted, task.lastDiffReview.deleted)
+    || !samePathSet(fresh.newUntracked, task.lastDiffReview.newUntracked);
+  if (stale) return taskError('the working tree changed since the last diff-review — re-run `diff-review` before committing');
+  if (fresh.state === 'BLOCKED') return taskError(`diff review is BLOCKED: ${fresh.blockingReasons.join('; ')}`);
+
+  const eligible = [...fresh.staged, ...fresh.modifiedUnstaged, ...fresh.deleted, ...fresh.newUntracked]
+    .filter((e) => e.classification !== 'OUTSIDE_DECLARED_SCOPE')
+    .map((e) => e.path);
+  const paths = Array.from(new Set(eligible));
+  if (!paths.length) return taskError('no eligible files to commit');
+
+  process.stdout.write(`staging exactly:\n${paths.map((p) => `  ${p}`).join('\n')}\n`);
+  const addRes = git(['add', '--', ...paths]);
+  if (addRes.status !== 0) return taskError(`git add failed: ${addRes.stderr || addRes.stdout}`);
+
+  const commitRes = git(['commit', '-m', message]);
+  if (commitRes.status !== 0) return taskError(`git commit failed: ${commitRes.stderr || commitRes.stdout}`);
+
+  const hash = getHead();
+  task.commit = {
+    hash,
+    message,
+    files: paths,
+    committedAt: new Date().toISOString(),
+    originMainAtCommit: getOriginMain(),
+    migrationFilesCreated: paths.filter((p) => p.startsWith('supabase/migrations/') && p.endsWith('.sql')),
+    pushStatus: 'NOT_PUSHED',
+  };
+  task.phase = 'COMMITTED_LOCAL';
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(`committed ${hash} — phase now COMMITTED_LOCAL — NOT PUSHED\n`);
+}
+
+// The only function allowed to write git config, and only ever this one
+// fixed local key/value (git()'s own shape check enforces this too).
+function cmdHooksInstall() {
+  const hookPath = path.join(REPO_ROOT, '.githooks', 'pre-push');
+  if (!fs.existsSync(hookPath)) {
+    return taskError('.githooks/pre-push does not exist in this repo — nothing to install');
+  }
+  try {
+    fs.chmodSync(hookPath, 0o755);
+  } catch (e) {
+    // best-effort on filesystems without POSIX permission bits
+  }
+  const res = git(['config', '--local', 'core.hooksPath', '.githooks']);
+  if (res.status !== 0) return taskError(`git config failed: ${res.stderr || res.stdout}`);
+  const verify = git(['config', '--local', '--get', 'core.hooksPath']);
+  const value = verify.status === 0 ? verify.stdout.trim() : null;
+  if (value !== '.githooks') return taskError(`verification failed — core.hooksPath reads "${value}", expected ".githooks"`);
+  process.stdout.write('installed: core.hooksPath (local) = .githooks\n');
+}
+
+function cmdHooks(argv) {
+  if (argv[0] === 'install') return cmdHooksInstall();
+  process.stdout.write('usage: node scripts/harness.cjs hooks install\n');
+  process.exitCode = 1;
+}
+
+// Read-only. Never writes config; only ever reads it.
+function getPushGuardrailState() {
+  const hookPath = path.join(REPO_ROOT, '.githooks', 'pre-push');
+  const hookExists = fs.existsSync(hookPath);
+  const cfg = git(['config', '--local', '--get', 'core.hooksPath']);
+  const hooksPath = cfg.status === 0 ? cfg.stdout.trim() : null;
+  if (hooksPath === '.githooks' && hookExists) return { state: 'INSTALLED', hooksPath, hookExists };
+  if (hooksPath === '.githooks' && !hookExists) {
+    return { state: 'MISCONFIGURED', hooksPath, hookExists, reason: 'core.hooksPath is .githooks but the hook file is missing' };
+  }
+  if (hooksPath && hooksPath !== '.githooks') {
+    return { state: 'MISCONFIGURED', hooksPath, hookExists, reason: `core.hooksPath is set to an unexpected value: ${hooksPath}` };
+  }
+  return { state: 'NOT_INSTALLED', hooksPath, hookExists };
+}
+
+// ---------------------------------------------------------------------
 // Fact assembly — read-only. Nothing in this function, or anything it
 // calls, writes to git or to disk.
 // ---------------------------------------------------------------------
@@ -952,6 +1396,7 @@ function computeFacts() {
   const verification = getVerificationInventory();
   const tools = getToolCapabilities();
   const handoff = checkHandoffStaleness(head);
+  const pushGuardrail = getPushGuardrailState();
 
   const activeTask = loadActiveTask();
   const activeTaskView = activeTask
@@ -986,6 +1431,9 @@ function computeFacts() {
   if (activeTaskView && activeTaskView.liveProtectedSurfaceHits.length) {
     warnings.push(`active task hits protected surface(s): ${activeTaskView.liveProtectedSurfaceHits.map((h) => h.surfaceId).join(', ')}`);
   }
+  if (freeze && freeze.active && pushGuardrail.state !== 'INSTALLED') {
+    warnings.push(`PUSH GUARDRAIL is ${pushGuardrail.state} while the deployment freeze is ACTIVE — run \`npm run harness -- hooks install\``);
+  }
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -1011,6 +1459,7 @@ function computeFacts() {
     verification,
     tools,
     handoff,
+    pushGuardrail,
     warnings,
   };
 }
@@ -1056,6 +1505,7 @@ function renderHuman(f) {
   } else {
     lines.push('freeze              : UNKNOWN (freeze.json missing/unreadable)');
   }
+  lines.push(`push guardrail      : ${f.pushGuardrail.state}${f.pushGuardrail.reason ? ` (${f.pushGuardrail.reason})` : ''}`);
 
   renderActiveTaskSection(lines, f.activeTask, f.code.workingTree);
 
@@ -1086,7 +1536,7 @@ function renderHuman(f) {
 // Commands — status and self-test only. Nothing else is dispatched.
 // ---------------------------------------------------------------------
 
-const COMMANDS = ['status', 'self-test', 'task', 'verify'];
+const COMMANDS = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks'];
 
 function cmdStatus(argv) {
   const facts = computeFacts();
@@ -1106,6 +1556,7 @@ function cmdTask(argv) {
   if (sub === 'approve') return cmdTaskApprove(rest);
   if (sub === 'block') return cmdTaskBlock(rest);
   if (sub === 'clear') return cmdTaskClear(rest);
+  if (sub === 'ack') return cmdTaskAck(rest);
   if (sub === 'status') {
     const lines = [];
     renderActiveTaskSection(lines, loadActiveTask(), getWorkingTree());
@@ -1183,7 +1634,10 @@ function cmdVerify(rest) {
     pending.push({ check, selectedBecause });
   }
   for (const u of plan.unregistered) {
-    results.push({ checkId: null, selectedBecause: ['DECLARED'], status: 'MANUAL_REQUIRED', startedAt: null, finishedAt: null, exitCode: null, message: `UNREGISTERED — MANUAL REVIEW REQUIRED: ${u.declared}` });
+    // A stable, addressable id (not null) so `task ack --check <id>` can
+    // resolve it — never derived into an executable command, only ever a
+    // label for this one persisted record.
+    results.push({ checkId: `unregistered:${u.declared}`, selectedBecause: ['DECLARED'], status: 'MANUAL_REQUIRED', startedAt: null, finishedAt: null, exitCode: null, message: `UNREGISTERED — MANUAL REVIEW REQUIRED: ${u.declared}` });
   }
   // Queue placeholders BEFORE running anything, so an interruption mid-run
   // leaves not-yet-reached checks visibly distinct (BLOCKED) from ones that
@@ -1210,7 +1664,7 @@ function cmdVerify(rest) {
 }
 
 function printUsage() {
-  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand> | verify [--plan|--only <id>|--remote-read]>\n');
+  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand> | verify [--plan|--only <id>|--remote-read] | diff-review | commit --message "<text>" | hooks install>\n');
 }
 
 // ---------------------------------------------------------------------
@@ -1237,11 +1691,14 @@ function cmdSelfTest() {
     }
   };
 
-  // --- command surface: exactly status + self-test + task + verify ---
-  check('exposed command set is exactly {status, self-test, task, verify}', () => {
-    const forbidden = ['commit', 'push', 'deploy', 'apply', 'migrate', 'db-push'];
-    return COMMANDS.length === 4 && ['status', 'self-test', 'task', 'verify'].every((c) => COMMANDS.includes(c))
-      && !forbidden.some((f) => COMMANDS.includes(f));
+  // --- command surface: exactly the 7 Harness 0-3 commands, and 'push'/
+  //     'deploy'/'apply'/'migrate'/'db-push' are never a command name.
+  //     'commit' IS now intentionally present — Harness 3's entire point. ---
+  check('exposed command set is exactly the 7 Harness 0-3 commands, never push/deploy/apply/migrate', () => {
+    const expected = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks'];
+    const neverAllowed = ['push', 'deploy', 'apply', 'migrate', 'db-push'];
+    return COMMANDS.length === expected.length && expected.every((c) => COMMANDS.includes(c))
+      && !neverAllowed.some((f) => COMMANDS.includes(f));
   });
 
   // --- the verification registry itself never has an executable route for
@@ -1326,7 +1783,7 @@ function cmdSelfTest() {
   // --- task subcommand surface never contains a mutating-outside-state verb ---
   check('task subcommands contain no commit/push/deploy/apply verb', () => {
     const forbidden = ['commit', 'push', 'deploy', 'apply', 'migrate', 'db-push'];
-    return TASK_SUBCOMMANDS.length === 7 && !forbidden.some((f) => TASK_SUBCOMMANDS.includes(f));
+    return TASK_SUBCOMMANDS.length === 8 && !forbidden.some((f) => TASK_SUBCOMMANDS.includes(f));
   });
 
   // --- APPROVED is only reachable via cmdTaskApprove, never the generic table ---
@@ -1579,11 +2036,367 @@ function cmdSelfTest() {
     });
   }
 
-  // --- git allowlist never contains a mutating verb ---
-  check('git() allowlist contains no mutating subcommand', () => {
-    const forbidden = ['push', 'commit', 'apply', 'reset', 'checkout', 'clean', 'merge'];
-    return !forbidden.some((f) => ALLOWED_GIT_SUBCOMMANDS.includes(f));
+  // --- git allowlist permanently excludes push/remote-mutation verbs.
+  //     'add'/'commit'/'config' ARE now intentionally present — Harness 3's
+  //     whole point — but only ever through the exact-shape checks below. ---
+  check('git() allowlist never contains push/fetch/remote/reset/checkout/clean/merge', () => {
+    const neverAllowed = ['push', 'fetch', 'remote', 'ls-remote', 'reset', 'checkout', 'clean', 'merge', 'pull'];
+    return !neverAllowed.some((f) => ALLOWED_GIT_SUBCOMMANDS.includes(f));
   });
+  check('ALLOWED_GIT_SUBCOMMANDS is exactly the 7 reviewed verbs, nothing more', () => {
+    const expected = ['rev-parse', 'status', 'rev-list', 'diff', 'add', 'commit', 'config'];
+    return ALLOWED_GIT_SUBCOMMANDS.length === expected.length && expected.every((v) => ALLOWED_GIT_SUBCOMMANDS.includes(v));
+  });
+  check('git() rejects `add .` and `add -A`, accepts only explicit paths', () => {
+    let dotRejected = false;
+    let flagRejected = false;
+    let explicitAccepted = false;
+    try { git(['add', '--', '.']); } catch (e) { dotRejected = /flags or "\."/i.test(e.message); }
+    try { git(['add', '-A']); } catch (e) { flagRejected = true; }
+    // A real explicit-path call is allowed to *attempt* the spawn (it may
+    // legitimately fail because the path doesn't exist in THIS repo state);
+    // what matters is that it is not rejected by the shape guard itself.
+    try { git(['add', '--', 'some/definitely/nonexistent/path.txt']); explicitAccepted = true; } catch (e) { explicitAccepted = false; }
+    return dotRejected && flagRejected && explicitAccepted ? true : `dot=${dotRejected} flag=${flagRejected} explicit=${explicitAccepted}`;
+  });
+  check('git() rejects any commit shape other than exactly ["commit","-m",message]', () => {
+    let amendRejected = false;
+    let noVerifyRejected = false;
+    let allFlagRejected = false;
+    try { git(['commit', '--amend']); } catch (e) { amendRejected = true; }
+    try { git(['commit', '-m', 'x', '--no-verify']); } catch (e) { noVerifyRejected = true; }
+    try { git(['commit', '-a', '-m', 'x']); } catch (e) { allFlagRejected = true; }
+    return amendRejected && noVerifyRejected && allFlagRejected ? true : `amend=${amendRejected} noVerify=${noVerifyRejected} all=${allFlagRejected}`;
+  });
+  check('git() restricts config to exactly local core.hooksPath get/set', () => {
+    let globalRejected = false;
+    let otherKeyRejected = false;
+    let otherValueRejected = false;
+    try { git(['config', '--global', 'core.hooksPath', '.githooks']); } catch (e) { globalRejected = true; }
+    try { git(['config', '--local', 'user.email', 'x@example.com']); } catch (e) { otherKeyRejected = true; }
+    try { git(['config', '--local', 'core.hooksPath', '/etc/evil']); } catch (e) { otherValueRejected = true; }
+    return globalRejected && otherKeyRejected && otherValueRejected ? true : `global=${globalRejected} key=${otherKeyRejected} value=${otherValueRejected}`;
+  });
+  check('git() restricts diff to exactly `diff --cached -- <path>`', () => {
+    let unrestrictedRejected = false;
+    try { git(['diff', 'HEAD~1']); } catch (e) { unrestrictedRejected = true; }
+    return unrestrictedRejected;
+  });
+
+  // --- structural: exactly one call site each for the two new mutating
+  //     verbs, and they are the reviewed command handlers ---
+  // Scoped to the operational code only (everything before cmdSelfTest) —
+  // self-test's own rejection-shape assertions deliberately contain these
+  // same literal call shapes and would otherwise self-match.
+  check('only cmdCommit calls git(commit) and git(add); only cmdHooksInstall writes git(config)', () => {
+    const full = fs.readFileSync(__filename, 'utf8');
+    const operational = full.slice(0, full.indexOf('function cmdSelfTest'));
+    const commitCallSites = (operational.match(/git\(\['commit'/g) || []).length;
+    const addCallSites = (operational.match(/git\(\['add'/g) || []).length;
+    const configWriteCallSites = (operational.match(/git\(\['config', '--local', 'core\.hooksPath', '\.githooks'\]\)/g) || []).length;
+    return commitCallSites === 1 && addCallSites === 1 && configWriteCallSites === 1
+      ? true : `commit=${commitCallSites} add=${addCallSites} configWrite=${configWriteCallSites}`;
+  });
+
+  // --- diff-review / commit / hooks integration tests, each against a
+  //     disposable throwaway git repository under the OS temp dir. Real
+  //     `git init`/`add`/`commit` calls here use raw spawnSync (not this
+  //     file's own restricted git() wrapper) because self-test needs full
+  //     unrestricted git to BUILD each fixture repo — every one of those
+  //     calls is scoped to `cwd: tempDir`, never REPO_ROOT, so none of them
+  //     can touch this repository's real history. The harness-under-test
+  //     itself is invoked with WORKSPC_REPO_ROOT_OVERRIDE=tempDir, which is
+  //     what makes its own git()-gated commands (add/commit/config) operate
+  //     on the fixture repo instead of the real one. ---
+  {
+    const tempRepos = [];
+    const tempPlanFiles = [];
+    const makeTempRepo = () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspc-harness-repo-'));
+      spawnSync('git', ['init', '-q'], { cwd: dir });
+      spawnSync('git', ['config', 'user.email', 'harness-self-test@example.com'], { cwd: dir });
+      spawnSync('git', ['config', 'user.name', 'Harness Self-Test'], { cwd: dir });
+      fs.mkdirSync(path.join(dir, '.workspc-engineering'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.workspc-engineering', 'freeze.json'), JSON.stringify({ schemaVersion: 1, active: true, reason: 'fixture', productionCodeBaseline: '0000000' }));
+      fs.writeFileSync(path.join(dir, '.workspc-engineering', 'protected-surfaces.json'), JSON.stringify({ surfaces: [{ id: 'fixture-protected', glob: ['protected/**'], reason: 'fixture', active: true }] }));
+      fs.writeFileSync(path.join(dir, '.workspc-engineering', 'migration-evidence.json'), JSON.stringify({ entries: [] }));
+      fs.writeFileSync(path.join(dir, 'README.md'), 'fixture repo for harness self-test\n');
+      spawnSync('git', ['add', 'README.md'], { cwd: dir });
+      spawnSync('git', ['commit', '-q', '-m', 'initial'], { cwd: dir });
+      tempRepos.push(dir);
+      return dir;
+    };
+    const runIn = (dir, args, timeoutMs) => spawnSync(process.execPath, [__filename, ...args], {
+      cwd: dir, encoding: 'utf8', timeout: timeoutMs || 15000,
+      env: { ...process.env, WORKSPC_REPO_ROOT_OVERRIDE: dir },
+    });
+    const readTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, '.workspc-engineering', 'active-task.json'), 'utf8'));
+    const writeTask = (dir, task) => fs.writeFileSync(path.join(dir, '.workspc-engineering', 'active-task.json'), JSON.stringify(task, null, 2));
+    const advance = (dir, taskClass, expectedFiles) => {
+      runIn(dir, ['task', 'new', '--title', 'diff-review fixture', '--class', taskClass]);
+      // Written OUTSIDE the fixture repo's working tree — writing it inside
+      // would itself become an undeclared untracked file and pollute the
+      // very scope comparison these tests exercise.
+      const planFile = path.join(os.tmpdir(), `workspc-harness-plan-${crypto.randomBytes(4).toString('hex')}.json`);
+      fs.writeFileSync(planFile, JSON.stringify({ expectedFiles: expectedFiles || [] }));
+      tempPlanFiles.push(planFile);
+      runIn(dir, ['task', 'plan', '--file', planFile]);
+      runIn(dir, ['task', 'phase', 'AWAITING_HUMAN_REVIEW']);
+      // Ack unconditionally: harmless when there's no protected-surface hit,
+      // and required (Harness 1 behavior, correctly enforced) when there is.
+      runIn(dir, ['task', 'approve', '--note', 'fixture', '--ack-protected-surfaces']);
+      runIn(dir, ['task', 'phase', 'IMPLEMENTING']);
+      runIn(dir, ['task', 'phase', 'VERIFYING']);
+      runIn(dir, ['task', 'phase', 'DIFF_REVIEW']);
+    };
+
+    try {
+      check('diff-review refuses without an active task', () => {
+        const dir = makeTempRepo();
+        const r = runIn(dir, ['diff-review']);
+        return r.status !== 0 && /no active task/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      check('diff-review requires phase DIFF_REVIEW', () => {
+        const dir = makeTempRepo();
+        runIn(dir, ['task', 'new', '--title', 'x', '--class', 'BUG_FIX']);
+        const r = runIn(dir, ['diff-review']);
+        return r.status !== 0 && /DIFF_REVIEW/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      const dirScope = makeTempRepo();
+      check('an in-scope staged file is accepted (not BLOCKED)', () => {
+        advance(dirScope, 'DOCUMENTATION_GOVERNANCE', ['allowed.txt']);
+        fs.writeFileSync(path.join(dirScope, 'allowed.txt'), 'in scope\n');
+        spawnSync('git', ['add', 'allowed.txt'], { cwd: dirScope });
+        const r = runIn(dirScope, ['diff-review']);
+        const t = readTask(dirScope);
+        return r.status === 0 && t.lastDiffReview.state !== 'BLOCKED' ? true : `exit ${r.status} state=${t.lastDiffReview.state} reasons=${JSON.stringify(t.lastDiffReview.blockingReasons)}`;
+      });
+
+      check('an out-of-scope tracked change is flagged and BLOCKED', () => {
+        fs.writeFileSync(path.join(dirScope, 'unplanned.txt'), 'not declared\n');
+        spawnSync('git', ['add', 'unplanned.txt'], { cwd: dirScope });
+        const r = runIn(dirScope, ['diff-review']);
+        const t = readTask(dirScope);
+        const entry = t.lastDiffReview.staged.find((e) => e.path === 'unplanned.txt');
+        return r.status !== 0 && t.lastDiffReview.state === 'BLOCKED' && entry && entry.classification === 'OUTSIDE_DECLARED_SCOPE'
+          ? true : `exit ${r.status} state=${t.lastDiffReview.state} entry=${JSON.stringify(entry)}`;
+      });
+
+      const dirUntracked = makeTempRepo();
+      check('a newly-created out-of-scope untracked file is flagged', () => {
+        advance(dirUntracked, 'BUG_FIX', ['allowed.txt']);
+        fs.writeFileSync(path.join(dirUntracked, 'surprise.txt'), 'new, undeclared\n');
+        const r = runIn(dirUntracked, ['diff-review']);
+        const t = readTask(dirUntracked);
+        const entry = t.lastDiffReview.newUntracked.find((e) => e.path === 'surprise.txt');
+        return t.lastDiffReview.state === 'BLOCKED' && entry && entry.classification === 'OUTSIDE_DECLARED_SCOPE'
+          ? true : `state=${t.lastDiffReview.state} entry=${JSON.stringify(entry)}`;
+      });
+
+      const dirPreExisting = makeTempRepo();
+      check('pre-existing unrelated untracked files are reported separately and never block', () => {
+        fs.writeFileSync(path.join(dirPreExisting, 'old-clutter.txt'), 'existed before the task\n');
+        advance(dirPreExisting, 'DOCUMENTATION_GOVERNANCE', ['allowed.txt']);
+        fs.writeFileSync(path.join(dirPreExisting, 'allowed.txt'), 'in scope\n');
+        spawnSync('git', ['add', 'allowed.txt'], { cwd: dirPreExisting });
+        const r = runIn(dirPreExisting, ['diff-review']);
+        const t = readTask(dirPreExisting);
+        const pre = t.lastDiffReview.preExisting.find((e) => e.path === 'old-clutter.txt');
+        return r.status === 0 && t.lastDiffReview.state !== 'BLOCKED' && pre ? true : `exit ${r.status} state=${t.lastDiffReview.state} pre=${JSON.stringify(pre)}`;
+      });
+
+      const dirProtected = makeTempRepo();
+      check('a protected-surface hit remains visible in diff-review', () => {
+        fs.mkdirSync(path.join(dirProtected, 'protected'), { recursive: true });
+        advance(dirProtected, 'BUG_FIX', ['protected/thing.txt']);
+        fs.writeFileSync(path.join(dirProtected, 'protected', 'thing.txt'), 'x\n');
+        spawnSync('git', ['add', 'protected/thing.txt'], { cwd: dirProtected });
+        runIn(dirProtected, ['diff-review']);
+        const t = readTask(dirProtected);
+        return t.lastDiffReview.protectedSurfaceHits.some((h) => h.surfaceId === 'fixture-protected') ? true : JSON.stringify(t.lastDiffReview.protectedSurfaceHits);
+      });
+
+      const dirFail = makeTempRepo();
+      check('a FAILed required verification blocks diff-review', () => {
+        advance(dirFail, 'SPECIFICATION_ONLY', ['src/should-not-exist.ts']);
+        runIn(dirFail, ['verify', '--only', 'spec-only-scope-check']);
+        const r = runIn(dirFail, ['diff-review']);
+        const t = readTask(dirFail);
+        return r.status !== 0 && t.lastDiffReview.state === 'BLOCKED' && t.lastDiffReview.verificationGaps.some((g) => g.checkId === 'spec-only-scope-check')
+          ? true : `exit ${r.status} state=${t.lastDiffReview.state}`;
+      });
+
+      const dirBlockedVerify = makeTempRepo();
+      check('a BLOCKED (never-completed) verification blocks diff-review', () => {
+        advance(dirBlockedVerify, 'BUG_FIX', []);
+        const t = readTask(dirBlockedVerify);
+        t.verification = { lastRunAt: new Date().toISOString(), results: [{ checkId: 'npm-verify', selectedBecause: ['TASK_CLASS'], status: 'BLOCKED', startedAt: null, finishedAt: null, exitCode: null, message: 'queued — not yet started' }] };
+        writeTask(dirBlockedVerify, t);
+        const r = runIn(dirBlockedVerify, ['diff-review']);
+        const t2 = readTask(dirBlockedVerify);
+        return r.status !== 0 && t2.lastDiffReview.state === 'BLOCKED' && t2.lastDiffReview.verificationGaps.some((g) => g.checkId === 'npm-verify')
+          ? true : `exit ${r.status} state=${t2.lastDiffReview.state}`;
+      });
+
+      const dirManual = makeTempRepo();
+      check('an unresolved MANUAL_REQUIRED blocks diff-review until acknowledged', () => {
+        advance(dirManual, 'DOCUMENTATION_GOVERNANCE', []);
+        const t = readTask(dirManual);
+        t.verification = { lastRunAt: new Date().toISOString(), results: [{ checkId: 'ui-visual-verification', selectedBecause: ['TASK_CLASS'], status: 'MANUAL_REQUIRED', startedAt: null, finishedAt: null, exitCode: null, message: 'desktop viewport, mobile viewport, console error check, route reload check' }] };
+        writeTask(dirManual, t);
+        const before = runIn(dirManual, ['diff-review']);
+        const stillBlocked = before.status !== 0;
+        runIn(dirManual, ['task', 'ack', '--check', 'ui-visual-verification', '--note', 'checked all four manually']);
+        const after = runIn(dirManual, ['diff-review']);
+        const t2 = readTask(dirManual);
+        const resultNowAck = t2.verification.results.find((r) => r.checkId === 'ui-visual-verification');
+        return stillBlocked && after.status === 0 && resultNowAck.status === 'MANUAL_ACKNOWLEDGED'
+          ? true : `stillBlocked=${stillBlocked} afterExit=${after.status} resultStatus=${resultNowAck && resultNowAck.status}`;
+      });
+
+      check('an acknowledged manual check is recorded as MANUAL_ACKNOWLEDGED, never mislabeled PASS', () => {
+        const t = readTask(dirManual);
+        const r = t.verification.results.find((x) => x.checkId === 'ui-visual-verification');
+        return r.status === 'MANUAL_ACKNOWLEDGED' && r.status !== 'PASS' ? true : `status=${r.status}`;
+      });
+
+      const dirSecret = makeTempRepo();
+      check('a suspicious secret-shaped addition blocks commit eligibility', () => {
+        advance(dirSecret, 'BUG_FIX', ['config.txt']);
+        fs.writeFileSync(path.join(dirSecret, 'config.txt'), 'PAYSTACK_KEY=sk_live_thisIsAFixtureNotARealKey000000\n');
+        spawnSync('git', ['add', 'config.txt'], { cwd: dirSecret });
+        const r = runIn(dirSecret, ['diff-review']);
+        const t = readTask(dirSecret);
+        return r.status !== 0 && t.lastDiffReview.state === 'BLOCKED' && t.lastDiffReview.secretFindings.some((f) => f.class === 'paystack-live-key')
+          ? true : `exit ${r.status} findings=${JSON.stringify(t.lastDiffReview.secretFindings)}`;
+      });
+      check('secret findings never include the matched value itself, only file/line/class', () => {
+        const t = readTask(dirSecret);
+        const f = t.lastDiffReview.secretFindings.find((x) => x.class === 'paystack-live-key');
+        return f && !JSON.stringify(f).includes('sk_live_thisIsAFixtureNotARealKey000000') ? true : 'the actual secret text leaked into stored state';
+      });
+
+      const dirMigration = makeTempRepo();
+      check('a new migration file is detected but never treated as applied', () => {
+        fs.mkdirSync(path.join(dirMigration, 'supabase', 'migrations'), { recursive: true });
+        advance(dirMigration, 'DATABASE_MIGRATION', ['supabase/migrations/1_fixture.sql']);
+        fs.writeFileSync(path.join(dirMigration, 'supabase', 'migrations', '1_fixture.sql'), '-- fixture, never applied\n');
+        spawnSync('git', ['add', 'supabase/migrations/1_fixture.sql'], { cwd: dirMigration });
+        const t0 = readTask(dirMigration);
+        t0.verification = { lastRunAt: new Date().toISOString(), results: [{ checkId: 'migration-state-check', selectedBecause: ['TASK_CLASS'], status: 'PASS', startedAt: null, finishedAt: null, exitCode: null, message: 'ok' }] };
+        writeTask(dirMigration, t0);
+        const r = runIn(dirMigration, ['diff-review']);
+        const t = readTask(dirMigration);
+        const mig = t.lastDiffReview.migrationAdditions.find((m) => m.number === 1);
+        return r.status === 0 && mig && mig.evidenceStatus === 'UNKNOWN' ? true : `exit ${r.status} mig=${JSON.stringify(mig)}`;
+      });
+
+      check('commit refuses outside DIFF_REVIEW', () => {
+        const dir = makeTempRepo();
+        runIn(dir, ['task', 'new', '--title', 'x', '--class', 'BUG_FIX']);
+        const r = runIn(dir, ['commit', '--message', 'x']);
+        return r.status !== 0 && /DIFF_REVIEW/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      const dirStale = makeTempRepo();
+      check('commit refuses a stale diff review (tree changed since it ran)', () => {
+        advance(dirStale, 'DOCUMENTATION_GOVERNANCE', ['a.txt', 'b.txt']);
+        fs.writeFileSync(path.join(dirStale, 'a.txt'), '1\n');
+        spawnSync('git', ['add', 'a.txt'], { cwd: dirStale });
+        runIn(dirStale, ['diff-review']);
+        fs.writeFileSync(path.join(dirStale, 'b.txt'), '2\n');
+        spawnSync('git', ['add', 'b.txt'], { cwd: dirStale }); // changed the tree AFTER diff-review ran
+        const r = runIn(dirStale, ['commit', '--message', 'x']);
+        return r.status !== 0 && /changed since/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      const dirCommit = makeTempRepo();
+      check('commit stages only the exact reviewed in-scope paths, never unrelated untracked files', () => {
+        fs.writeFileSync(path.join(dirCommit, 'pre-existing-clutter.txt'), 'was already here\n');
+        advance(dirCommit, 'DOCUMENTATION_GOVERNANCE', ['reviewed.txt']);
+        fs.writeFileSync(path.join(dirCommit, 'reviewed.txt'), 'the only intended change\n');
+        spawnSync('git', ['add', 'reviewed.txt'], { cwd: dirCommit });
+        runIn(dirCommit, ['diff-review']);
+        const r = runIn(dirCommit, ['commit', '--message', 'fixture commit']);
+        const staged = spawnSync('git', ['show', '--stat', '--format=', 'HEAD'], { cwd: dirCommit, encoding: 'utf8' }).stdout;
+        const untrackedAfter = spawnSync('git', ['status', '--porcelain'], { cwd: dirCommit, encoding: 'utf8' }).stdout;
+        return r.status === 0
+          && /reviewed\.txt/.test(staged) && !/pre-existing-clutter\.txt/.test(staged)
+          && /\?\? pre-existing-clutter\.txt/.test(untrackedAfter)
+          ? true : `exit ${r.status} staged=${staged} untrackedAfter=${untrackedAfter}`;
+      });
+
+      check('successful commit records hash/message/files and transitions only to COMMITTED_LOCAL', () => {
+        const t = readTask(dirCommit);
+        return t.phase === 'COMMITTED_LOCAL'
+          && t.commit && t.commit.hash && t.commit.message === 'fixture commit'
+          && t.commit.files.includes('reviewed.txt') && t.commit.pushStatus === 'NOT_PUSHED'
+          ? true : JSON.stringify({ phase: t.phase, commit: t.commit });
+      });
+
+      check('no harness command can push — behavioral (already proven structurally by the allowlist checks above)', () => {
+        let pushThrows = false;
+        try { git(['push']); } catch (e) { pushThrows = true; }
+        return pushThrows;
+      });
+
+      const dirHookActive = makeTempRepo();
+      check('the pre-push hook refuses (non-zero) while sandbox freeze is active', () => {
+        fs.mkdirSync(path.join(dirHookActive, '.githooks'), { recursive: true });
+        fs.copyFileSync(path.join(REAL_REPO_ROOT, '.githooks', 'pre-push'), path.join(dirHookActive, '.githooks', 'pre-push'));
+        const r = spawnSync('sh', [path.join(dirHookActive, '.githooks', 'pre-push')], { cwd: dirHookActive, encoding: 'utf8', timeout: 10000 });
+        return r.status !== 0 && /FREEZE ACTIVE/.test(r.stderr) ? true : `exit ${r.status} stderr=${r.stderr}`;
+      });
+
+      const dirHookInactive = makeTempRepo();
+      check('the pre-push hook permits (exit 0) when sandbox freeze is inactive', () => {
+        fs.writeFileSync(path.join(dirHookInactive, '.workspc-engineering', 'freeze.json'), JSON.stringify({ schemaVersion: 1, active: false, reason: 'fixture', productionCodeBaseline: '0000000' }));
+        fs.mkdirSync(path.join(dirHookInactive, '.githooks'), { recursive: true });
+        fs.copyFileSync(path.join(REAL_REPO_ROOT, '.githooks', 'pre-push'), path.join(dirHookInactive, '.githooks', 'pre-push'));
+        const r = spawnSync('sh', [path.join(dirHookInactive, '.githooks', 'pre-push')], { cwd: dirHookInactive, encoding: 'utf8', timeout: 10000 });
+        return r.status === 0 ? true : `exit ${r.status} stderr=${r.stderr}`;
+      });
+
+      check('the pre-push hook makes no network call in either case (static check)', () => {
+        const hookSrc = fs.readFileSync(path.join(REAL_REPO_ROOT, '.githooks', 'pre-push'), 'utf8');
+        return !/curl |wget |fetch\(|https?:\/\//.test(hookSrc) ? true : 'hook script references a network call';
+      });
+
+      const dirHooksInstall = makeTempRepo();
+      check('`hooks install` changes only the fixture repo\'s local core.hooksPath, and status detects it', () => {
+        fs.mkdirSync(path.join(dirHooksInstall, '.githooks'), { recursive: true });
+        fs.copyFileSync(path.join(REAL_REPO_ROOT, '.githooks', 'pre-push'), path.join(dirHooksInstall, '.githooks', 'pre-push'));
+        const realBefore = spawnSync('git', ['config', '--local', '--get', 'core.hooksPath'], { cwd: REAL_REPO_ROOT, encoding: 'utf8' });
+        const before = spawnSync('git', ['config', '--local', '--get', 'core.hooksPath'], { cwd: dirHooksInstall, encoding: 'utf8' });
+        const r = runIn(dirHooksInstall, ['hooks', 'install']);
+        const after = spawnSync('git', ['config', '--local', '--get', 'core.hooksPath'], { cwd: dirHooksInstall, encoding: 'utf8' });
+        const realAfter = spawnSync('git', ['config', '--local', '--get', 'core.hooksPath'], { cwd: REAL_REPO_ROOT, encoding: 'utf8' });
+        const statusJson = runIn(dirHooksInstall, ['status', '--json']);
+        let guardrailState = null;
+        try { guardrailState = JSON.parse(statusJson.stdout).pushGuardrail.state; } catch (e) { /* leave null */ }
+        const realUnaffected = realBefore.status === realAfter.status && realBefore.stdout === realAfter.stdout;
+        return r.status === 0 && before.status !== 0 && after.stdout.trim() === '.githooks' && realUnaffected && guardrailState === 'INSTALLED'
+          ? true : `installExit=${r.status} before=${before.stdout} after=${after.stdout} guardrailState=${guardrailState} realUnaffected=${realUnaffected}`;
+      });
+    } finally {
+      for (const dir of tempRepos) {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch (e) {
+          // best-effort cleanup of an OS temp dir; not fatal to the suite
+        }
+      }
+      for (const f of tempPlanFiles) {
+        try {
+          fs.unlinkSync(f);
+        } catch (e) {
+          // best-effort
+        }
+      }
+    }
+  }
 
   // --- git() wrapper actually enforces the allowlist at runtime ---
   check('git() throws on a subcommand outside the allowlist', () => {
@@ -1728,6 +2541,9 @@ function main() {
   if (cmd === 'self-test') return cmdSelfTest();
   if (cmd === 'task') return cmdTask(argv.slice(1));
   if (cmd === 'verify') return cmdVerify(argv.slice(1));
+  if (cmd === 'diff-review') return cmdDiffReview();
+  if (cmd === 'commit') return cmdCommit(argv.slice(1));
+  if (cmd === 'hooks') return cmdHooks(argv.slice(1));
   printUsage();
   process.exitCode = 1;
 }
