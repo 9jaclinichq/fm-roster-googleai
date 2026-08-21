@@ -216,6 +216,15 @@ the Chief dashboard's CSV export and tables, the roster editor, and the
 review panel's own title — the exact surfaces CLAUDE.md claims are fully
 tenant-vocabulary-aware.
 
+**CORRECTION (2026-08-21, governance-hygiene pass) — four of the five named offenders above are now closed.** Directly re-verified against current source (paths reflect the since-completed module relocation):
+- `src/modules/org-admin/components/ChiefDashboardView.tsx` — the "Rotation"/"Consultant" instances named above are now routed through `t('rotation', 'Rotation')` (confirmed at the validation-message and label call sites) and `t('admin', 'Chief Resident')`.
+- `src/modules/org-admin/components/dashboard/MultiRosterManagerView.tsx` — confirmed routed through `t('rotation', 'Rotation')` at its remaining "Outside {rotation}" label.
+- `src/modules/consultant-review/components/ConsultantReviewView.tsx` — its `<h2>` heading is confirmed now `{t('senior_reviewer', 'Consultant')} Review Workspace`, no longer hardcoded.
+- `src/modules/doctors/components/DoctorHomeView.tsx` — its "Chief Resident" reference is confirmed now `{t('admin', 'Chief Resident')}`.
+- `src/modules/form/components/ResidentFormView.tsx` (named above as "not in the retrofitted list at all") was subsequently corrected in local-only commit `57cee52`: it now imports `useTerminology()` and routes its Current/Expected Rotation labels, both validation messages, both dropdown placeholders, and the notes-field example text through `t('rotation', 'Rotation')`; the hardcoded "ward" reference was rephrased using the same rotation concept rather than a new terminology key.
+
+**Not re-verified in this pass, so not claimed as closed**: `src/components/TenantCustomizationView.tsx` line 14's "Residents" one-line miss, named in the original finding above, was outside this correction's scope — do not assume it is fixed without checking it directly.
+
 ---
 
 ## 5. Groups (spec §2)
