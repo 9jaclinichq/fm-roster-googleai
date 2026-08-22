@@ -1528,6 +1528,161 @@ function getPushGuardrailState() {
 }
 
 // ---------------------------------------------------------------------
+// Bug fix (post-deployment): governance-state synchronization while the
+// deployment freeze remains ACTIVE. The pre-push hook's default rule stays
+// "freeze active = push blocked" with no general exception — this is the
+// one narrow, explicit, single-use, human-authored escape hatch for
+// pushing ONLY governance/Harness state commits (never product source,
+// migrations, Edge Functions, or dependencies) while still frozen.
+//
+// .workspc-engineering/push-authorization.json is local/gitignored,
+// mirroring active-task.json's own discipline — it authorizes exactly one
+// commit range (pinned by both endpoints' exact SHAs) and exactly one
+// explicit path allowlist, verified to match the REAL diff at authorize
+// time (not just asserted), then re-verified independently by the hook
+// itself at push time from git's own pre-push stdin ref lines. Neither
+// this file nor the hook ever pushes, and neither ever lifts the freeze —
+// they only ever narrow the guardrail's own already-active refusal.
+//
+// git diff/log calls below are read-only, local-only (no network), and
+// deliberately bypass the file's own restrictive git() wrapper — that
+// wrapper exists to gate the mutating verbs (add/commit/config), not
+// read-only inspection; the self-test's own fixture-building code already
+// establishes this same precedent for raw git spawnSync calls.
+// ---------------------------------------------------------------------
+
+const PUSH_AUTH_FILE = 'push-authorization.json';
+
+function loadPushAuthorization() {
+  return loadJSON(PUSH_AUTH_FILE, null);
+}
+
+function writeJSONAtomic(filename, data) {
+  if (!fs.existsSync(ENG_DIR)) fs.mkdirSync(ENG_DIR, { recursive: true });
+  const target = path.join(ENG_DIR, filename);
+  const tmp = path.join(ENG_DIR, `.${filename}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`);
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmp, target);
+}
+
+function deletePushAuthorization() {
+  const target = path.join(ENG_DIR, PUSH_AUTH_FILE);
+  if (fs.existsSync(target)) fs.unlinkSync(target);
+}
+
+function gitReadOnly(args) {
+  return spawnSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' });
+}
+
+function cmdPushAuthorizeGovernanceSync(rest) {
+  const { flags } = parseFlags(rest);
+  const expectedRemoteHead = flags['expected-remote-head'];
+  const allowedLocalHead = flags['allowed-local-head'];
+  const reason = flags.reason;
+  const pathsRaw = flags.paths;
+
+  if (!expectedRemoteHead || typeof expectedRemoteHead !== 'string') return taskError('--expected-remote-head <sha> is required');
+  if (!allowedLocalHead || typeof allowedLocalHead !== 'string') return taskError('--allowed-local-head <sha> is required');
+  if (!reason || typeof reason !== 'string' || !reason.trim()) return taskError('--reason "<why>" is required');
+  if (!pathsRaw || typeof pathsRaw !== 'string') return taskError('--paths "path1,path2" is required (comma-separated, exact literal paths)');
+
+  const allowedPaths = pathsRaw.split(',').map((p) => p.trim()).filter(Boolean);
+  if (!allowedPaths.length) return taskError('--paths must list at least one exact path');
+  for (const p of allowedPaths) {
+    if (/[*?]/.test(p) || p === '.' || p === './') {
+      return taskError(`invalid path "${p}" — wildcards and "." are never allowed in a governance-sync allowlist; list each exact file path`);
+    }
+  }
+
+  if (loadPushAuthorization()) {
+    return taskError('a push authorization already exists — run `push-authorize discard --reason "<why>"` first if it is no longer wanted, or `push-authorize consume` if a prior authorized push already succeeded');
+  }
+
+  const currentHead = gitReadOnly(['rev-parse', 'HEAD']).stdout.trim();
+  const currentOriginMain = gitReadOnly(['rev-parse', 'origin/main']).stdout.trim();
+  if (allowedLocalHead !== currentHead) {
+    return taskError(`--allowed-local-head ${allowedLocalHead} does not match the current local HEAD (${currentHead || 'unknown'}) — a governance-sync authorization must describe the push you are about to make right now`);
+  }
+  if (expectedRemoteHead !== currentOriginMain) {
+    return taskError(`--expected-remote-head ${expectedRemoteHead} does not match the current known origin/main (${currentOriginMain || 'unknown'})`);
+  }
+
+  // Validate the allowlist matches the REAL diff exactly (both directions):
+  // nothing changed is missing from --paths, and nothing in --paths is
+  // absent from the real diff. A broader-than-reality or narrower-than-
+  // reality allowlist is rejected here rather than discovered later at
+  // push time.
+  const diffRes = gitReadOnly(['diff', '--name-only', expectedRemoteHead, allowedLocalHead]);
+  if (diffRes.status !== 0) return taskError(`could not compute the changed-path range: ${diffRes.stderr || diffRes.stdout}`);
+  const changed = diffRes.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+
+  const allowedSet = new Set(allowedPaths);
+  const changedSet = new Set(changed);
+  const missingFromAllowlist = changed.filter((p) => !allowedSet.has(p));
+  const unusedInAllowlist = allowedPaths.filter((p) => !changedSet.has(p));
+  if (missingFromAllowlist.length) {
+    return taskError(`the actual diff between ${expectedRemoteHead} and ${allowedLocalHead} includes path(s) not covered by --paths: ${missingFromAllowlist.join(', ')}`);
+  }
+  if (unusedInAllowlist.length) {
+    return taskError(`--paths lists path(s) that are not actually changed between ${expectedRemoteHead} and ${allowedLocalHead}: ${unusedInAllowlist.join(', ')} — the allowlist must exactly match the real diff, never be broader than it`);
+  }
+
+  const logRes = gitReadOnly(['log', '--oneline', `${expectedRemoteHead}..${allowedLocalHead}`]);
+  const allowedCommitRange = logRes.status === 0 ? logRes.stdout.split('\n').filter(Boolean) : [];
+
+  const auth = {
+    schemaVersion: 1,
+    type: 'GOVERNANCE_SYNC',
+    expectedRemoteHead,
+    allowedLocalHead,
+    allowedCommitRange,
+    allowedPaths,
+    authorizedAt: new Date().toISOString(),
+    reason,
+    singleUse: true,
+  };
+  writeJSONAtomic(PUSH_AUTH_FILE, auth);
+  process.stdout.write(`governance-sync authorization written for ${expectedRemoteHead}..${allowedLocalHead} (${allowedPaths.length} path(s)) — this does NOT push; run \`git push\` normally next\n`);
+}
+
+function cmdPushAuthorizeConsume() {
+  const auth = loadPushAuthorization();
+  if (!auth) return taskError('no push authorization exists to consume');
+  // No `git fetch` here, deliberately — Harness commands make no network
+  // call of any kind. `origin/main`'s local ref is already correct
+  // immediately after a successful push (git updates it as a side effect
+  // of the push itself), which is exactly the expected usage: run this
+  // right after the push it was written for.
+  const originMain = gitReadOnly(['rev-parse', 'origin/main']).stdout.trim();
+  const head = gitReadOnly(['rev-parse', 'HEAD']).stdout.trim();
+  if (originMain !== auth.allowedLocalHead || head !== auth.allowedLocalHead) {
+    return taskError(`push does not appear to have succeeded yet — origin/main=${originMain || 'unknown'} HEAD=${head || 'unknown'}, expected both to equal ${auth.allowedLocalHead}. Authorization left in place; retry the push, or investigate before consuming.`);
+  }
+  deletePushAuthorization();
+  process.stdout.write(`consumed governance-sync authorization for ${auth.expectedRemoteHead}..${auth.allowedLocalHead} — origin/main confirmed at ${originMain}\n`);
+}
+
+function cmdPushAuthorizeDiscard(rest) {
+  const { flags } = parseFlags(rest);
+  const reason = flags.reason;
+  if (!reason || typeof reason !== 'string' || !reason.trim()) return taskError('--reason "<why>" is required');
+  const auth = loadPushAuthorization();
+  if (!auth) return taskError('no push authorization exists to discard');
+  deletePushAuthorization();
+  process.stdout.write(`discarded governance-sync authorization for ${auth.expectedRemoteHead}..${auth.allowedLocalHead} — reason: ${reason}\n`);
+}
+
+function cmdPushAuthorize(argv) {
+  const sub = argv[0];
+  const rest = argv.slice(1);
+  if (sub === 'governance-sync') return cmdPushAuthorizeGovernanceSync(rest);
+  if (sub === 'consume') return cmdPushAuthorizeConsume();
+  if (sub === 'discard') return cmdPushAuthorizeDiscard(rest);
+  process.stdout.write('usage: node scripts/harness.cjs push-authorize <governance-sync --expected-remote-head <sha> --allowed-local-head <sha> --reason "<why>" --paths "path1,path2" | consume | discard --reason "<why>">\n');
+  process.exitCode = 1;
+}
+
+// ---------------------------------------------------------------------
 // Harness 4 — durable reports, notes/findings, next-prompt, completion.
 //
 // Report-commit rationale (Part A trade-off): Harness 3's `commit` already
@@ -2151,7 +2306,7 @@ function renderHuman(f) {
 // Commands — status and self-test only. Nothing else is dispatched.
 // ---------------------------------------------------------------------
 
-const COMMANDS = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt', 'doctor'];
+const COMMANDS = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt', 'doctor', 'push-authorize'];
 
 function cmdStatus(argv) {
   const facts = computeFacts();
@@ -2281,7 +2436,7 @@ function cmdVerify(rest) {
 }
 
 function printUsage() {
-  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand> | verify [--plan|--only <id>|--remote-read] | diff-review | commit --message "<text>" | hooks install | report [--decisions-made <t>] [--next-action <t>] | note [list|resolve] | finding [list|set-status] | next-prompt [--json] | doctor>\n');
+  process.stdout.write('usage: node scripts/harness.cjs <status [--json] | self-test | task <subcommand> | verify [--plan|--only <id>|--remote-read] | diff-review | commit --message "<text>" | hooks install | report [--decisions-made <t>] [--next-action <t>] | note [list|resolve] | finding [list|set-status] | next-prompt [--json] | doctor | push-authorize <governance-sync|consume|discard>>\n');
 }
 
 // ---------------------------------------------------------------------
@@ -2311,8 +2466,8 @@ function cmdSelfTest() {
   // --- command surface: exactly the 7 Harness 0-3 commands, and 'push'/
   //     'deploy'/'apply'/'migrate'/'db-push' are never a command name.
   //     'commit' IS now intentionally present — Harness 3's entire point. ---
-  check('exposed command set is exactly the 12 Harness 0-4 commands (incl. doctor), never push/deploy/apply/migrate', () => {
-    const expected = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt', 'doctor'];
+  check('exposed command set is exactly the 13 Harness 0-4 + governance-sync commands (incl. doctor, push-authorize), never push/deploy/apply/migrate', () => {
+    const expected = ['status', 'self-test', 'task', 'verify', 'diff-review', 'commit', 'hooks', 'report', 'note', 'finding', 'next-prompt', 'doctor', 'push-authorize'];
     const neverAllowed = ['push', 'deploy', 'apply', 'migrate', 'db-push'];
     return COMMANDS.length === expected.length && expected.every((c) => COMMANDS.includes(c))
       && !neverAllowed.some((f) => COMMANDS.includes(f));
@@ -3279,6 +3434,153 @@ function cmdSelfTest() {
         return r.status === 0 && before.status !== 0 && after.stdout.trim() === '.githooks' && realUnaffected && guardrailState === 'INSTALLED'
           ? true : `installExit=${r.status} before=${before.stdout} after=${after.stdout} guardrailState=${guardrailState} realUnaffected=${realUnaffected}`;
       });
+
+      // --- governance-sync push authorization (bug fix: safe synchronization
+      //     of governance/Harness state commits while freeze remains ACTIVE) ---
+      const readAuthFile = (dir) => JSON.parse(fs.readFileSync(path.join(dir, '.workspc-engineering', 'push-authorization.json'), 'utf8'));
+      const writeAuthFile = (dir, auth) => fs.writeFileSync(path.join(dir, '.workspc-engineering', 'push-authorization.json'), JSON.stringify(auth, null, 2));
+      const authFileExists = (dir) => fs.existsSync(path.join(dir, '.workspc-engineering', 'push-authorization.json'));
+      const commitFileIn = (dir, relPath, content) => {
+        const full = path.join(dir, relPath);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, content);
+        spawnSync('git', ['add', relPath], { cwd: dir });
+        spawnSync('git', ['commit', '-q', '-m', `add ${relPath}`], { cwd: dir });
+        return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).stdout.trim();
+      };
+      const runHook = (dir, localSha, remoteSha) => {
+        fs.mkdirSync(path.join(dir, '.githooks'), { recursive: true });
+        fs.copyFileSync(path.join(REAL_REPO_ROOT, '.githooks', 'pre-push'), path.join(dir, '.githooks', 'pre-push'));
+        const input = `refs/heads/main ${localSha} refs/heads/main ${remoteSha}\n`;
+        return spawnSync('sh', [path.join(dir, '.githooks', 'pre-push')], { cwd: dir, encoding: 'utf8', timeout: 10000, input });
+      };
+      const freezeActiveRepo = () => {
+        const dir = makeTempRepo();
+        fs.writeFileSync(path.join(dir, '.workspc-engineering', 'freeze.json'), JSON.stringify({ schemaVersion: 1, active: true, reason: 'fixture freeze', productionCodeBaseline: '0000000' }));
+        spawnSync('git', ['add', '.workspc-engineering/freeze.json'], { cwd: dir });
+        spawnSync('git', ['commit', '-q', '-m', 'freeze active'], { cwd: dir });
+        const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).stdout.trim();
+        spawnSync('git', ['update-ref', 'refs/remotes/origin/main', base], { cwd: dir });
+        return { dir, base };
+      };
+
+      const { dir: dirGovHappy, base: govHappyBase } = freezeActiveRepo();
+      const govHappyHead = commitFileIn(dirGovHappy, '.workspc-engineering/gov-note.txt', 'governance change\n');
+      check('push-authorize governance-sync writes a valid authorization matching the real commit range/allowlist', () => {
+        const r = runIn(dirGovHappy, ['push-authorize', 'governance-sync', '--expected-remote-head', govHappyBase, '--allowed-local-head', govHappyHead, '--reason', 'test sync', '--paths', '.workspc-engineering/gov-note.txt']);
+        const auth = readAuthFile(dirGovHappy);
+        return r.status === 0 && auth.type === 'GOVERNANCE_SYNC' && auth.singleUse === true
+          && auth.expectedRemoteHead === govHappyBase && auth.allowedLocalHead === govHappyHead
+          && auth.allowedPaths.length === 1 && auth.allowedPaths[0] === '.workspc-engineering/gov-note.txt'
+          ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+      check('the hook permits the push once a matching governance-sync authorization exists', () => {
+        const r = runHook(dirGovHappy, govHappyHead, govHappyBase);
+        return r.status === 0 ? true : `exit ${r.status} stderr=${r.stderr}`;
+      });
+      check('push-authorize consume succeeds once HEAD/origin/main match the authorized head, and deletes the authorization', () => {
+        spawnSync('git', ['update-ref', 'refs/remotes/origin/main', govHappyHead], { cwd: dirGovHappy });
+        const r = runIn(dirGovHappy, ['push-authorize', 'consume']);
+        return r.status === 0 && !authFileExists(dirGovHappy) ? true : `exit ${r.status}: ${r.stderr} stillExists=${authFileExists(dirGovHappy)}`;
+      });
+      check('authorization cannot be reused after consumption — the hook falls back to the base freeze-active block', () => {
+        const r = runHook(dirGovHappy, govHappyHead, govHappyBase);
+        return r.status !== 0 && /FREEZE ACTIVE/.test(r.stderr) ? true : `exit ${r.status} stderr=${r.stderr}`;
+      });
+
+      const { dir: dirGovWildcard, base: govWildcardBase } = freezeActiveRepo();
+      const govWildcardHead = commitFileIn(dirGovWildcard, '.workspc-engineering/gov-note.txt', 'x\n');
+      check('push-authorize governance-sync refuses a wildcard/dot path', () => {
+        const r = runIn(dirGovWildcard, ['push-authorize', 'governance-sync', '--expected-remote-head', govWildcardBase, '--allowed-local-head', govWildcardHead, '--reason', 'x', '--paths', '.workspc-engineering/*']);
+        return r.status !== 0 && !authFileExists(dirGovWildcard) ? true : `exit ${r.status}`;
+      });
+
+      const { dir: dirGovExtra, base: govExtraBase } = freezeActiveRepo();
+      commitFileIn(dirGovExtra, '.workspc-engineering/gov-note.txt', 'x\n');
+      const govExtraHead = commitFileIn(dirGovExtra, 'src/product-file.ts', 'export const x = 1;\n');
+      check('push-authorize governance-sync refuses when the real diff includes an unlisted (e.g. product) path', () => {
+        const r = runIn(dirGovExtra, ['push-authorize', 'governance-sync', '--expected-remote-head', govExtraBase, '--allowed-local-head', govExtraHead, '--reason', 'x', '--paths', '.workspc-engineering/gov-note.txt']);
+        return r.status !== 0 && /not covered by --paths/.test(r.stderr) && !authFileExists(dirGovExtra) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      const { dir: dirGovWrongHead, base: govWrongHeadBase } = freezeActiveRepo();
+      const govWrongHeadReal = commitFileIn(dirGovWrongHead, '.workspc-engineering/gov-note.txt', 'x\n');
+      check('push-authorize governance-sync refuses an --allowed-local-head that is not the current HEAD', () => {
+        const r = runIn(dirGovWrongHead, ['push-authorize', 'governance-sync', '--expected-remote-head', govWrongHeadBase, '--allowed-local-head', '0000000000000000000000000000000000000f', '--reason', 'x', '--paths', '.workspc-engineering/gov-note.txt']);
+        return r.status !== 0 && !authFileExists(dirGovWrongHead) ? true : `exit ${r.status}`;
+      });
+      check('push-authorize governance-sync refuses an --expected-remote-head that is not the current origin/main', () => {
+        const r = runIn(dirGovWrongHead, ['push-authorize', 'governance-sync', '--expected-remote-head', '0000000000000000000000000000000000000f', '--allowed-local-head', govWrongHeadReal, '--reason', 'x', '--paths', '.workspc-engineering/gov-note.txt']);
+        return r.status !== 0 && !authFileExists(dirGovWrongHead) ? true : `exit ${r.status}`;
+      });
+      check('push-authorize governance-sync refuses to overwrite an existing pending authorization', () => {
+        runIn(dirGovWrongHead, ['push-authorize', 'governance-sync', '--expected-remote-head', govWrongHeadBase, '--allowed-local-head', govWrongHeadReal, '--reason', 'first', '--paths', '.workspc-engineering/gov-note.txt']);
+        const r = runIn(dirGovWrongHead, ['push-authorize', 'governance-sync', '--expected-remote-head', govWrongHeadBase, '--allowed-local-head', govWrongHeadReal, '--reason', 'second', '--paths', '.workspc-engineering/gov-note.txt']);
+        return r.status !== 0 && /already exists/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+      check('push-authorize discard removes a pending authorization with a recorded reason', () => {
+        const r = runIn(dirGovWrongHead, ['push-authorize', 'discard', '--reason', 'no longer needed']);
+        return r.status === 0 && !authFileExists(dirGovWrongHead) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      const { dir: dirHookWrongRemote, base: hookWrongRemoteBase } = freezeActiveRepo();
+      const hookWrongRemoteHead = commitFileIn(dirHookWrongRemote, '.workspc-engineering/gov-note.txt', 'x\n');
+      check('the hook blocks when the actual remote head does not match the authorization (defense in depth, independent of the authoring command)', () => {
+        writeAuthFile(dirHookWrongRemote, {
+          schemaVersion: 1, type: 'GOVERNANCE_SYNC',
+          expectedRemoteHead: hookWrongRemoteBase, allowedLocalHead: hookWrongRemoteHead,
+          allowedCommitRange: [], allowedPaths: ['.workspc-engineering/gov-note.txt'],
+          authorizedAt: new Date(0).toISOString(), reason: 'fixture', singleUse: true,
+        });
+        // Simulate a DIFFERENT actual remote head than what was authorized.
+        const r = runHook(dirHookWrongRemote, hookWrongRemoteHead, '1111111111111111111111111111111111111f');
+        return r.status !== 0 && /FREEZE ACTIVE/.test(r.stderr) ? true : `exit ${r.status} stderr=${r.stderr}`;
+      });
+
+      const { dir: dirHookStale, base: hookStaleBase } = freezeActiveRepo();
+      const hookStaleHead1 = commitFileIn(dirHookStale, '.workspc-engineering/gov-note.txt', 'x\n');
+      check('a stale authorization (local HEAD moved on since it was written) blocks the hook', () => {
+        writeAuthFile(dirHookStale, {
+          schemaVersion: 1, type: 'GOVERNANCE_SYNC',
+          expectedRemoteHead: hookStaleBase, allowedLocalHead: hookStaleHead1,
+          allowedCommitRange: [], allowedPaths: ['.workspc-engineering/gov-note.txt'],
+          authorizedAt: new Date(0).toISOString(), reason: 'fixture', singleUse: true,
+        });
+        const hookStaleHead2 = commitFileIn(dirHookStale, '.workspc-engineering/gov-note-2.txt', 'y\n');
+        // The push actually being attempted now carries HEAD2, not the
+        // authorized HEAD1 — must block even though the authorization file
+        // itself still looks superficially valid.
+        const r = runHook(dirHookStale, hookStaleHead2, hookStaleBase);
+        return r.status !== 0 && /FREEZE ACTIVE/.test(r.stderr) ? true : `exit ${r.status} stderr=${r.stderr}`;
+      });
+
+      const { dir: dirHookTampered, base: hookTamperedBase } = freezeActiveRepo();
+      commitFileIn(dirHookTampered, '.workspc-engineering/gov-note.txt', 'x\n');
+      const hookTamperedHead = commitFileIn(dirHookTampered, 'src/sneaky-product-file.ts', 'export const y = 2;\n');
+      check('the hook blocks when the real diff contains a path outside the (tampered/incomplete) allowlist, including an un-listed .workspc-engineering/** path', () => {
+        writeAuthFile(dirHookTampered, {
+          schemaVersion: 1, type: 'GOVERNANCE_SYNC',
+          expectedRemoteHead: hookTamperedBase, allowedLocalHead: hookTamperedHead,
+          // Deliberately incomplete: omits src/sneaky-product-file.ts, and
+          // does not grant a blanket .workspc-engineering/** exception either.
+          allowedCommitRange: [], allowedPaths: ['.workspc-engineering/gov-note.txt'],
+          authorizedAt: new Date(0).toISOString(), reason: 'fixture', singleUse: true,
+        });
+        const r = runHook(dirHookTampered, hookTamperedHead, hookTamperedBase);
+        return r.status !== 0 && /FREEZE ACTIVE/.test(r.stderr) ? true : `exit ${r.status} stderr=${r.stderr}`;
+      });
+
+      const { dir: dirHookNotConsumable } = freezeActiveRepo();
+      check('push-authorize consume refuses (and leaves the file in place) when HEAD/origin have not actually advanced to the authorized head yet', () => {
+        writeAuthFile(dirHookNotConsumable, {
+          schemaVersion: 1, type: 'GOVERNANCE_SYNC',
+          expectedRemoteHead: '0000000000000000000000000000000000000f', allowedLocalHead: '1111111111111111111111111111111111111f',
+          allowedCommitRange: [], allowedPaths: ['.workspc-engineering/gov-note.txt'],
+          authorizedAt: new Date(0).toISOString(), reason: 'fixture', singleUse: true,
+        });
+        const r = runIn(dirHookNotConsumable, ['push-authorize', 'consume']);
+        return r.status !== 0 && authFileExists(dirHookNotConsumable) ? true : `exit ${r.status} stillExists=${authFileExists(dirHookNotConsumable)}`;
+      });
     } finally {
       for (const dir of tempRepos) {
         try {
@@ -3648,6 +3950,7 @@ function main() {
   if (cmd === 'finding') return cmdFinding(argv.slice(1));
   if (cmd === 'next-prompt') return cmdNextPrompt(argv.slice(1));
   if (cmd === 'doctor') return cmdDoctor();
+  if (cmd === 'push-authorize') return cmdPushAuthorize(argv.slice(1));
   printUsage();
   process.exitCode = 1;
 }

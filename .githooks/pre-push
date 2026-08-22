@@ -1,7 +1,17 @@
 #!/bin/sh
 # Workspc Engineering Harness — deployment-freeze pre-push guardrail.
 #
-# Refuses `git push` while .workspc-engineering/freeze.json has active:true.
+# Refuses `git push` while .workspc-engineering/freeze.json has active:true,
+# UNLESS a valid, narrowly-scoped GOVERNANCE_SYNC authorization exists at
+# .workspc-engineering/push-authorization.json (written by
+# `npm run harness -- push-authorize governance-sync ...`) that exactly
+# matches the push actually being attempted: the same remote head, the same
+# local head, and every changed path in that exact range inside the
+# authorization's explicit path allowlist. This is a single-use, human-
+# authored escape hatch for synchronizing governance/Harness state commits
+# while still frozen — it is NOT a general freeze override, and a
+# governance-sync allowlist should never legitimately contain product,
+# migration, Edge Function, or dependency paths.
 #
 # This is a LOCAL, repo-scoped safety net, not a security boundary: anyone
 # who runs `git push --no-verify`, deletes this file, or unsets
@@ -10,10 +20,13 @@
 # does not activate itself — `npm run harness -- hooks install` (or
 # `git config --local core.hooksPath .githooks`) must be run once per clone.
 #
-# Reads exactly one local JSON file. No network call of any kind.
+# Reads local JSON files and, only when validating a governance-sync
+# authorization, runs one local `git diff --name-only` between two already-
+# known commits. No network call of any kind, ever.
 
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 freeze_file="$repo_root/.workspc-engineering/freeze.json"
+auth_file="$repo_root/.workspc-engineering/push-authorization.json"
 
 if [ ! -f "$freeze_file" ]; then
   exit 0
@@ -21,17 +34,56 @@ fi
 
 result=$(node -e '
   const fs = require("fs");
-  try {
-    const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    if (data.active === true) {
-      process.stdout.write("BLOCK::" + (data.reason || "(no reason recorded)"));
-    } else {
-      process.stdout.write("ALLOW");
-    }
-  } catch (e) {
-    process.stdout.write("ALLOW");
+  const { execFileSync } = require("child_process");
+  const [freezeFile, authFile, repoRoot] = process.argv.slice(1);
+
+  function readJSON(p) {
+    try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch (e) { return null; }
   }
-' "$freeze_file" 2>/dev/null)
+
+  const fail = (why) => { process.stdout.write("BLOCK::" + why); process.exit(0); };
+  const allow = () => { process.stdout.write("ALLOW"); process.exit(0); };
+
+  const freeze = readJSON(freezeFile);
+  if (!freeze || freeze.active !== true) allow();
+
+  const baseReason = freeze.reason || "(no reason recorded)";
+  const auth = readJSON(authFile);
+
+  if (!auth) fail(baseReason);
+  if (auth.type !== "GOVERNANCE_SYNC") fail(baseReason + " (an authorization file exists but its type is not GOVERNANCE_SYNC)");
+  if (auth.singleUse !== true) fail(baseReason + " (an authorization file exists but is not marked singleUse)");
+  if (!auth.expectedRemoteHead || !auth.allowedLocalHead || !Array.isArray(auth.allowedPaths) || !auth.allowedPaths.length) {
+    fail(baseReason + " (an authorization file exists but is malformed)");
+  }
+
+  const stdin = fs.readFileSync(0, "utf8");
+  const refLines = stdin.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!refLines.length) fail(baseReason + " (no ref information available on stdin to validate the authorization against)");
+
+  for (const line of refLines) {
+    const parts = line.split(/\s+/);
+    if (parts.length !== 4) fail(baseReason + " (unexpected pre-push ref line shape)");
+    const localSha = parts[1];
+    const remoteSha = parts[3];
+    if (localSha !== auth.allowedLocalHead) fail(baseReason + " (the local HEAD being pushed does not match the authorized local head)");
+    if (remoteSha !== auth.expectedRemoteHead) fail(baseReason + " (the current remote head does not match the authorized expected remote head)");
+  }
+
+  let changed;
+  try {
+    changed = execFileSync("git", ["diff", "--name-only", auth.expectedRemoteHead, auth.allowedLocalHead], { cwd: repoRoot, encoding: "utf8" })
+      .split("\n").map((l) => l.trim()).filter(Boolean);
+  } catch (e) {
+    fail(baseReason + " (could not compute the changed-path range for the authorized commits)");
+  }
+
+  const allowed = new Set(auth.allowedPaths);
+  const offenders = changed.filter((p) => !allowed.has(p));
+  if (offenders.length) fail(baseReason + " (path(s) outside the governance-sync allowlist: " + offenders.join(", ") + ")");
+
+  allow();
+' "$freeze_file" "$auth_file" "$repo_root" 2>/dev/null)
 
 case "$result" in
   BLOCK::*)
@@ -44,9 +96,10 @@ case "$result" in
     echo "as does deleting this hook or unsetting core.hooksPath). It is not an" >&2
     echo "absolute security boundary." >&2
     echo "" >&2
-    echo "A human who truly intends to deploy should first deliberately lift the" >&2
-    echo "freeze through an explicitly reviewed process. This harness version does" >&2
-    echo "not implement a freeze-lift capability, so there is no built-in bypass." >&2
+    echo "A human who intends a normal deploy should lift the freeze through an" >&2
+    echo "explicitly reviewed process. To synchronize ONLY governance/Harness" >&2
+    echo "state commits while still frozen, use:" >&2
+    echo "  npm run harness -- push-authorize governance-sync ..." >&2
     exit 1
     ;;
   *)

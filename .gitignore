@@ -11,6 +11,11 @@ supabase/.temp/
 # Harness 1 — local task-lifecycle state; churns every phase transition,
 # never committed. See docs discussion in scripts/harness.cjs.
 .workspc-engineering/active-task.json
+# Harness bug fix — single-use, local-only governance-sync push
+# authorization (scripts/harness.cjs's push-authorize command); it
+# authorizes exactly one specific push and is deleted/discarded after use,
+# never committed.
+.workspc-engineering/push-authorization.json
 # Harness 4 — transient temp-file-then-rename artifacts for any atomic
 # jsonl/JSON write under .workspc-engineering/ (active-task.json,
 # notes.jsonl, findings.jsonl, decisions.jsonl); a crash mid-write could
