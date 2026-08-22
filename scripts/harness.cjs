@@ -1176,6 +1176,29 @@ const SECRET_LINE_PATTERNS = {
   'generic-high-entropy-token': /[A-Za-z0-9_\-]{32,}/,
 };
 
+// A 32+-char run made almost entirely of one repeated character (a
+// comment divider like "// ----...----" or "// ====...====", once it
+// reaches the generic-token candidate regex above) is not secret-shaped —
+// real high-entropy tokens/keys are character-diverse by construction.
+// Applies ONLY to the 'generic-high-entropy-token' fallback class, never
+// to the explicit sk_live_/sk_test_/FLWSECK-/PEM/Google/GitHub patterns
+// above, which do not use this filter at all.
+//
+// Threshold chosen empirically (see scripts/verify-my-assignment.cjs's
+// own former false positives, and the self-test fixtures below): a 40-char
+// divider run is 100% one character; a realistic mixed-case/digit token
+// essentially never has any single character exceed ~20-30% of its
+// length. 60% leaves wide margin on both sides — comfortably catches
+// pure/near-pure repetition while never plausibly catching a real token.
+const GENERIC_TOKEN_DOMINANCE_THRESHOLD = 0.6;
+
+function isDominatedBySingleCharacter(candidate, thresholdRatio) {
+  const counts = new Map();
+  for (const ch of candidate) counts.set(ch, (counts.get(ch) || 0) + 1);
+  const maxCount = Math.max(...counts.values());
+  return maxCount / candidate.length >= thresholdRatio;
+}
+
 // Reports {line, class} only — matched text is deliberately discarded, and
 // is never assembled into the returned findings, never logged, and never
 // written to task state. This is a best-effort heuristic tripwire, not
@@ -1201,6 +1224,7 @@ function scanDiffTextForSecrets(diffText) {
       const m = content.match(re);
       if (!m) continue;
       if (cls === 'generic-high-entropy-token' && /^[0-9a-f]+$/i.test(m[0])) continue; // looks like a plain git hash
+      if (cls === 'generic-high-entropy-token' && isDominatedBySingleCharacter(m[0], GENERIC_TOKEN_DOMINANCE_THRESHOLD)) continue; // divider/repetition artifact, not secret-shaped
       findings.push({ line: newLineNo, class: cls });
       break;
     }
@@ -2439,6 +2463,55 @@ function cmdSelfTest() {
     return plan.skipped.some((s) => s.checkId === 'npm-verify') ? true : 'not reported as skipped';
   });
 
+  // --- generic-high-entropy-token divider/repetition false-positive fix.
+  //     Pure logic checks against scanDiffTextForSecrets() with synthetic
+  //     unified-diff fixtures (a single '+'-added line each) — no temp
+  //     repo/subprocess needed, since this is a pure function. ---
+  {
+    const addedLine = (text) => `@@ -0,0 +1 @@\n+${text}\n`;
+    check('40+ dashes reaching the generic matcher do not trigger a secret finding', () => {
+      const findings = scanDiffTextForSecrets(addedLine(`// ${'-'.repeat(40)}`));
+      return findings.length === 0 ? true : JSON.stringify(findings);
+    });
+    check('40+ equals signs do not trigger — "=" is outside the generic-token character class entirely', () => {
+      const findings = scanDiffTextForSecrets(addedLine(`// ${'='.repeat(40)}`));
+      return findings.length === 0 ? true : JSON.stringify(findings);
+    });
+    check('a repeated-underscore divider run does not trigger', () => {
+      const findings = scanDiffTextForSecrets(addedLine(`const SEP = "${'_'.repeat(40)}";`));
+      return findings.length === 0 ? true : JSON.stringify(findings);
+    });
+    check('a mixed realistic 32+ character token still triggers generic-high-entropy-token', () => {
+      const findings = scanDiffTextForSecrets(addedLine('const TOKEN = "aB3xY9pQ2wZ7mN4vC8tR1sK6hL0fD5gJ2eU7iO3";'));
+      return findings.some((f) => f.class === 'generic-high-entropy-token') ? true : JSON.stringify(findings);
+    });
+    check('a realistic token with some repeated characters but overall high diversity remains detected', () => {
+      const findings = scanDiffTextForSecrets(addedLine('const TOKEN = "aaaaBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890";'));
+      return findings.some((f) => f.class === 'generic-high-entropy-token') ? true : JSON.stringify(findings);
+    });
+    check('explicit secret-pattern detectors (paystack/flutterwave/pem/google/github) are unaffected by the dominance filter', () => {
+      const paystack = scanDiffTextForSecrets(addedLine('PAYSTACK_KEY=sk_live_thisIsAFixtureNotARealKey000000'));
+      const flutterwave = scanDiffTextForSecrets(addedLine('FLW_KEY=FLWSECK-thisIsAFixtureNotARealKey0000000000000'));
+      const pem = scanDiffTextForSecrets(addedLine('-----BEGIN PRIVATE KEY-----'));
+      return paystack.some((f) => f.class === 'paystack-live-key')
+        && flutterwave.some((f) => f.class === 'flutterwave-secret-key')
+        && pem.some((f) => f.class === 'pem-private-key-header')
+        ? true : JSON.stringify({ paystack, flutterwave, pem });
+    });
+    check('no matched candidate text (divider or real-looking token) ever appears in the returned findings', () => {
+      const findings = [
+        ...scanDiffTextForSecrets(addedLine(`// ${'-'.repeat(40)}`)),
+        ...scanDiffTextForSecrets(addedLine('const TOKEN = "aB3xY9pQ2wZ7mN4vC8tR1sK6hL0fD5gJ2eU7iO3";')),
+      ];
+      const serialized = JSON.stringify(findings);
+      return !serialized.includes('-'.repeat(40)) && !serialized.includes('aB3xY9pQ2wZ7mN4vC8tR1sK6hL0fD5gJ2eU7iO3') ? true : 'matched text leaked into findings';
+    });
+    check('the long underscore-joined filename/string-literal false positive remains intentionally unresolved in this slice', () => {
+      const findings = scanDiffTextForSecrets(addedLine("const MIGRATION_PATH = 'supabase/migrations/67_resident_get_current_assignment.sql';"));
+      return findings.some((f) => f.class === 'generic-high-entropy-token') ? true : 'expected this still-known, deliberately-unfixed case to still flag';
+    });
+  }
+
   // --- task subcommand surface never contains a mutating-outside-state verb ---
   check('task subcommands contain no commit/push/deploy/apply verb', () => {
     const forbidden = ['commit', 'push', 'deploy', 'apply', 'migrate', 'db-push'];
@@ -3001,6 +3074,32 @@ function cmdSelfTest() {
         const t = readTask(dirSecret);
         const f = t.lastDiffReview.secretFindings.find((x) => x.class === 'paystack-live-key');
         return f && !JSON.stringify(f).includes('sk_live_thisIsAFixtureNotARealKey000000') ? true : 'the actual secret text leaked into stored state';
+      });
+
+      const dirDivider = makeTempRepo();
+      check('a divider-only false positive no longer blocks diff-review (bug fix, end-to-end)', () => {
+        // DOCUMENTATION_GOVERNANCE has no TASK_CLASS_RULES requirements
+        // (matches dirPreExisting/dirCommit above) — isolates this check to
+        // exactly the secret-finding behavior, not an unrelated
+        // never-run-verification gap.
+        advance(dirDivider, 'DOCUMENTATION_GOVERNANCE', ['divider.txt']);
+        fs.writeFileSync(path.join(dirDivider, 'divider.txt'), `// ${'-'.repeat(40)}\n// ${'='.repeat(40)}\n`);
+        spawnSync('git', ['add', 'divider.txt'], { cwd: dirDivider });
+        const r = runIn(dirDivider, ['diff-review']);
+        const t = readTask(dirDivider);
+        return r.status === 0 && t.lastDiffReview.state !== 'BLOCKED' && t.lastDiffReview.secretFindings.length === 0
+          ? true : `exit ${r.status} state=${t.lastDiffReview.state} findings=${JSON.stringify(t.lastDiffReview.secretFindings)}`;
+      });
+
+      const dirGenericToken = makeTempRepo();
+      check('diff-review still blocks on a genuine generic-high-entropy-token candidate (fix did not weaken real detection)', () => {
+        advance(dirGenericToken, 'BUG_FIX', ['config.txt']);
+        fs.writeFileSync(path.join(dirGenericToken, 'config.txt'), 'API_TOKEN=aB3xY9pQ2wZ7mN4vC8tR1sK6hL0fD5gJ2eU7iO3\n');
+        spawnSync('git', ['add', 'config.txt'], { cwd: dirGenericToken });
+        const r = runIn(dirGenericToken, ['diff-review']);
+        const t = readTask(dirGenericToken);
+        return r.status !== 0 && t.lastDiffReview.state === 'BLOCKED' && t.lastDiffReview.secretFindings.some((f) => f.class === 'generic-high-entropy-token')
+          ? true : `exit ${r.status} state=${t.lastDiffReview.state} findings=${JSON.stringify(t.lastDiffReview.secretFindings)}`;
       });
 
       const dirMigration = makeTempRepo();
