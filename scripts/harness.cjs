@@ -374,7 +374,7 @@ const ALLOWED_TRANSITIONS = {
   BLOCKED: [],
 };
 
-const TASK_SUBCOMMANDS = ['new', 'plan', 'phase', 'approve', 'block', 'clear', 'status', 'ack', 'complete'];
+const TASK_SUBCOMMANDS = ['new', 'plan', 'phase', 'approve', 'block', 'clear', 'status', 'ack', 'adopt', 'complete'];
 
 function loadActiveTask() {
   return loadJSON(ACTIVE_TASK_FILE, null);
@@ -508,6 +508,14 @@ function cmdTaskNew(rest) {
   if (!taskClass || !TASK_CLASSES.includes(taskClass)) {
     return taskError(`--class must be one of: ${TASK_CLASSES.join(', ')}`);
   }
+  // Optional, lightweight reference only — e.g. an implementation task
+  // that carries a SPECIFICATION_ONLY discovery task's approved plan
+  // through to commit once real source/migration files exist and that
+  // task's taskClass (immutable by design) can no longer reach a clean
+  // diff-review. No lookup/validation against the referenced id: this is
+  // deliberately not a task graph, just an audit-trail pointer a human or
+  // report can follow. It never alters the referenced task in any way.
+  const supersedesTaskId = typeof flags.supersedes === 'string' ? flags.supersedes : null;
   const now = new Date().toISOString();
   const task = {
     schemaVersion: SCHEMA_VERSION,
@@ -529,9 +537,17 @@ function cmdTaskNew(rest) {
     approval: { approvedAt: null, approvalNote: null, acknowledgedProtectedSurfaces: false },
     // Harness 3: the untracked-file baseline at task-creation time, so
     // diff-review can distinguish pre-existing repo clutter from files this
-    // task actually created. Path/name only — never file contents.
+    // task actually created. Path/name only — never file contents. Never
+    // rewritten after creation — this is the historical fact of what
+    // existed before the task started; `task adopt` (below) layers an
+    // explicit ownership decision on top without altering this snapshot.
     baselineUntrackedFiles: getWorkingTree().untrackedFiles,
     acknowledgments: [],
+    // Explicit adoption of specific pre-existing (baseline) files into
+    // this task's scope — see cmdTaskAdopt. Empty by default: ordinary
+    // tasks never adopt anything automatically.
+    adoptedFiles: [],
+    supersedesTaskId,
   };
   writeActiveTaskAtomic(task);
   process.stdout.write(`created task ${task.taskId} (${taskClass}) — phase DISCOVERED\n`);
@@ -702,6 +718,50 @@ function cmdTaskAck(rest) {
   process.stdout.write(`acknowledged ${checkId ? `check ${checkId}` : `scope file ${scopeFile}`}\n`);
 }
 
+// Bug fix (post-My-Assignment): a superseding/adoptive task's untracked-file
+// baseline is captured at ITS OWN `task new` time, which is necessarily
+// AFTER an already-completed implementation's files were written to disk —
+// so those files silently classify as PRE_EXISTING_UNRELATED and are
+// excluded from commit eligibility entirely (computeDiffReview never even
+// runs classifyPath on them, and cmdCommit's eligible list never includes
+// the preExisting bucket). `task adopt` is the one narrow, explicit
+// mechanism to override that for specific, named files — it requires the
+// path to (a) actually be in this task's baseline snapshot (so it can only
+// adopt files that genuinely predate this task, never something staged
+// after the fact under a different guise) and (b) match expectedFiles (so
+// adoption can never itself be used to broaden scope — it only resolves
+// the baseline-timing mismatch for files already inside the approved
+// plan). No wildcard/dot/bulk form exists at all: this function's own
+// literal-path check has nothing to glob-expand, and every adoption is a
+// single, separately-reviewable, atomic decision recorded with a reason.
+function cmdTaskAdopt(rest) {
+  const { flags } = parseFlags(rest);
+  const task = loadActiveTask();
+  if (!task) return taskError('no active task');
+  const filePath = flags.file;
+  const note = flags.note;
+  if (!filePath || typeof filePath !== 'string') return taskError('--file <exact-path> is required');
+  if (!note || typeof note !== 'string' || !note.trim()) return taskError('--note "<why>" is required');
+  if (/[*?]/.test(filePath) || filePath.trim() === '.' || filePath.trim() === './' || filePath.trim() === '') {
+    return taskError('adoption requires one exact literal path — wildcards ("*", "?"), ".", and any bulk form are never allowed; call `task adopt` once per file');
+  }
+  const baseline = new Set(task.baselineUntrackedFiles || []);
+  if (!baseline.has(filePath)) {
+    return taskError(`${filePath} is not in this task's baseline untracked-file snapshot (the files present before \`task new\` ran) — adoption is only for files that genuinely predate this task; run \`diff-review\` and check the "pre-existing/unrelated untracked" section for the exact current candidates`);
+  }
+  if (!matchesAnyGlob(filePath, task.expectedFiles || [])) {
+    return taskError(`${filePath} is not within this task's approved expectedFiles scope — adoption cannot broaden scope. Revise the plan first (\`task phase PLAN_READY\` + \`task plan\`), or use \`task ack --scope-file\` if you intend to acknowledge an out-of-scope file instead`);
+  }
+  task.adoptedFiles = task.adoptedFiles || [];
+  if (task.adoptedFiles.some((a) => a.path === filePath)) {
+    return taskError(`${filePath} is already adopted`);
+  }
+  const now = new Date().toISOString();
+  task.adoptedFiles.push({ path: filePath, adoptedAt: now, note });
+  writeActiveTaskAtomic(touchTask(task));
+  process.stdout.write(`adopted ${filePath} — will appear as ADOPTED_EXISTING_CHANGE in diff-review\n`);
+}
+
 // Harness 4: requires a real commit and a durable report (or an explicit,
 // reasoned skip) before a task can be marked COMPLETE_LOCAL. Pure fs/logic,
 // like every other task handler — no git call of any kind.
@@ -737,6 +797,9 @@ function renderActiveTaskSection(lines, activeTask, workingTree) {
   const liveHits = computeProtectedSurfaceHits(t.expectedFiles);
   lines.push(`  id / title     : ${t.taskId} — ${t.title}`);
   lines.push(`  class          : ${t.taskClass}`);
+  if (t.supersedesTaskId) {
+    lines.push(`  supersedes     : ${t.supersedesTaskId}`);
+  }
   if (t.taskClass === 'DATABASE_MIGRATION') {
     lines.push('  *** DEPLOYMENT FREEZE ACTIVE — migration may be created locally but must not be applied ***');
   }
@@ -754,6 +817,9 @@ function renderActiveTaskSection(lines, activeTask, workingTree) {
     for (const f of scope.outsideScope) lines.push(`    OUTSIDE_DECLARED_SCOPE: ${f}`);
   }
   lines.push(`  protected hits : ${liveHits.length ? liveHits.map((h) => h.surfaceId).join(', ') : '(none)'}`);
+  if (t.adoptedFiles && t.adoptedFiles.length) {
+    lines.push(`  adopted files  : ${t.adoptedFiles.map((a) => `${a.path} (adopted ${a.adoptedAt} — ${a.note})`).join('; ')}`);
+  }
   lines.push(`  blockers       : ${t.blockers.length ? t.blockers.map((b) => `${b.reason} (from ${b.blockedFromPhase})`).join('; ') : '(none)'}`);
   lines.push(`  human decisions: ${t.humanDecisionsRequired.length ? t.humanDecisionsRequired.join('; ') : '(none recorded)'}`);
   if (t.verification && t.verification.results && t.verification.results.length) {
@@ -1186,17 +1252,31 @@ function computeDiffReview(task) {
   const baseline = new Set(task.baselineUntrackedFiles || []);
   const acknowledgedScope = new Set((task.acknowledgments || []).filter((a) => a.kind === 'scope-file').map((a) => a.target));
   const expectedFiles = task.expectedFiles || [];
+  // path -> {path, adoptedAt, note} for O(1) lookup below. Adoption was
+  // already validated (baseline membership + expectedFiles match) at
+  // `task adopt` time — computeDiffReview only ever reads this, it never
+  // re-derives or re-validates ownership.
+  const adoptedByPath = new Map((task.adoptedFiles || []).map((a) => [a.path, a]));
 
   const staged = [];
   const modifiedUnstaged = [];
   const deleted = [];
   const newUntracked = [];
   const preExisting = [];
+  const adopted = [];
 
   for (const e of entries) {
     if (e.untracked) {
-      if (baseline.has(e.path)) preExisting.push({ path: e.path });
-      else newUntracked.push({ path: e.path, classification: classifyPath(e.path, expectedFiles, acknowledgedScope) });
+      if (baseline.has(e.path)) {
+        const adoption = adoptedByPath.get(e.path);
+        if (adoption) {
+          adopted.push({ path: e.path, classification: 'ADOPTED_EXISTING_CHANGE', adoptedAt: adoption.adoptedAt, note: adoption.note });
+        } else {
+          preExisting.push({ path: e.path });
+        }
+      } else {
+        newUntracked.push({ path: e.path, classification: classifyPath(e.path, expectedFiles, acknowledgedScope) });
+      }
       continue;
     }
     if (e.deleted) {
@@ -1212,7 +1292,7 @@ function computeDiffReview(task) {
     }
   }
 
-  const allChanged = [...staged, ...modifiedUnstaged, ...deleted, ...newUntracked];
+  const allChanged = [...staged, ...modifiedUnstaged, ...deleted, ...newUntracked, ...adopted];
   const changedPaths = allChanged.map((e) => e.path);
   const protectedSurfaceHits = computeProtectedSurfaceHits(changedPaths);
 
@@ -1284,7 +1364,7 @@ function computeDiffReview(task) {
   return {
     computedAt: new Date().toISOString(),
     state,
-    staged, modifiedUnstaged, deleted, newUntracked, preExisting,
+    staged, modifiedUnstaged, deleted, newUntracked, preExisting, adopted,
     protectedSurfaceHits, migrationAdditions, secretFindings, verificationGaps,
     blockingReasons, warnings,
   };
@@ -1302,6 +1382,7 @@ function renderDiffReview(review) {
   section('modified (unstaged)', review.modifiedUnstaged, (e) => `${e.path} [${e.classification}]`);
   section('deleted', review.deleted, (e) => `${e.path} [${e.classification}]`);
   section('new untracked', review.newUntracked, (e) => `${e.path} [${e.classification}]`);
+  section('adopted (pre-existing, explicitly brought into scope)', review.adopted, (e) => `${e.path} [ADOPTED_EXISTING_CHANGE] — adopted ${e.adoptedAt} — ${e.note}`);
   section('pre-existing/unrelated untracked', review.preExisting, (e) => `${e.path} [PRE_EXISTING_UNRELATED]`);
   section('protected-surface hits', review.protectedSurfaceHits, (h) => `${h.surfaceId} — ${h.expectedFile}`);
   section('migration additions', review.migrationAdditions, (m) => `${m.file} (ceiling=${m.ceiling}, evidence=${m.evidenceStatus}, freezeActive=${m.freezeActive})`);
@@ -1347,11 +1428,12 @@ function cmdCommit(rest) {
   const stale = !samePathSet(fresh.staged, task.lastDiffReview.staged)
     || !samePathSet(fresh.modifiedUnstaged, task.lastDiffReview.modifiedUnstaged)
     || !samePathSet(fresh.deleted, task.lastDiffReview.deleted)
-    || !samePathSet(fresh.newUntracked, task.lastDiffReview.newUntracked);
+    || !samePathSet(fresh.newUntracked, task.lastDiffReview.newUntracked)
+    || !samePathSet(fresh.adopted, task.lastDiffReview.adopted);
   if (stale) return taskError('the working tree changed since the last diff-review — re-run `diff-review` before committing');
   if (fresh.state === 'BLOCKED') return taskError(`diff review is BLOCKED: ${fresh.blockingReasons.join('; ')}`);
 
-  const eligible = [...fresh.staged, ...fresh.modifiedUnstaged, ...fresh.deleted, ...fresh.newUntracked]
+  const eligible = [...fresh.staged, ...fresh.modifiedUnstaged, ...fresh.deleted, ...fresh.newUntracked, ...fresh.adopted]
     .filter((e) => e.classification !== 'OUTSIDE_DECLARED_SCOPE')
     .map((e) => e.path);
   const paths = Array.from(new Set(eligible));
@@ -2066,6 +2148,7 @@ function cmdTask(argv) {
   if (sub === 'block') return cmdTaskBlock(rest);
   if (sub === 'clear') return cmdTaskClear(rest);
   if (sub === 'ack') return cmdTaskAck(rest);
+  if (sub === 'adopt') return cmdTaskAdopt(rest);
   if (sub === 'complete') return cmdTaskComplete(rest);
   if (sub === 'status') {
     const lines = [];
@@ -2359,7 +2442,20 @@ function cmdSelfTest() {
   // --- task subcommand surface never contains a mutating-outside-state verb ---
   check('task subcommands contain no commit/push/deploy/apply verb', () => {
     const forbidden = ['commit', 'push', 'deploy', 'apply', 'migrate', 'db-push'];
-    return TASK_SUBCOMMANDS.length === 9 && !forbidden.some((f) => TASK_SUBCOMMANDS.includes(f));
+    return TASK_SUBCOMMANDS.length === 10 && !forbidden.some((f) => TASK_SUBCOMMANDS.includes(f));
+  });
+
+  // --- taskClass is immutable: no task handler ever assigns to it outside
+  //     cmdTaskNew's initial object literal, structurally, not just by
+  //     behavioral spot-check ---
+  check('no task handler other than cmdTaskNew ever assigns task.taskClass (structural)', () => {
+    const full = fs.readFileSync(__filename, 'utf8');
+    const taskHandlers = full.slice(full.indexOf('function cmdTaskNew'), full.indexOf('function renderActiveTaskSection'));
+    const cmdTaskNewBody = full.slice(full.indexOf('function cmdTaskNew'), full.indexOf('function cmdTaskPlan'));
+    const afterCmdTaskNew = taskHandlers.slice(taskHandlers.indexOf('function cmdTaskPlan'));
+    const assignmentsOutsideNew = (afterCmdTaskNew.match(/\.taskClass\s*=/g) || []).length;
+    const hasInsideNew = /taskClass,/.test(cmdTaskNewBody) || /taskClass:/.test(cmdTaskNewBody);
+    return assignmentsOutsideNew === 0 && hasInsideNew ? true : `assignmentsOutsideNew=${assignmentsOutsideNew} hasInsideNew=${hasInsideNew}`;
   });
 
   // --- APPROVED is only reachable via cmdTaskApprove, never the generic table ---
@@ -2445,6 +2541,17 @@ function cmdSelfTest() {
       check('second active task is refused', () => {
         const r = runTask(sbBasic, ['new', '--title', 'second', '--class', 'BUG_FIX']);
         return r.status !== 0 && /already active/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      const sbSupersede = newSandbox();
+      check('a second task can reference a superseded (bogus/nonexistent) discovery task id verbatim, with no lookup/validation — not a task graph', () => {
+        const r = runTask(sbSupersede, ['new', '--title', 'implementation', '--class', 'PRODUCT_FEATURE', '--supersedes', 't-doesnotexist']);
+        if (r.status !== 0) return `exit ${r.status}: ${r.stderr}`;
+        const t = readSandboxTask(sbSupersede);
+        return t.supersedesTaskId === 't-doesnotexist' ? true : `supersedesTaskId=${t.supersedesTaskId}`;
+      });
+      check('task new without --supersedes leaves supersedesTaskId null (ordinary tasks unaffected)', () => {
+        return readSandboxTask(sbBasic).supersedesTaskId === null ? true : `supersedesTaskId=${JSON.stringify(readSandboxTask(sbBasic).supersedesTaskId)}`;
       });
 
       const sbInvalid = newSandbox();
@@ -2952,6 +3059,81 @@ function cmdSelfTest() {
           && t.commit && t.commit.hash && t.commit.message === 'fixture commit'
           && t.commit.files.includes('reviewed.txt') && t.commit.pushStatus === 'NOT_PUSHED'
           ? true : JSON.stringify({ phase: t.phase, commit: t.commit });
+      });
+
+      // --- `task adopt` — the My-Assignment-derived bug fix. A
+      //     superseding/adoptive task's baseline is captured at its OWN
+      //     `task new` time, necessarily after an already-completed
+      //     implementation's files were written — so those files land in
+      //     `preExisting` (excluded from commit) unless explicitly adopted.
+      const dirAdopt = makeTempRepo();
+      fs.writeFileSync(path.join(dirAdopt, 'pre-existing-impl.txt'), 'already implemented before this task existed\n');
+      fs.writeFileSync(path.join(dirAdopt, 'pre-existing-other.txt'), 'unrelated clutter, never adopted\n');
+      advance(dirAdopt, 'DOCUMENTATION_GOVERNANCE', ['pre-existing-impl.txt']);
+
+      check('an ordinary task never auto-adopts pre-existing files — both remain PRE_EXISTING_UNRELATED until adopted', () => {
+        runIn(dirAdopt, ['diff-review']);
+        const t = readTask(dirAdopt);
+        const impl = t.lastDiffReview.preExisting.find((e) => e.path === 'pre-existing-impl.txt');
+        const other = t.lastDiffReview.preExisting.find((e) => e.path === 'pre-existing-other.txt');
+        return t.lastDiffReview.adopted.length === 0 && impl && other ? true : `adopted=${JSON.stringify(t.lastDiffReview.adopted)} impl=${JSON.stringify(impl)} other=${JSON.stringify(other)}`;
+      });
+
+      check('adopting a file outside declared scope is refused (adoption cannot broaden scope)', () => {
+        const r = runIn(dirAdopt, ['task', 'adopt', '--file', 'pre-existing-other.txt', '--note', 'trying to adopt an out-of-scope file']);
+        return r.status !== 0 && /approved expectedFiles scope/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      check('wildcard / dot / bulk adoption attempts are all rejected', () => {
+        const wildcard = runIn(dirAdopt, ['task', 'adopt', '--file', '*', '--note', 'x']);
+        const globPath = runIn(dirAdopt, ['task', 'adopt', '--file', 'src/*', '--note', 'x']);
+        const dot = runIn(dirAdopt, ['task', 'adopt', '--file', '.', '--note', 'x']);
+        return wildcard.status !== 0 && globPath.status !== 0 && dot.status !== 0
+          ? true : `wildcard=${wildcard.status} glob=${globPath.status} dot=${dot.status}`;
+      });
+
+      check('a file not in this task\'s baseline snapshot cannot be adopted', () => {
+        const r = runIn(dirAdopt, ['task', 'adopt', '--file', 'never-existed.txt', '--note', 'x']);
+        return r.status !== 0 && /baseline/.test(r.stderr) ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      check('explicit exact-path adoption of an in-scope pre-existing file succeeds', () => {
+        const r = runIn(dirAdopt, ['task', 'adopt', '--file', 'pre-existing-impl.txt', '--note', 'the already-completed implementation file from the superseded discovery task']);
+        const t = readTask(dirAdopt);
+        return r.status === 0 && t.adoptedFiles.some((a) => a.path === 'pre-existing-impl.txt') ? true : `exit ${r.status}: ${r.stderr}`;
+      });
+
+      check('adopting the same file twice is refused', () => {
+        const r = runIn(dirAdopt, ['task', 'adopt', '--file', 'pre-existing-impl.txt', '--note', 'again']);
+        return r.status !== 0 ? true : 'double adoption silently accepted';
+      });
+
+      check('adopted file appears as ADOPTED_EXISTING_CHANGE; unrelated pre-existing file remains excluded', () => {
+        runIn(dirAdopt, ['diff-review']);
+        const t = readTask(dirAdopt);
+        const adopted = t.lastDiffReview.adopted.find((e) => e.path === 'pre-existing-impl.txt');
+        const other = t.lastDiffReview.preExisting.find((e) => e.path === 'pre-existing-other.txt');
+        return adopted && adopted.classification === 'ADOPTED_EXISTING_CHANGE' && other
+          ? true : `adopted=${JSON.stringify(adopted)} other=${JSON.stringify(other)}`;
+      });
+
+      check('adoption is recorded in active-task.json with path/adoptedAt/note, and does not rewrite baselineUntrackedFiles', () => {
+        const t = readTask(dirAdopt);
+        const a = t.adoptedFiles.find((x) => x.path === 'pre-existing-impl.txt');
+        return a && a.adoptedAt && a.note && t.baselineUntrackedFiles.includes('pre-existing-impl.txt') && t.baselineUntrackedFiles.includes('pre-existing-other.txt')
+          ? true : JSON.stringify({ a, baseline: t.baselineUntrackedFiles });
+      });
+
+      check('commit stages the adopted file and never the unrelated pre-existing one', () => {
+        const r = runIn(dirAdopt, ['commit', '--message', 'adopt fixture commit']);
+        const staged = spawnSync('git', ['show', '--stat', '--format=', 'HEAD'], { cwd: dirAdopt, encoding: 'utf8' }).stdout;
+        const untrackedAfter = spawnSync('git', ['status', '--porcelain'], { cwd: dirAdopt, encoding: 'utf8' }).stdout;
+        const t = readTask(dirAdopt);
+        return r.status === 0
+          && /pre-existing-impl\.txt/.test(staged) && !/pre-existing-other\.txt/.test(staged)
+          && /\?\? pre-existing-other\.txt/.test(untrackedAfter)
+          && t.commit.files.includes('pre-existing-impl.txt') && !t.commit.files.includes('pre-existing-other.txt')
+          ? true : `exit ${r.status} staged=${staged} untrackedAfter=${untrackedAfter} files=${JSON.stringify(t.commit && t.commit.files)}`;
       });
 
       check('no harness command can push — behavioral (already proven structurally by the allowlist checks above)', () => {
