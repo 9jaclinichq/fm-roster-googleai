@@ -440,7 +440,14 @@ export const databaseService = {
     return data;
   },
 
-  async submitRoster(submission: Omit<Submission, 'id' | 'created_at' | 'updated_at'>): Promise<Submission> {
+  // review_status is deliberately excluded from the input type — a
+  // resident-driven submission can never set it to anything but
+  // 'submitted' (this function forces that on every branch below), which
+  // is also how the migration-68 locked invariant "resubmission resets
+  // reviewed -> submitted" is implemented: no versioning table, just a
+  // forced write on the one function every resident submission goes
+  // through.
+  async submitRoster(submission: Omit<Submission, 'id' | 'created_at' | 'updated_at' | 'review_status'>): Promise<Submission> {
     checkSupabase();
 
     // First check if submission exists to prevent duplicate keys
@@ -456,6 +463,7 @@ export const databaseService = {
         .from('submissions')
         .update({
           ...submission,
+          review_status: 'submitted',
           updated_at: new Date().toISOString()
         })
         .eq('id', existing.id)
@@ -477,6 +485,7 @@ export const databaseService = {
         .from('submissions')
         .insert([{
           ...submission,
+          review_status: 'submitted',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }])
@@ -499,7 +508,7 @@ export const databaseService = {
           if (!refetchError && raceWinner) {
             const { data: updated, error: updateError } = await supabase!
               .from('submissions')
-              .update({ ...submission, updated_at: new Date().toISOString() })
+              .update({ ...submission, review_status: 'submitted', updated_at: new Date().toISOString() })
               .eq('id', raceWinner.id)
               .select()
               .single();

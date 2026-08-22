@@ -1,5 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
+import { submissionReviewService } from '../../../lib/services/submissionReviewService';
 import { LoadingShell } from '../../shared/ui/LoadingShell';
 import { SubmissionsPanel } from './dashboard/SubmissionsPanel';
 import { PendingResidentsPanel } from './dashboard/PendingResidentsPanel';
@@ -101,6 +102,8 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [editingSubmission, setEditingSubmission] = useState<SubmissionWithWorkforce | null>(null);
   const [isEditSubmitting, setIsEditSubmitting] = useState<boolean>(false);
   const [editError, setEditError] = useState<string>('');
+  // review_status (migration 68) — administrative metadata only.
+  const [markingReviewedId, setMarkingReviewedId] = useState<string | null>(null);
 
   // Editing Submission fields
   const [editCurrentRotation, setEditCurrentRotation] = useState<string>('');
@@ -770,6 +773,28 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
     }
   };
 
+  // Mark a submission reviewed (migration 68) — administrative metadata
+  // only; see submissionReviewService.ts's own header for the full
+  // boundary. No un-review action here: reviewed only ever reverts to
+  // submitted automatically, as a side effect of the resident's own
+  // resubmission (submitRoster()).
+  const handleMarkReviewed = async (sub: SubmissionWithWorkforce) => {
+    setMarkingReviewedId(sub.id);
+    try {
+      await submissionReviewService.markReviewed(sub.id);
+      setSubmissions(prev => prev.map(s => s.id === sub.id ? { ...s, review_status: 'reviewed' } : s));
+      triggerSuccess(`Submission for ${sub.workforce.full_name} marked reviewed.`);
+    } catch (err) {
+      // No dedicated error-toast slot exists for this inline table action
+      // (unlike the edit-on-behalf modal's own editError) — logging only,
+      // consistent with this file's existing pattern for other background
+      // actions without a local error-display surface.
+      console.warn('Failed to mark submission reviewed:', err);
+    } finally {
+      setMarkingReviewedId(null);
+    }
+  };
+
   // Calculations for dashboard
   const activeWorkforce = workforce.filter(w => w.active);
   const totalWorkforceCount = activeWorkforce.length;
@@ -1143,6 +1168,8 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
             setEditNotes={setEditNotes}
             isEditSubmitting={isEditSubmitting}
             handleEditSubmissionSubmit={handleEditSubmissionSubmit}
+            onMarkReviewed={handleMarkReviewed}
+            markingReviewedId={markingReviewedId}
           />
         )}
 

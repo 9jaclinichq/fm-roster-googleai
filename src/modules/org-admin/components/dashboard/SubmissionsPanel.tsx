@@ -1,6 +1,6 @@
 import React from 'react';
 import { SubmissionWithWorkforce, WorkforceCategory } from '../../../../types';
-import { FileText, FileDown, Search, Filter, Calendar, Eye, Edit, X, AlertTriangle, RefreshCw } from 'lucide-react';
+import { FileText, FileDown, Search, Filter, Calendar, Eye, Edit, X, AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 interface SubmissionsPanelProps {
   t: (key: string, fallback?: string) => string;
@@ -41,6 +41,9 @@ interface SubmissionsPanelProps {
   setEditNotes: (value: string) => void;
   isEditSubmitting: boolean;
   handleEditSubmissionSubmit: (e: React.FormEvent) => void;
+  // Administrative metadata only (migration 68) — see submissionReviewService.ts.
+  onMarkReviewed: (sub: SubmissionWithWorkforce) => void;
+  markingReviewedId: string | null;
 }
 
 // Extracted from ChiefDashboardView.tsx (Phase 3, org-admin module split) — the
@@ -82,6 +85,8 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
   setEditNotes,
   isEditSubmitting,
   handleEditSubmissionSubmit,
+  onMarkReviewed,
+  markingReviewedId,
 }) => {
   return (
     <>
@@ -156,13 +161,14 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
                 <th className="px-4 py-3">Current {t('rotation', 'Rotation')}</th>
                 <th className="px-4 py-3">Next {t('rotation', 'Rotation')}</th>
                 <th className="px-4 py-3">Leave Status</th>
+                <th className="px-4 py-3">Review Status</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs font-medium text-slate-700">
               {filteredSubmissions.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-8 text-slate-400">
+                  <td colSpan={7} className="text-center py-8 text-slate-400">
                     {submissions.length === 0
                       ? 'No responses submitted yet for this collection.'
                       : 'No submissions matched your current search filters.'}
@@ -189,7 +195,29 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
                         <span className="text-slate-400">No Leave</span>
                       )}
                     </td>
+                    <td className="px-4 py-3.5">
+                      {sub.review_status === 'reviewed' ? (
+                        <span className="inline-flex items-center space-x-1 bg-emerald-50 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full w-max">
+                          <CheckCircle2 size={11} />
+                          <span>Reviewed</span>
+                        </span>
+                      ) : (
+                        <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-full w-max">
+                          Submitted
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3.5 text-right space-x-2 shrink-0">
+                      {sub.review_status !== 'reviewed' && (
+                        <button
+                          onClick={() => onMarkReviewed(sub)}
+                          disabled={markingReviewedId === sub.id}
+                          className="inline-flex items-center justify-center p-1.5 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 rounded-lg transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Mark this submission reviewed"
+                        >
+                          {markingReviewedId === sub.id ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                        </button>
+                      )}
                       <button
                         onClick={() => setSelectedSubmission(sub)}
                         className="inline-flex items-center justify-center p-1.5 hover:bg-slate-100 text-slate-600 hover:text-slate-950 rounded-lg transition cursor-pointer"
@@ -221,7 +249,9 @@ export const SubmissionsPanel: React.FC<SubmissionsPanelProps> = ({
             <div className="bg-gradient-to-br from-blue-700 to-indigo-900 px-6 py-4 text-white flex justify-between items-center shrink-0">
               <div>
                 <h3 className="font-bold text-base sm:text-lg">{selectedSubmission.workforce.full_name}</h3>
-                <p className="text-[10px] text-blue-200 font-bold uppercase tracking-wider">{selectedSubmission.workforce.category} &bull; Monthly Submission</p>
+                <p className="text-[10px] text-blue-200 font-bold uppercase tracking-wider">
+                  {selectedSubmission.workforce.category} &bull; Monthly Submission &bull; {selectedSubmission.review_status === 'reviewed' ? 'Reviewed' : 'Submitted'}
+                </p>
               </div>
               <button
                 onClick={() => setSelectedSubmission(null)}

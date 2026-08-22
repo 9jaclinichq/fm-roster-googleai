@@ -64,6 +64,11 @@ export interface Collection {
   tenant_id: string;
 }
 
+// Administrative metadata only (migration 68, locked 2026-08-22): exactly
+// two states, never draft/locked/approved/rejected/reconciled. See that
+// migration's own header for the full invariant and non-goals.
+export type SubmissionReviewStatus = 'submitted' | 'reviewed';
+
 export interface Submission {
   id: string;
   collection_id: string;
@@ -79,6 +84,11 @@ export interface Submission {
   leave_applied: boolean | null;
   leave_document_urls: string[]; // maximum 3
   notes: string | null;
+  // Administrative metadata only — never read by ResidentFormView,
+  // collection.status logic, roster/publication code, or anything other
+  // than the Chief-facing SubmissionsPanel. Reset to 'submitted' on every
+  // resident-driven write (see databaseService.ts's submitRoster()).
+  review_status: SubmissionReviewStatus;
   created_at: string;
   updated_at: string;
 }

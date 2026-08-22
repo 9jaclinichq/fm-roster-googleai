@@ -1,0 +1,53 @@
+-- ====================================================================
+-- Migration 68: submissions review_status (administrative metadata only)
+-- ====================================================================
+-- WRITTEN FOR REVIEW ONLY. NOT APPLIED LIVE. Do not run this against the
+-- live database until a human explicitly lifts the current deployment
+-- freeze and applies it (same discipline as migrations 66/67).
+--
+-- SCOPE (locked, human-approved 2026-08-22): exactly two states.
+--   submitted — the current persisted version of this submission has not
+--               yet been explicitly reviewed by an authorized Chief/admin.
+--   reviewed  — an authorized Chief/admin has explicitly reviewed the
+--               current persisted version of this submission.
+-- Deliberately NOT added: draft, locked, approved, rejected, reconciled,
+-- or any generic workflow/state-machine shape; no timestamp, reviewer
+-- identity, audit table, comment, or rejection-reason column — none of
+-- these were judged necessary for this slice's locked invariant (see
+-- src/lib/databaseService.ts's submitRoster() for how the "current
+-- persisted version" invariant is enforced without versioning
+-- infrastructure: every resident-driven write forces review_status back
+-- to 'submitted', so a 'reviewed' row is always exactly the version a
+-- human last reviewed).
+--
+-- This is administrative metadata ONLY. It does not, and must not be
+-- read anywhere to, change ResidentFormView editability, collection.status
+-- semantics, roster assignments, publication state, or the resident's
+-- submitted answers.
+--
+-- SAFETY: existing rows backfill to 'submitted' automatically via the
+-- DEFAULT clause on this NOT NULL column addition — Postgres populates
+-- every existing row's new column from the DEFAULT as part of the same
+-- statement, so no separate UPDATE/backfill step is needed and no data
+-- loss is possible.
+--
+-- RLS IMPACT: none. submissions already carries fully permissive RLS
+-- (USING(true) for SELECT/INSERT/UPDATE — see supabase/schema.sql) — the
+-- same app-layer-only enforcement model as every other institutional
+-- table in this schema. review_status inherits that same posture; this
+-- migration does not add, remove, or alter any policy. Authorization for
+-- submitted -> reviewed is enforced at the application layer only (the
+-- existing Chief-authenticated dashboard), matching the precedent already
+-- set by the "edit submission on behalf of resident" feature, which has
+-- no separate RPC/admin-code gate of its own either.
+--
+-- ROLLBACK: `ALTER TABLE submissions DROP COLUMN review_status;` fully
+-- reverses this migration with no impact on any other column.
+
+ALTER TABLE submissions
+  ADD COLUMN IF NOT EXISTS review_status text NOT NULL DEFAULT 'submitted'
+  CHECK (review_status IN ('submitted', 'reviewed'));
+
+-- ====================================================================
+-- END OF MIGRATION 68
+-- ====================================================================

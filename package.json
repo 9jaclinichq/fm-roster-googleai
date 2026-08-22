@@ -17,6 +17,7 @@
     "verify:roster-reconciliation": "tsx scripts/verify-roster-reconciliation.ts",
     "verify:submission-status": "tsx scripts/verify-submission-status.ts",
     "verify:my-assignment": "node scripts/verify-my-assignment.cjs",
+    "verify:submission-review-status": "node scripts/verify-submission-review-status.cjs",
     "harness": "node scripts/harness.cjs"
   },
   "dependencies": {
