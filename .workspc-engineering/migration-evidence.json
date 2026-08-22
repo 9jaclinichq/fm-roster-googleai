@@ -11,10 +11,17 @@
     },
     {
       "migrationRange": "66",
-      "status": "VERIFIED_UNAPPLIED",
-      "evidenceSource": "Session record: migration file authored and locally committed this cycle; no live-apply action has been taken against any environment in any session since",
-      "verifiedDate": "2026-08-21",
-      "note": "The file existing on disk is not itself treated as evidence either way; the evidence is the recorded absence of any apply action."
+      "status": "VERIFIED_APPLIED",
+      "evidenceSource": "Direct live application via `supabase db query --linked --file supabase/migrations/66_rubric_instances_assessor_not_both_check.sql` against project gdumksfffewpdqqwvcdo (the confirmed sole `linked:true` project), executed by the human per explicit per-step authorization. Read-only post-apply verification: pg_constraint confirms `rubric_instances_assessor_not_both` exists with definition `CHECK ((NOT ((assessor_workforce_id IS NOT NULL) AND (assessor_doctor_id IS NOT NULL))))` — at-most-one-of, not exactly-one-of. Row count unchanged (total=5, workforce_only=5, both_set=0) versus the pre-existing documented baseline. Behavioral test (both-assessor-columns INSERT inside an explicit transaction) failed with Postgres error 23514 naming this exact constraint; a single-assessor INSERT succeeded and was then rolled back, independently confirmed absent afterward (count query for that generated id returned 0).",
+      "verifiedDate": "2026-08-22",
+      "note": "Supersedes the prior VERIFIED_UNAPPLIED entry. Applied via direct SQL execution (`db query`), not `db push`/migration ledger reconciliation — the remote ledger table has zero recorded entries for any migration 1-67 (independently confirmed via `supabase migration list --linked`), so a ledger-based mechanism was avoided entirely for this deployment."
+    },
+    {
+      "migrationRange": "67",
+      "status": "VERIFIED_APPLIED",
+      "evidenceSource": "Direct live application via `supabase db query --linked --file supabase/migrations/67_resident_get_current_assignment.sql` against project gdumksfffewpdqqwvcdo, executed by the human per explicit per-step authorization, only after migration 66 was confirmed healthy. Read-only post-apply verification: pg_proc confirms `resident_get_current_assignment(p_workforce_id uuid, p_code text)` exists, `security_definer=true`, `search_path=public`; `has_function_privilege` confirms EXECUTE granted to both `anon` and `authenticated`; `pg_get_functiondef` pulled the live function body and it matches the reviewed migration's logic exactly (reverification via workforce_id+resident_code+active=true, tenant derived only from the verified workforce row with no p_tenant_id parameter anywhere, current_collection_id lookup, status='published' gate, all four grid-matching blocks unchanged); a live call with a nonexistent workforce_id and wrong code raised Postgres error 28000 'Invalid access code' as expected; `pg_policies` on combined_master_rosters confirmed unchanged (still exactly the 3 original permissive policies from migration 10) — no RLS/table drift from this deployment.",
+      "verifiedDate": "2026-08-22",
+      "note": "Positive-path verification (a real member's own PIN successfully retrieving their actual assignment, and a live confirmation of the 'unpublished roster never returned' path against real data) could not be safely performed — no real member credential was available in this session, and none was manufactured, per explicit instruction. This remains an open, disclosed post-deployment manual check, not a gap in the application/security verification performed above."
     }
   ]
 }

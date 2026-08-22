@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "active": true,
-  "reason": "live submission cycle",
+  "active": false,
+  "reason": "explicit human authorization for production migration deployment (migrations 66 and 67 only)",
   "productionCodeBaseline": "c4d29c67d5afa656e96f5f48fe70167c4d11e5ed",
-  "note": "Production CODE baseline only — independent from database migration state, which is recorded separately in migration-evidence.json. This freeze's original start date was not independently re-verified this session; the freeze is confirmed still active and the production code baseline confirmed current as of 2026-08-21."
+  "note": "Freeze lifted 2026-08-22 per explicit human authorization scoped specifically to applying migrations 66 and 67 to the production database (both now live and verified — see migration-evidence.json). This is a NARROW authorization, not a general resumption of deployment activity: the original freeze reason ('live submission cycle') has not been independently confirmed resolved as a business matter, and the authorizing human explicitly stated that Git/code push requires a SEPARATE authorization even though this flag mechanically permits the pre-push hook to allow one now. Do not push without that separate, explicit authorization. Disclosed process note, not silently corrected: this update should have preceded migration application (it was Step 2 of the originally authorized 7-step sequence) but was executed after both migrations were already live-applied and verified, due to an agent sequencing error. No production action was affected by the ordering — every migration step still required and received explicit per-step human approval regardless of this flag's state."
 }
