@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { databaseService } from '../../../lib/databaseService';
 import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
 import { useTerminology } from '../terminology';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard, Home, Timer, Smile, ListTodo, UsersRound } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard, Home, Timer, Smile, ListTodo, UsersRound, CalendarCheck } from 'lucide-react';
 
 // Minimal event typing for the non-standard `beforeinstallprompt` event —
 // not part of the DOM lib TypeScript ships with.
@@ -31,6 +31,7 @@ interface NavbarProps {
   onLogoClick: () => void;
   onNavigateToResidentForm: () => void;
   onNavigateToAnnouncements: () => void;
+  onNavigateToMyAssignment: () => void;
   onNavigateToDissertation: () => void;
   onNavigateToCasebook: () => void;
   onNavigateToLibrary: () => void;
@@ -49,6 +50,7 @@ interface NavbarProps {
     | 'resident-home'
     | 'resident'
     | 'resident-announcements'
+    | 'resident-my-assignment'
     | 'resident-dissertation'
     | 'resident-casebook'
     | 'resident-library'
@@ -75,6 +77,7 @@ const RESIDENT_VIEWS = [
   'resident-home',
   'resident',
   'resident-announcements',
+  'resident-my-assignment',
   'resident-dissertation',
   'resident-casebook',
   'resident-library',
@@ -102,6 +105,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogoClick,
   onNavigateToResidentForm,
   onNavigateToAnnouncements,
+  onNavigateToMyAssignment,
   onNavigateToDissertation,
   onNavigateToCasebook,
   onNavigateToLibrary,
@@ -325,6 +329,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Megaphone size={13} />
               <span>Announcements</span>
+            </button>
+            <button
+              onClick={onNavigateToMyAssignment}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
+                currentView === 'resident-my-assignment'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <CalendarCheck size={13} />
+              <span>My Assignment</span>
             </button>
             <button
               onClick={onNavigateToDissertation}

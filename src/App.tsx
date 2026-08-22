@@ -14,6 +14,7 @@ import { ResidentLoginView } from './modules/auth/components/ResidentLoginView';
 import { PostLoginEmailPrompt } from './modules/auth/components/PostLoginEmailPrompt';
 import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
+import { MyAssignmentView } from './modules/roster-engine/components/MyAssignmentView';
 import { AuthLandingView } from './modules/auth/components/AuthLandingView';
 import { TenantSelectorView } from './modules/auth/components/TenantSelectorView';
 import { DoctorAuthView } from './modules/auth/components/DoctorAuthView';
@@ -328,6 +329,7 @@ function MainAppContent() {
     if (path.startsWith('/organization/new')) return 'chief-login';
     if (path.startsWith('/workspace/home')) return 'resident-home';
     if (path.startsWith('/workspace/announcements')) return 'resident-announcements';
+    if (path.startsWith('/workspace/my-assignment')) return 'resident-my-assignment';
     if (path.startsWith('/workspace/dissertation')) return 'resident-dissertation';
     if (path.startsWith('/workspace/casebook')) return 'resident-casebook';
     if (path.startsWith('/workspace/library')) return 'resident-library';
@@ -449,6 +451,7 @@ function MainAppContent() {
         onLogoClick={() => navigate('/')}
         onNavigateToResidentForm={() => navigate('/workspace/form')}
         onNavigateToAnnouncements={() => navigate('/workspace/announcements')}
+        onNavigateToMyAssignment={() => navigate('/workspace/my-assignment')}
         onNavigateToDissertation={() => navigate('/workspace/dissertation')}
         onNavigateToCasebook={() => navigate('/workspace/casebook')}
         onNavigateToLibrary={() => navigate('/workspace/library')}
@@ -617,6 +620,23 @@ function MainAppContent() {
             element={
               currentResident ? (
                 <AnnouncementBoardView resident={currentResident} />
+              ) : (
+                <Navigate to="/workspace/login" replace />
+              )
+            }
+          />
+
+          {/* My Assignment — member-facing view of their own current
+              published roster assignment (migration 67's
+              resident_get_current_assignment() RPC). residentAccessCode is
+              the in-memory-only PIN from a fresh login (null on session
+              restore) — see MyAssignmentView's own header for why it is
+              passed through rather than re-derived or persisted. */}
+          <Route
+            path="/workspace/my-assignment"
+            element={
+              currentResident ? (
+                <MyAssignmentView resident={currentResident} accessCode={residentAccessCode} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )
