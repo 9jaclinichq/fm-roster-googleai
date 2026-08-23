@@ -4,7 +4,9 @@ import {
   Rotation,
   CombinedMasterRoster,
   ReconciliationIssue,
+  ClinicType,
 } from '../../../types';
+import { KNOWN_SATELLITE_FACILITIES } from './satelliteFacilities';
 
 // Workforce Option A — read-only reconciliation. See
 // docs/WORKFORCE_V1_RECOVERY_SPEC.md for the full design and locked
@@ -156,6 +158,170 @@ function findGridAppearancesForMember(
   return appearances;
 }
 
+// --------------------------------------------------------------------
+// UCH Family Medicine V1 — Slice 1 read-only roster-rule intelligence
+// (2026-08-23). See WORKSPC_RECONCILIATION_REVIEW_2026-08-23_SEPTEMBER_CYCLE.md
+// §G Slice 3 for the DISCOVER classification this implements. NOT universal
+// Workspc rules — same FM-only-adapter boundary as
+// UCH_FAMILY_MEDICINE_ON_FLOOR_ADAPTER above. Every check here is read-only,
+// non-blocking decision support: it surfaces "missing expected coverage" or
+// "conflicting/ineligible assignment" for the Chief to review, it never
+// assigns anyone, approves leave, or decides the final roster.
+//
+// Classified during DISCOVER and deliberately NOT implemented in this
+// slice (see the review doc for the full reasoning):
+//   - Priority coverage (triage/weekend-eligible set) — the Supervision
+//     grid's assignees are matched by full_name string, not workforce_id
+//     (see the existing, documented "real, transitional inconsistency" in
+//     findGridAppearancesForMember above); cross-referencing that against
+//     GOP-grid Triage-slot residents (matched by id) would risk false
+//     conflict signals on a known-fragile join, not a deterministic check.
+//   - NHIA staffing — the note's "NHIA" has no confirmed mapping to any
+//     existing `ClinicType`/facility value in this codebase (`Managed
+//     Care` is a plausible but UNCONFIRMED guess); inventing that mapping
+//     would violate the same "preserve only classifications actually
+//     supported by existing evidence" constraint documented above for the
+//     on-floor adapter. Needs explicit human confirmation first.
+//   - Special coverage "exactly one Senior Registrar total" headcount —
+//     ambiguous whether that means one person total across all three
+//     facilities or one per facility; only the per-assignment grade
+//     eligibility (below) is confidently deterministic from the note.
+//   - Chief academic-off-days, fairness, automatic assignment/leave
+//     approval, A/E carry-forward — explicitly deferred per the task's own
+//     scope boundary, unrelated to what current data supports.
+
+// Only "Family Medicine Clinic" on-floor rotations are ever expected to
+// supply Ikolaba/Special-coverage/service-point staffing — mirrors the
+// same on-floor adapter's own conservatism (§ above): grade + on_floor are
+// checked, never a specific rotation name.
+const UCH_FM_SENIOR_REGISTRAR_CATEGORY = 'Senior Registrar';
+
+// Directly named in the note ("1 sr in triage at least, same for male
+// sorting, female sorting, children sorting") and confirmed to match
+// `ClinicType` exactly (src/types.ts) — no guessing involved, unlike NHIA.
+const UCH_FM_FLOOR_SENIOR_COVERAGE_CLINIC_TYPES: ClinicType[] = [
+  'Triage', 'Male Sorting', 'Female Sorting', 'Children Sorting',
+];
+
+const UCH_FM_IKOLABA_FACILITY = 'Ikolaba';
+// "Special coverage" facilities, per the note ("Agbeke/Airport/NYSC") —
+// every KNOWN_SATELLITE_FACILITIES entry except Ikolaba, which has its own
+// day-specific rule below. Derived rather than re-listed so this can never
+// drift from uchRosterParser.ts's own facility spelling.
+const UCH_FM_SPECIAL_COVERAGE_FACILITIES = KNOWN_SATELLITE_FACILITIES.filter(f => f !== UCH_FM_IKOLABA_FACILITY);
+
+function resolveAssignedMembers(assignedIds: string[], workforceById: Map<string, WorkforceMember>): WorkforceMember[] {
+  // Entries that don't resolve to a known active workforce member are raw
+  // parsed text (not yet drag-assigned to a resident) or reference someone
+  // outside this reconciliation's active-workforce population — silently
+  // skipped, same as Decision 1's submission-population scoping above, not
+  // treated as an error since we cannot verify anything about them.
+  return assignedIds.map(id => workforceById.get(id)).filter((m): m is WorkforceMember => !!m);
+}
+
+// Ikolaba rule (locked in the note): on the 1st and 3rd Friday of the
+// month only, one Senior Registrar is moved to Ikolaba from the Floor.
+// Grid slots record only a day name (see resolveWeekdayNameToDatesInMonth
+// above) — every month has at least 4 Fridays, so the 1st/3rd always exist.
+// A bare "Friday" posting (rather than a specific calendar date) is
+// necessarily treated as covering every Friday, including the 1st/3rd —
+// this cannot distinguish "assigned only on the 2nd/4th Friday" from
+// "assigned every Friday", which is a real, documented limitation of the
+// existing day-name-only grid data model (same limitation the leave-overlap
+// check above already lives with), not something this check can fix.
+function checkIkolabaCoverage(
+  workforceById: Map<string, WorkforceMember>,
+  masterRoster: CombinedMasterRoster | null
+): ReconciliationIssue[] {
+  if (!masterRoster) return [];
+  const issues: ReconciliationIssue[] = [];
+  const fridays = resolveWeekdayNameToDatesInMonth('Friday', masterRoster.month, masterRoster.year);
+  const targetDates = [fridays[0], fridays[2]];
+  const ikolabaPostings = (masterRoster.satellite_grid?.postings || []).filter(p => p.facility === UCH_FM_IKOLABA_FACILITY);
+
+  for (const targetDate of targetDates) {
+    const matchingPostings = ikolabaPostings.filter(p => {
+      if (!p.date_or_day) return false;
+      return resolveWeekdayNameToDatesInMonth(p.date_or_day, masterRoster.month, masterRoster.year).includes(targetDate);
+    });
+    const assignedMembers = matchingPostings.flatMap(p => resolveAssignedMembers(p.assigned || [], workforceById));
+    const hasEligibleSR = assignedMembers.some(m => m.category === UCH_FM_SENIOR_REGISTRAR_CATEGORY && m.on_floor);
+
+    if (!hasEligibleSR) {
+      const named = assignedMembers.map(m => `${m.full_name} (${m.category}${m.on_floor ? '' : ', not on-floor'})`).join(', ');
+      issues.push({
+        type: 'missing_expected_coverage',
+        workforceId: null,
+        memberName: null,
+        message: `Missing expected coverage: Ikolaba on ${targetDate} (1st/3rd Friday convention) has no confirmed Senior Registrar moved from the Floor.${named ? ` Currently assigned: ${named}.` : ' No one is currently assigned.'}`,
+        evidence: { facility: UCH_FM_IKOLABA_FACILITY, date: targetDate, currently_assigned: named || 'none' },
+      });
+    }
+  }
+  return issues;
+}
+
+// "You can see the pattern on the floor... 1 sr in triage at least, same
+// for male sorting, female sorting, children sorting" — read as a soft,
+// "as permissible" convention (the note's own words), so this is surfaced
+// as review-worthy decision support, never a hard failure.
+function checkFloorServicePointSeniorCoverage(
+  workforceById: Map<string, WorkforceMember>,
+  masterRoster: CombinedMasterRoster | null
+): ReconciliationIssue[] {
+  if (!masterRoster) return [];
+  const issues: ReconciliationIssue[] = [];
+  const slots = (masterRoster.gop_clinic_grid?.slots || []).filter(s => UCH_FM_FLOOR_SENIOR_COVERAGE_CLINIC_TYPES.includes(s.clinic_type));
+
+  for (const slot of slots) {
+    const residents = resolveAssignedMembers(slot.residents || [], workforceById);
+    const hasSR = residents.some(m => m.category === UCH_FM_SENIOR_REGISTRAR_CATEGORY);
+    if (!hasSR) {
+      const named = residents.map(m => `${m.full_name} (${m.category})`).join(', ');
+      issues.push({
+        type: 'missing_expected_coverage',
+        workforceId: null,
+        memberName: null,
+        message: `Missing expected coverage: no Senior Registrar assigned to ${slot.clinic_type} on ${slot.date_or_day} (Family Medicine convention expects at least one Senior Registrar at this service point, as permissible).${named ? ` Currently assigned: ${named}.` : ' No one is currently assigned.'}`,
+        evidence: { clinic_type: slot.clinic_type, date_or_day: slot.date_or_day, currently_assigned: named || 'none' },
+      });
+    }
+  }
+  return issues;
+}
+
+// Special coverage (Agbeke Mercy/Airport PHC/NYSC): the note says "one
+// Senior registrar from the workforce goes to" these facilities. Only the
+// per-assignment grade check is implemented (deterministic); whether that
+// means exactly one person total across the three facilities is ambiguous
+// and deliberately deferred (see the file-header note above) — this only
+// flags a *named, specific* assignment whose grade doesn't match, which is
+// why it produces `ineligible_assignment` (tied to a real member) rather
+// than `missing_expected_coverage` (tied to none).
+function checkSpecialCoverageEligibility(
+  workforceById: Map<string, WorkforceMember>,
+  masterRoster: CombinedMasterRoster | null
+): ReconciliationIssue[] {
+  if (!masterRoster) return [];
+  const issues: ReconciliationIssue[] = [];
+  const postings = (masterRoster.satellite_grid?.postings || []).filter(p => UCH_FM_SPECIAL_COVERAGE_FACILITIES.includes(p.facility));
+
+  for (const posting of postings) {
+    for (const member of resolveAssignedMembers(posting.assigned || [], workforceById)) {
+      if (member.category !== UCH_FM_SENIOR_REGISTRAR_CATEGORY) {
+        issues.push({
+          type: 'ineligible_assignment',
+          workforceId: member.id,
+          memberName: member.full_name,
+          message: `Conflicting/ineligible assignment: ${member.full_name} is assigned to ${posting.facility} special coverage but is a ${member.category}, not a Senior Registrar (Family Medicine convention expects a Senior Registrar for this posting).`,
+          evidence: { facility: posting.facility, member_category: member.category },
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 export function computeReconciliationIssues(
   submissions: SubmissionWithWorkforce[],
   workforce: WorkforceMember[],
@@ -254,6 +420,12 @@ export function computeReconciliationIssues(
       }
     }
   }
+
+  // FM Slice 1 checks — independent of submissions, purely roster-grid +
+  // workforce-grade based, so they run once regardless of submission count.
+  issues.push(...checkIkolabaCoverage(workforceById, masterRoster));
+  issues.push(...checkFloorServicePointSeniorCoverage(workforceById, masterRoster));
+  issues.push(...checkSpecialCoverageEligibility(workforceById, masterRoster));
 
   return issues;
 }

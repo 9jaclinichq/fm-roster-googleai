@@ -13,6 +13,7 @@ import {
   SatellitePosting,
   WorkforceMember,
 } from '../../../types';
+import { KNOWN_SATELLITE_FACILITIES } from './satelliteFacilities';
 
 // Structures raw UCH Family Medicine roster documents (pasted text, or
 // text extracted from an uploaded file) into the grid shapes used by
@@ -26,8 +27,6 @@ import {
 // that can't be confidently parsed goes into `unparsed_notes` for the
 // Chief to resolve by hand in the merge grid — this parser structures
 // what the document says, it does not decide who works where.
-
-const KNOWN_SATELLITE_FACILITIES = ['Ikolaba', 'Agbeke Mercy', 'Airport PHC', 'NYSC', 'Otunba Tunwase'];
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 

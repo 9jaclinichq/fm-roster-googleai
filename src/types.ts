@@ -661,12 +661,27 @@ export interface RosterParseResult<T> {
 // adversarial finding): leave_start > leave_end previously made the
 // overlap check mathematically unsatisfiable and silently produced zero
 // findings. Now surfaced explicitly instead of suppressed.
-export type ReconciliationIssueType = 'rotation_conflict' | 'unrecognised_rotation' | 'leave_roster_overlap' | 'invalid_declared_leave_range';
+// missing_expected_coverage/ineligible_assignment added as UCH Family
+// Medicine Slice 1 (2026-08-23, see
+// WORKSPC_RECONCILIATION_REVIEW_2026-08-23_SEPTEMBER_CYCLE.md §G Slice 3):
+// read-only checks against the same FM-specific adapter/precedent as the
+// existing on-floor rule, NOT universal Workspc rules.
+export type ReconciliationIssueType =
+  | 'rotation_conflict'
+  | 'unrecognised_rotation'
+  | 'leave_roster_overlap'
+  | 'invalid_declared_leave_range'
+  | 'missing_expected_coverage'
+  | 'ineligible_assignment';
 
 export interface ReconciliationIssue {
   type: ReconciliationIssueType;
-  workforceId: string;
-  memberName: string;
+  // Null only for missing_expected_coverage findings that are about an
+  // absence at a service point/posting rather than about one specific
+  // member (e.g. "no Senior Registrar assigned to Triage on Monday") —
+  // every other issue type always names a specific member.
+  workforceId: string | null;
+  memberName: string | null;
   // Human-readable, following the locked "conflicts with"/"declared
   // leave"/"Needs Review" phrasing — never asserts one state is wrong.
   message: string;
