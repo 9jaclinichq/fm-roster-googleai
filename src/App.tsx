@@ -2,10 +2,6 @@ import { useState, useEffect, lazy, Suspense } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Navbar } from './modules/shared/ui/Navbar';
 import { UnifiedRecordView } from './modules/shared/ui/UnifiedRecordView';
-import { FocusModeView } from './modules/shared/ui/FocusModeView';
-import { WellbeingView } from './modules/shared/ui/WellbeingView';
-import { PersonalTasksView } from './modules/shared/ui/PersonalTasksView';
-import { TeamDirectoryView } from './modules/shared/ui/TeamDirectoryView';
 import { IntelligenceHarnessHome } from './modules/shared/ui/IntelligenceHarnessHome';
 import { DevHelper } from './modules/shared/ui/DevHelper';
 import { LoadingShell } from './modules/shared/ui/LoadingShell';
@@ -339,10 +335,6 @@ function MainAppContent() {
     if (path.startsWith('/workspace/research')) return 'resident-research';
     if (path.startsWith('/workspace/casebook-logbook')) return 'resident-casebook-logbook';
     if (path.startsWith('/workspace/my-record')) return 'resident-my-record';
-    if (path.startsWith('/workspace/focus')) return 'resident-focus';
-    if (path.startsWith('/workspace/wellbeing')) return 'resident-wellbeing';
-    if (path.startsWith('/workspace/tasks')) return 'resident-tasks';
-    if (path.startsWith('/workspace/team')) return 'resident-team';
     if (path.startsWith('/workspace/form')) return 'resident';
     if (path === '/login') return 'auth-landing';
     if (path.startsWith('/doctor/register')) return 'doctor-register';
@@ -461,10 +453,6 @@ function MainAppContent() {
         onNavigateToResearch={() => navigate('/workspace/research')}
         onNavigateToCasebookLogbook={() => navigate('/workspace/casebook-logbook')}
         onNavigateToMyRecord={() => navigate('/workspace/my-record')}
-        onNavigateToFocus={() => navigate('/workspace/focus')}
-        onNavigateToWellbeing={() => navigate('/workspace/wellbeing')}
-        onNavigateToTasks={() => navigate('/workspace/tasks')}
-        onNavigateToTeam={() => navigate('/workspace/team')}
         onNavigateToHome={() => navigate('/workspace/home')}
         currentView={getCurrentViewName()}
       />
@@ -762,52 +750,19 @@ function MainAppContent() {
             }
           />
 
-          {/* Personal Productivity module (migration 51, 2026-08-16) — 4
-              modules selected from a UI/UX reference study ("Workspc"):
-              Focus Mode, Wellbeing, and Tasks are dual-identity-aware (same
-              owner pattern as UnifiedRecordView above, with a /doctor/*
-              mirror route below); Team Directory is institutional-only
-              (no doctor route — an unaffiliated doctor has no "team"). */}
-          <Route
-            path="/workspace/focus"
-            element={
-              currentResident ? (
-                <FocusModeView owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce', tenantId: currentResident.tenant_id ?? DEFAULT_TENANT_ID }} />
-              ) : (
-                <Navigate to="/workspace/login" replace />
-              )
-            }
-          />
-          <Route
-            path="/workspace/wellbeing"
-            element={
-              currentResident ? (
-                <WellbeingView owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce', tenantId: currentResident.tenant_id ?? DEFAULT_TENANT_ID }} />
-              ) : (
-                <Navigate to="/workspace/login" replace />
-              )
-            }
-          />
-          <Route
-            path="/workspace/tasks"
-            element={
-              currentResident ? (
-                <PersonalTasksView owner={{ id: currentResident.id, name: currentResident.name, kind: 'workforce', tenantId: currentResident.tenant_id ?? DEFAULT_TENANT_ID }} />
-              ) : (
-                <Navigate to="/workspace/login" replace />
-              )
-            }
-          />
-          <Route
-            path="/workspace/team"
-            element={
-              currentResident ? (
-                <TeamDirectoryView tenantId={currentResident.tenant_id ?? DEFAULT_TENANT_ID} currentMemberId={currentResident.id} />
-              ) : (
-                <Navigate to="/workspace/login" replace />
-              )
-            }
-          />
+          {/* Personal Productivity module (migration 51, 2026-08-16) — HIDDEN
+              + DORMANT for V1 per the locked product-surface-containment
+              decision. Its 4 routes (Focus Mode, Wellbeing, Tasks, Team
+              Directory) and their /doctor/* mirrors are deliberately not
+              registered here, so any URL under /workspace/focus|wellbeing|
+              tasks|team falls through to the catch-all redirect below —
+              the exact same "absent from routing entirely" convention
+              M16-M18 (scheduling/meetings/clinical-writing) already use.
+              The module's source, services, and data are untouched; only
+              this entry point's wiring was removed. Reversible by
+              restoring the 4 routes, the 4 imports at the top of this
+              file, and the corresponding Navbar/IntelligenceHarnessHome/
+              DoctorHomeView nav entries from source control history. */}
 
           {/* Unlinked individual-doctor personal workspaces (migration 25) —
               mirror the /workspace/* routes above but owner.kind: 'doctor'
@@ -854,43 +809,6 @@ function MainAppContent() {
               )
             }
           />
-          <Route
-            path="/doctor/focus"
-            element={
-              currentResident ? (
-                <Navigate to="/workspace/focus" replace />
-              ) : currentDoctor ? (
-                <FocusModeView owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor', tenantId: DEFAULT_TENANT_ID }} />
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            }
-          />
-          <Route
-            path="/doctor/wellbeing"
-            element={
-              currentResident ? (
-                <Navigate to="/workspace/wellbeing" replace />
-              ) : currentDoctor ? (
-                <WellbeingView owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor', tenantId: DEFAULT_TENANT_ID }} />
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            }
-          />
-          <Route
-            path="/doctor/tasks"
-            element={
-              currentResident ? (
-                <Navigate to="/workspace/tasks" replace />
-              ) : currentDoctor ? (
-                <PersonalTasksView owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor', tenantId: DEFAULT_TENANT_ID }} />
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            }
-          />
-
           {/* Admin entry chooser (migration 24 review follow-up) — sits in
               front of Chief login so "sign in" and "create a new
               organization" aren't both crammed into ChiefLoginView itself,

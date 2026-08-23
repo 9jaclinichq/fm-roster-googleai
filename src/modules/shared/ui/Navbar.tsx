@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { databaseService } from '../../../lib/databaseService';
 import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
 import { useTerminology } from '../terminology';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard, Home, Timer, Smile, ListTodo, UsersRound, CalendarCheck } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard, Home, CalendarCheck } from 'lucide-react';
 
 // Minimal event typing for the non-standard `beforeinstallprompt` event —
 // not part of the DOM lib TypeScript ships with.
@@ -41,10 +41,6 @@ interface NavbarProps {
   onNavigateToResearch: () => void;
   onNavigateToCasebookLogbook: () => void;
   onNavigateToMyRecord: () => void;
-  onNavigateToFocus: () => void;
-  onNavigateToWellbeing: () => void;
-  onNavigateToTasks: () => void;
-  onNavigateToTeam: () => void;
   onNavigateToHome: () => void;
   currentView:
     | 'resident-home'
@@ -60,10 +56,6 @@ interface NavbarProps {
     | 'resident-research'
     | 'resident-casebook-logbook'
     | 'resident-my-record'
-    | 'resident-focus'
-    | 'resident-wellbeing'
-    | 'resident-tasks'
-    | 'resident-team'
     | 'chief'
     | 'resident-login'
     | 'chief-login'
@@ -87,10 +79,6 @@ const RESIDENT_VIEWS = [
   'resident-research',
   'resident-casebook-logbook',
   'resident-my-record',
-  'resident-focus',
-  'resident-wellbeing',
-  'resident-tasks',
-  'resident-team',
 ];
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -115,10 +103,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigateToResearch,
   onNavigateToCasebookLogbook,
   onNavigateToMyRecord,
-  onNavigateToFocus,
-  onNavigateToWellbeing,
-  onNavigateToTasks,
-  onNavigateToTeam,
   onNavigateToHome,
   currentView
 }) => {
@@ -439,50 +423,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <IdCard size={13} />
               <span>My Record</span>
-            </button>
-            <button
-              onClick={onNavigateToFocus}
-              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
-                currentView === 'resident-focus'
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <Timer size={13} />
-              <span>Focus Mode</span>
-            </button>
-            <button
-              onClick={onNavigateToWellbeing}
-              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
-                currentView === 'resident-wellbeing'
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <Smile size={13} />
-              <span>Wellbeing</span>
-            </button>
-            <button
-              onClick={onNavigateToTasks}
-              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
-                currentView === 'resident-tasks'
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <ListTodo size={13} />
-              <span>Tasks</span>
-            </button>
-            <button
-              onClick={onNavigateToTeam}
-              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
-                currentView === 'resident-team'
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <UsersRound size={13} />
-              <span>Team</span>
             </button>
           </div>
         )}
