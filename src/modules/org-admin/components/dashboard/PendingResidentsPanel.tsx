@@ -1,12 +1,18 @@
 import React from 'react';
 import { WorkforceMember } from '../../../../types';
-import { UserCheck } from 'lucide-react';
+import { UserCheck, Mail } from 'lucide-react';
 
 interface PendingResidentsPanelProps {
   t: (key: string, fallback?: string) => string;
   pendingResidents: WorkforceMember[];
   residentCodes: Record<string, string>;
   handleResetCode: (memberId: string) => void;
+  // migration 69 — Chief-facing only, for manual follow-up. Value is null
+  // (rendered as "No email on file") when the member has none; a
+  // workforce_id absent from this map (contacts still loading, or the
+  // member somehow isn't in the tenant's active set) is treated the same
+  // as null, never as an error state.
+  memberContacts: Record<string, string | null>;
 }
 
 // Extracted from ChiefDashboardView.tsx (Phase 3, org-admin module split) — the
@@ -16,6 +22,7 @@ export const PendingResidentsPanel: React.FC<PendingResidentsPanelProps> = ({
   pendingResidents,
   residentCodes,
   handleResetCode,
+  memberContacts,
 }) => {
   return (
     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-6 space-y-4">
@@ -37,6 +44,14 @@ export const PendingResidentsPanel: React.FC<PendingResidentsPanelProps> = ({
               <div>
                 <div className="font-bold text-slate-950 text-sm sm:text-base">{member.full_name}</div>
                 <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{member.category}</div>
+                <div className="flex items-center space-x-1 mt-1.5 text-[11px]">
+                  <Mail size={11} className="text-slate-400 shrink-0" />
+                  {memberContacts[member.id] ? (
+                    <span className="text-slate-600 font-medium truncate">{memberContacts[member.id]}</span>
+                  ) : (
+                    <span className="text-slate-400 italic">No email on file</span>
+                  )}
+                </div>
               </div>
 
               <div className="bg-white border border-slate-200 rounded-lg p-2.5 flex items-center justify-between text-xs">

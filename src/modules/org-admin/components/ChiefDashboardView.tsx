@@ -1,6 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
 import { submissionReviewService } from '../../../lib/services/submissionReviewService';
+import { workforceContactService } from '../../../lib/services/workforceContactService';
 import { LoadingShell } from '../../shared/ui/LoadingShell';
 import { SubmissionsPanel } from './dashboard/SubmissionsPanel';
 import { PendingResidentsPanel } from './dashboard/PendingResidentsPanel';
@@ -63,6 +64,9 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   const [collections, setCollections] = useState<Collection[]>([]);
   const [workforce, setWorkforce] = useState<WorkforceMember[]>([]);
   const [residentCodes, setResidentCodes] = useState<Record<string, string>>({});
+  // migration 69 — Chief-facing only; never surfaced to any resident-facing
+  // view. Keyed by workforce_id; value is null when no email is on file.
+  const [memberContacts, setMemberContacts] = useState<Record<string, string | null>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'categories' | 'scheduling' | 'meetings' | 'clinical-writing' | 'agents' | 'activity' | 'settings'>('submissions');
@@ -237,6 +241,15 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
           setResidentCodes(codes);
         } catch (codeErr) {
           console.warn('Failed to load resident codes:', codeErr);
+        }
+        try {
+          // migration 69 — active-tenant-member email directory, joined
+          // client-side against the already-computed pendingResidents set
+          // (see workforceContactService.ts's own header for why).
+          const contacts = await workforceContactService.getActiveMemberContacts(adminCode);
+          setMemberContacts(Object.fromEntries(contacts.map(c => [c.workforce_id, c.email])));
+        } catch (contactErr) {
+          console.warn('Failed to load member contacts:', contactErr);
         }
       }
       })(), 20000);
@@ -1180,6 +1193,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
             pendingResidents={pendingResidents}
             residentCodes={residentCodes}
             handleResetCode={handleResetCode}
+            memberContacts={memberContacts}
           />
         )}
 
