@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "active": true,
-  "reason": "post-deployment protection after migrations 66/67 and My Assignment release",
-  "productionCodeBaseline": "dabffaaa531e66a26161c551e43e54b997f12e48",
-  "note": "Restored to ACTIVE 2026-08-22 immediately after confirming HEAD==origin/main==dabffaa (0/0 ahead-behind) following the explicitly-authorized deployment of migrations 66/67 and the My Assignment feature. Per explicit human instruction, this restoration is deliberate and not itself evidence that the underlying 'live submission cycle' business reason has changed — it re-establishes the default protective posture for continued local development. History: freeze was lifted 2026-08-22 (narrow authorization: migrations 66/67 deployment only), both migrations were applied and read-only/behaviorally verified live, code was pushed to origin/main (one GitHub secret-scanning push-protection false positive on synthetic Harness test fixtures was reviewed and allowed by the human before the push succeeded), and the positive-path My Assignment RPC smoke test remains an open manual check (no authorized credential was available or fabricated). Push guardrail remains installed throughout."
+  "active": false,
+  "reason": "explicit human authorization for migration 68 deployment window only",
+  "productionCodeBaseline": "e576e7fc25f71430e84f949cd22bc5a4ca58711b",
+  "note": "Lifted 2026-08-23 per explicit human authorization scoped ONLY to applying migration 68 (submissions.review_status). Migration 69 remains explicitly deferred to a separate, later authorization; code (local HEAD e576e7f, 4 commits ahead of origin/main @ 129ab5f) is NOT being pushed as part of this window. This is a database-only deployment window, not a general resumption of deployment activity — Git push still requires its own separate authorization, same discipline as the 66/67 window. Prior history (freeze lifted/restored around the 66/67/My Assignment deployment) preserved in migration-evidence.json and the relevant Harness reports, not repeated here."
 }
