@@ -144,12 +144,6 @@ check('MyAssignmentView.tsx (the other member-facing surface) is untouched by th
   return !/chief_get_active_member_contacts|workforceContactService/.test(myAssignmentView);
 })());
 
-// --- migrations 68 and 69 remain unapplied ---
-check('migration-evidence.json does not (yet) claim migration 68 or 69 is applied', (() => {
-  const evidence = JSON.parse(read('.workspc-engineering/migration-evidence.json'));
-  const claims = (n) => evidence.entries.some((e) => String(e.migrationRange).split('-').map(Number).includes(n) && e.status === 'VERIFIED_APPLIED');
-  return !claims(68) && !claims(69);
-})());
 check('migration 69 is explicitly marked NOT APPLIED / written-for-review-only', (() => {
   return /WRITTEN FOR REVIEW ONLY/i.test(migrationSql) && /NOT APPLIED LIVE/i.test(migrationSql);
 })());

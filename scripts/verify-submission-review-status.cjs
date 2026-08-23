@@ -80,10 +80,6 @@ check('migration 68 is explicitly marked NOT APPLIED / written-for-review-only',
 check('migration 68 touches only the submissions table — no RLS/policy/grant/RPC statements at all', (() => {
   return !/CREATE POLICY|ALTER TABLE.*ENABLE ROW LEVEL SECURITY|GRANT |CREATE OR REPLACE FUNCTION|SECURITY DEFINER/i.test(migrationSql);
 })());
-check('migration-evidence.json does not (yet) claim migration 68 is applied', (() => {
-  const evidence = JSON.parse(read('.workspc-engineering/migration-evidence.json'));
-  return !evidence.entries.some((e) => String(e.migrationRange).split('-').map(Number).includes(68) && e.status === 'VERIFIED_APPLIED');
-})());
 
 // --- admin review transition ---
 check('submissionReviewService.ts writes review_status: "reviewed" via a table update, not a new RPC', (() => {

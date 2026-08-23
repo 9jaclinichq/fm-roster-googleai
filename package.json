@@ -18,6 +18,7 @@
     "verify:submission-status": "tsx scripts/verify-submission-status.ts",
     "verify:my-assignment": "node scripts/verify-my-assignment.cjs",
     "verify:submission-review-status": "node scripts/verify-submission-review-status.cjs",
+    "verify:pending-member-contacts": "node scripts/verify-pending-member-contacts.cjs",
     "harness": "node scripts/harness.cjs"
   },
   "dependencies": {
