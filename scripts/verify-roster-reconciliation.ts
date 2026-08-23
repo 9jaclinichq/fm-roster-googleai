@@ -9,8 +9,8 @@
 //
 // Run: npx tsx scripts/verify-roster-reconciliation.ts
 
-import { computeReconciliationIssues } from '../src/modules/roster-engine/lib/rosterReconciliation';
-import type { SubmissionWithWorkforce, WorkforceMember, Rotation, CombinedMasterRoster } from '../src/types';
+import { computeReconciliationIssues, groupReconciliationIssuesForDisplay } from '../src/modules/roster-engine/lib/rosterReconciliation';
+import type { SubmissionWithWorkforce, WorkforceMember, Rotation, CombinedMasterRoster, ReconciliationIssue } from '../src/types';
 
 let failures = 0;
 function check(label: string, cond: boolean) {
@@ -295,6 +295,72 @@ const emptyRoster: CombinedMasterRoster = {
   computeReconciliationIssues([], [sr], rotations, roster);
   check('masterRoster is not mutated by computeReconciliationIssues', JSON.stringify(roster) === rosterSnapshot);
   check('workforce is not mutated by computeReconciliationIssues', JSON.stringify([sr]) === workforceSnapshot);
+}
+
+// --------------------------------------------------------------------
+// Slice 1B (2026-08-24): groupReconciliationIssuesForDisplay — the pure
+// helper MultiRosterManagerView.tsx uses to split member-specific issues
+// from roster-level (workforceId = null) ones. Tested here directly since
+// the .tsx component itself can't be imported by this dependency-free
+// script (it transitively pulls in databaseService.ts's import.meta.env,
+// same reasoning as satelliteFacilities.ts above).
+// --------------------------------------------------------------------
+
+function makeIssue(overrides: Partial<ReconciliationIssue>): ReconciliationIssue {
+  return {
+    type: 'rotation_conflict',
+    workforceId: 'w1',
+    memberName: 'Test Member',
+    message: 'test message',
+    evidence: {},
+    ...overrides,
+  };
+}
+
+{
+  // A missing_expected_coverage issue (workforceId null) must land in
+  // rosterLevel, never silently collapse into an unlabeled byMember entry.
+  const issue = makeIssue({ type: 'missing_expected_coverage', workforceId: null, memberName: null, message: 'Missing expected coverage: no Senior Registrar at Ikolaba.' });
+  const grouped = groupReconciliationIssuesForDisplay([issue]);
+  check('a null-workforceId issue is placed in rosterLevel, not byMember', grouped.rosterLevel.length === 1 && grouped.byMember.size === 0);
+  check('rosterLevel issue does not disappear — its message is preserved verbatim', grouped.rosterLevel[0]?.message === issue.message);
+}
+
+{
+  // An ineligible_assignment issue (workforceId present) must still land
+  // under its named member, exactly like every pre-existing issue type.
+  const issue = makeIssue({ type: 'ineligible_assignment', workforceId: 'mo1', memberName: 'Dr. Airport MO', message: 'Conflicting/ineligible assignment: Dr. Airport MO is a Medical Officer, not a Senior Registrar.' });
+  const grouped = groupReconciliationIssuesForDisplay([issue]);
+  check('an ineligible_assignment issue groups under its real member, not rosterLevel', grouped.rosterLevel.length === 0 && grouped.byMember.has('mo1'));
+  check('the grouped entry keeps the correct memberName and message', grouped.byMember.get('mo1')?.memberName === 'Dr. Airport MO' && grouped.byMember.get('mo1')?.issues[0]?.message === issue.message);
+}
+
+{
+  // Mixed list: pre-existing member-specific types (rotation_conflict,
+  // unrecognised_rotation, leave_roster_overlap, invalid_declared_leave_range)
+  // remain unchanged in shape/behavior — they group by member exactly as
+  // before this slice, alongside a roster-level issue in the same batch.
+  const rotationIssue = makeIssue({ type: 'rotation_conflict', workforceId: 'w1', memberName: 'Dr. One' });
+  const secondIssueSameMember = makeIssue({ type: 'unrecognised_rotation', workforceId: 'w1', memberName: 'Dr. One', message: 'second issue' });
+  const otherMemberIssue = makeIssue({ type: 'leave_roster_overlap', workforceId: 'w2', memberName: 'Dr. Two' });
+  const coverageIssue = makeIssue({ type: 'missing_expected_coverage', workforceId: null, memberName: null, message: 'roster-level finding' });
+  const grouped = groupReconciliationIssuesForDisplay([rotationIssue, secondIssueSameMember, otherMemberIssue, coverageIssue]);
+  check('existing member-specific issue types still group correctly (2 members, one with 2 issues)', grouped.byMember.size === 2 && grouped.byMember.get('w1')?.issues.length === 2 && grouped.byMember.get('w2')?.issues.length === 1);
+  check('the roster-level issue in the same batch is isolated correctly', grouped.rosterLevel.length === 1 && grouped.rosterLevel[0].message === 'roster-level finding');
+}
+
+{
+  // No issues at all -> both buckets empty, no crash.
+  const grouped = groupReconciliationIssuesForDisplay([]);
+  check('empty issue list produces empty byMember and rosterLevel', grouped.byMember.size === 0 && grouped.rosterLevel.length === 0);
+}
+
+{
+  // Pure-function guarantee: the input array is never mutated.
+  const issues = [makeIssue({ workforceId: null, memberName: null, type: 'missing_expected_coverage' })];
+  const snapshot = JSON.stringify(issues);
+  groupReconciliationIssuesForDisplay(issues);
+  check('groupReconciliationIssuesForDisplay does not mutate its input', JSON.stringify(issues) === snapshot);
 }
 
 console.log('');

@@ -429,3 +429,46 @@ export function computeReconciliationIssues(
 
   return issues;
 }
+
+// Slice 1B (2026-08-24): pure display-grouping helper for
+// MultiRosterManagerView.tsx. Does NOT change what issues are computed or
+// their semantics — computeReconciliationIssues above is untouched. This
+// exists only so the UI's member-vs-roster-level split can be verified by
+// the same dependency-free harness (scripts/verify-roster-reconciliation.ts)
+// that already exercises this file, instead of duplicating the split logic
+// inline inside MultiRosterManagerView.tsx where it would be untestable
+// without importing React/databaseService (the same import.meta.env risk
+// documented above for satelliteFacilities.ts).
+//
+// missing_expected_coverage issues carry workforceId = null by design (no
+// one appropriate is assigned, so there is no member to file the issue
+// under) — every other issue type, including ineligible_assignment, always
+// carries a real member. Splitting on workforceId === null, rather than on
+// issue.type, is deliberate: it is the general rule ("no member => roster
+// level"), not a hardcoded list of which types are which, so a future issue
+// type automatically groups correctly without this function needing to
+// know its name.
+export interface GroupedReconciliationIssues {
+  byMember: Map<string, { memberName: string; issues: ReconciliationIssue[] }>;
+  rosterLevel: ReconciliationIssue[];
+}
+
+export function groupReconciliationIssuesForDisplay(issues: ReconciliationIssue[]): GroupedReconciliationIssues {
+  const byMember = new Map<string, { memberName: string; issues: ReconciliationIssue[] }>();
+  const rosterLevel: ReconciliationIssue[] = [];
+
+  for (const issue of issues) {
+    if (issue.workforceId === null) {
+      rosterLevel.push(issue);
+      continue;
+    }
+    const entry = byMember.get(issue.workforceId);
+    if (entry) {
+      entry.issues.push(issue);
+    } else {
+      byMember.set(issue.workforceId, { memberName: issue.memberName ?? issue.workforceId, issues: [issue] });
+    }
+  }
+
+  return { byMember, rosterLevel };
+}

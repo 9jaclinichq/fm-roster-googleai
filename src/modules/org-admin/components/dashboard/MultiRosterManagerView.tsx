@@ -7,7 +7,7 @@ import {
   parseSupervisionRoster,
   parseSatelliteRoster,
 } from '../../../roster-engine/lib/uchRosterParser';
-import { computeReconciliationIssues } from '../../../roster-engine/lib/rosterReconciliation';
+import { computeReconciliationIssues, groupReconciliationIssuesForDisplay } from '../../../roster-engine/lib/rosterReconciliation';
 import {
   WorkforceMember,
   Collection,
@@ -367,15 +367,15 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
   // needed at this data scale. Never writes anywhere. See
   // docs/WORKFORCE_V1_RECOVERY_SPEC.md.
   const reconciliationIssues = computeReconciliationIssues(submissions, workforce, rotations, masterRoster);
-  const reconciliationIssuesByMember = new Map<string, { memberName: string; issues: typeof reconciliationIssues }>();
-  for (const issue of reconciliationIssues) {
-    const entry = reconciliationIssuesByMember.get(issue.workforceId);
-    if (entry) {
-      entry.issues.push(issue);
-    } else {
-      reconciliationIssuesByMember.set(issue.workforceId, { memberName: issue.memberName, issues: [issue] });
-    }
-  }
+  // missing_expected_coverage issues carry workforceId = null by design —
+  // the problem is that nobody appropriate is assigned, so there is no
+  // member to group them under. groupReconciliationIssuesForDisplay splits
+  // those out so they never silently collapse into one unlabeled `null`
+  // group; they render in their own titled "Missing Expected Coverage"
+  // section below instead. Every other issue type (including
+  // ineligible_assignment) always carries a real member and keeps using
+  // the existing per-member grouping untouched.
+  const { byMember: reconciliationIssuesByMember, rosterLevel: rosterLevelIssues } = groupReconciliationIssuesForDisplay(reconciliationIssues);
 
   return (
     <div className="space-y-6">
@@ -411,7 +411,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
           the roster for this same cycle. Collapsed by default per member,
           matching ActivityLogPanel.tsx's existing convention. Nothing
           here writes to workforce/submissions/combined_master_rosters. */}
-      {reconciliationIssuesByMember.size > 0 && (
+      {(reconciliationIssuesByMember.size > 0 || rosterLevelIssues.length > 0) && (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-5 space-y-3">
           <div className="flex items-center gap-2">
             <ClipboardCheck className="text-amber-600" size={16} />
@@ -420,40 +420,67 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
             </h4>
           </div>
           <p className="text-[10px] text-slate-400">
-            Cross-checks {t('member', 'resident').toLowerCase()}-submitted rotation/leave for this cycle against current workforce status and the draft roster below.
+            Cross-checks {t('member', 'resident').toLowerCase()}-submitted rotation/leave, and Family Medicine roster-rule coverage, against current workforce status and the draft roster below.
             These are conflicts to review, not automatic errors — nothing is changed automatically.
           </p>
-          <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
-            {Array.from(reconciliationIssuesByMember.entries()).map(([workforceId, { memberName, issues }]) => {
-              const isExpanded = expandedIssueMemberId === workforceId;
-              return (
-                <div key={workforceId}>
-                  <button
-                    type="button"
-                    onClick={() => setExpandedIssueMemberId(prev => (prev === workforceId ? null : workforceId))}
-                    className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-slate-50 cursor-pointer transition"
-                  >
-                    <span className="text-xs font-bold text-slate-700">{memberName}</span>
-                    <span className="flex items-center gap-2">
-                      <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
-                        {issues.length} issue{issues.length === 1 ? '' : 's'}
+
+          {reconciliationIssuesByMember.size > 0 && (
+            <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
+              {Array.from(reconciliationIssuesByMember.entries()).map(([workforceId, { memberName, issues }]) => {
+                const isExpanded = expandedIssueMemberId === workforceId;
+                return (
+                  <div key={workforceId}>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedIssueMemberId(prev => (prev === workforceId ? null : workforceId))}
+                      className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-slate-50 cursor-pointer transition"
+                    >
+                      <span className="text-xs font-bold text-slate-700">{memberName}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                          {issues.length} issue{issues.length === 1 ? '' : 's'}
+                        </span>
+                        {isExpanded ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
                       </span>
-                      {isExpanded ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
-                    </span>
-                  </button>
-                  {isExpanded && (
-                    <div className="px-3 pb-3 space-y-2">
-                      {issues.map((issue, i) => (
-                        <div key={i} className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-[10px] text-amber-900">
-                          {issue.message}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                    </button>
+                    {isExpanded && (
+                      <div className="px-3 pb-3 space-y-2">
+                        {issues.map((issue, i) => (
+                          <div key={i} className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-[10px] text-amber-900">
+                            {issue.message}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* missing_expected_coverage — workforceId is null by design (no
+              one appropriate is assigned, so there is no member to file
+              this under). Always rendered as its own clearly titled
+              roster-level section, never folded into the per-member list
+              above and never attached to a placeholder person. */}
+          {rosterLevelIssues.length > 0 && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="text-amber-600" size={14} />
+                <h5 className="font-bold text-slate-700 text-[11px] uppercase tracking-wide">Missing Expected Coverage</h5>
+                <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                  {rosterLevelIssues.length} issue{rosterLevelIssues.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {rosterLevelIssues.map((issue, i) => (
+                  <div key={i} className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-[10px] text-amber-900">
+                    {issue.message}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
