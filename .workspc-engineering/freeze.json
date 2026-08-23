@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "active": false,
-  "reason": "explicit human authorization for migration 68 deployment window only",
-  "productionCodeBaseline": "e576e7fc25f71430e84f949cd22bc5a4ca58711b",
-  "note": "Lifted 2026-08-23 per explicit human authorization scoped ONLY to applying migration 68 (submissions.review_status). Migration 69 remains explicitly deferred to a separate, later authorization; code (local HEAD e576e7f, 4 commits ahead of origin/main @ 129ab5f) is NOT being pushed as part of this window. This is a database-only deployment window, not a general resumption of deployment activity — Git push still requires its own separate authorization, same discipline as the 66/67 window. Prior history (freeze lifted/restored around the 66/67/My Assignment deployment) preserved in migration-evidence.json and the relevant Harness reports, not repeated here."
+  "active": true,
+  "reason": "post-deployment protection after review-status and pending-contact release",
+  "productionCodeBaseline": "995172f812e1ee06599c4e19943936b425e17f28",
+  "note": "Restored 2026-08-23 immediately after confirming HEAD==origin/main==995172f (0/0 ahead-behind) following the explicitly-authorized deployment of migrations 68/69 (submissions.review_status, chief_get_active_member_contacts) and their client code. Both migrations were applied and structurally/behaviorally/adversarially verified live before this code push. Live UI/positive-path smoke checks (Chief marking a real submission reviewed, Chief seeing real pending-member email state, My Assignment's own still-outstanding positive-path check) all remain open/pending — no Chief or member credential was available in this session, none was recovered/manufactured, per explicit instruction. Per established discipline, this restoration is deliberate and not evidence the underlying 'live submission cycle' business reason has changed. Push guardrail remains installed throughout."
 }
