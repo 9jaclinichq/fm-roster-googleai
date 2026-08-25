@@ -12,7 +12,12 @@
 import { computeReconciliationIssues, groupReconciliationIssuesForDisplay } from '../src/modules/roster-engine/lib/rosterReconciliation';
 import { extractDayHeader } from '../src/modules/roster-engine/lib/dayHeaderParsing';
 import { resolveParsedNameToWorkforceId } from '../src/modules/roster-engine/lib/identityResolver';
-import type { SubmissionWithWorkforce, WorkforceMember, Rotation, CombinedMasterRoster, ReconciliationIssue } from '../src/types';
+import {
+  applyIdentityResolutionToGopGrid,
+  applyIdentityResolutionToEmergencyGrid,
+  applyIdentityResolutionToSatelliteGrid,
+} from '../src/modules/roster-engine/lib/rosterIdentityIngest';
+import type { SubmissionWithWorkforce, WorkforceMember, Rotation, CombinedMasterRoster, ReconciliationIssue, GopClinicGrid, EmergencyCallGrid, SatelliteGrid } from '../src/types';
 
 let failures = 0;
 function check(label: string, cond: boolean) {
@@ -441,6 +446,86 @@ const sampleWorkforce: WorkforceMember[] = [
   const snapshot = JSON.stringify(sampleWorkforce);
   resolveParsedNameToWorkforceId('Onigbinde', sampleWorkforce);
   check('resolveParsedNameToWorkforceId does not mutate its workforce input', JSON.stringify(sampleWorkforce) === snapshot);
+}
+
+// --- Ingest-seam identity resolution (September Ingestion Slice 2) ---
+// Fixtures shaped like the real September combined roster: a mixed cell
+// listing tracked residents alongside a consultant/untracked name, plus a
+// duplicate-full_name case, in the same slot/shift/posting — exactly what
+// the actual source documents do (one comma-separated name list per cell,
+// with no structural distinction between resident and consultant text).
+
+{
+  const grid: GopClinicGrid = {
+    slots: [
+      // combined_gop slot: mixed resident + untracked + ambiguous names.
+      { date_or_day: 'Tue 01/09', clinic_type: 'Triage', consultants: ['Dr Onigbinde', 'Alawode', 'Dr Salam', 'Sample Duplicate'], residents: [] },
+      // consultant_gop slot: no residents seam at all.
+      { date_or_day: 'Tue 01/09', clinic_type: 'Male Sorting', consultants: ['Dr Onigbinde'] },
+    ],
+    unparsed_notes: ['pre-existing note'],
+  };
+  const before = JSON.stringify(grid);
+  const resolved = applyIdentityResolutionToGopGrid(grid, sampleWorkforce);
+
+  check('GOP: unique resident name resolves and is added to residents[]', resolved.slots[0].residents!.includes('w-onigbinde') && resolved.slots[0].residents!.includes('w-alawode'));
+  check('GOP: consultants[] (original display text) is preserved byte-for-byte, including unresolved/ambiguous names', JSON.stringify(resolved.slots[0].consultants) === JSON.stringify(grid.slots[0].consultants));
+  check('GOP: unresolved consultant name ("Dr Salam") does not appear in residents[]', !resolved.slots[0].residents!.some(r => r.toLowerCase().includes('salam')));
+  check('GOP: ambiguous name is never added to residents[] and does not masquerade as resolved', !resolved.slots[0].residents!.includes('w-dup-1') && !resolved.slots[0].residents!.includes('w-dup-2'));
+  check('GOP: ambiguous name is routed to unparsed_notes for manual reconciliation, pre-existing notes preserved', resolved.unparsed_notes.includes('pre-existing note') && resolved.unparsed_notes.some(n => n.includes('Sample Duplicate') && n.includes('Ambiguous')));
+  check('GOP: consultant_gop-shaped slot with no residents field at all is left completely untouched', resolved.slots[1].residents === undefined && JSON.stringify(resolved.slots[1]) === JSON.stringify(grid.slots[1]));
+  check('GOP: applyIdentityResolutionToGopGrid does not mutate its input grid', JSON.stringify(grid) === before);
+}
+
+{
+  // Re-running resolution over an already-resolved slot (residents[]
+  // already contains a manually drag-assigned id) must not duplicate it.
+  const grid: GopClinicGrid = {
+    slots: [{ date_or_day: 'Wed 02/09', clinic_type: 'Female Sorting', consultants: ['Dr Onigbinde'], residents: ['w-onigbinde'] }],
+    unparsed_notes: [],
+  };
+  const resolved = applyIdentityResolutionToGopGrid(grid, sampleWorkforce);
+  check('GOP: resolving a name already present (manually assigned) in residents[] does not duplicate the id', resolved.slots[0].residents!.filter(r => r === 'w-onigbinde').length === 1);
+}
+
+{
+  const grid: EmergencyCallGrid = {
+    shifts: [{ date_or_day: 'Tue 01/09', shift: '4pm-10pm', on_call: ['Dr Onigbinde', 'Dr Salam', 'Sample Duplicate'] }],
+    unparsed_notes: [],
+  };
+  const before = JSON.stringify(grid);
+  const resolved = applyIdentityResolutionToEmergencyGrid(grid, sampleWorkforce);
+
+  check('A&E: unique resident name is replaced in place with its workforce_id', resolved.shifts[0].on_call[0] === 'w-onigbinde');
+  check('A&E: unresolved consultant/free-text name survives unchanged', resolved.shifts[0].on_call[1] === 'Dr Salam');
+  check('A&E: ambiguous name is left as original text, not replaced with either candidate id', resolved.shifts[0].on_call[2] === 'Sample Duplicate');
+  check('A&E: ambiguous name is routed to unparsed_notes', resolved.unparsed_notes.some(n => n.includes('Sample Duplicate') && n.includes('Ambiguous')));
+  check('A&E: applyIdentityResolutionToEmergencyGrid does not mutate its input grid', JSON.stringify(grid) === before);
+}
+
+{
+  const grid: SatelliteGrid = {
+    postings: [{ facility: 'Ikolaba', date_or_day: 'Fri 04/09', assigned: ['Dr Onigbinde', 'Dr Salam'] }],
+    unparsed_notes: [],
+  };
+  const before = JSON.stringify(grid);
+  const resolved = applyIdentityResolutionToSatelliteGrid(grid, sampleWorkforce);
+
+  check('Satellite: unique resident name is replaced in place with its workforce_id', resolved.postings[0].assigned[0] === 'w-onigbinde');
+  check('Satellite: unresolved consultant/free-text name survives unchanged', resolved.postings[0].assigned[1] === 'Dr Salam');
+  check('Satellite: applyIdentityResolutionToSatelliteGrid does not mutate its input grid', JSON.stringify(grid) === before);
+}
+
+{
+  // No mutation of assignment/date/duty content — only residents[]/on_call/
+  // assigned membership changes; date_or_day, clinic_type, facility, and
+  // shift labels are never touched by identity resolution.
+  const grid: GopClinicGrid = {
+    slots: [{ date_or_day: 'Tue 01/09', clinic_type: 'Triage', consultants: ['Dr Onigbinde'], residents: [] }],
+    unparsed_notes: [],
+  };
+  const resolved = applyIdentityResolutionToGopGrid(grid, sampleWorkforce);
+  check('GOP: identity resolution never changes date_or_day or clinic_type', resolved.slots[0].date_or_day === 'Tue 01/09' && resolved.slots[0].clinic_type === 'Triage');
 }
 
 console.log('');

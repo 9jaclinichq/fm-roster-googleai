@@ -9,6 +9,11 @@ import {
 } from '../../../roster-engine/lib/uchRosterParser';
 import { computeReconciliationIssues, groupReconciliationIssuesForDisplay } from '../../../roster-engine/lib/rosterReconciliation';
 import {
+  applyIdentityResolutionToGopGrid,
+  applyIdentityResolutionToEmergencyGrid,
+  applyIdentityResolutionToSatelliteGrid,
+} from '../../../roster-engine/lib/rosterIdentityIngest';
+import {
   WorkforceMember,
   Collection,
   CombinedMasterRoster,
@@ -190,11 +195,20 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
 
       setParseSourceByType(prev => ({ ...prev, [rosterType]: parsedResult.source === 'edge_function' ? `AI-generated (${parsedResult.provider})` : 'Heuristic (no AI configured)' }));
 
+      // Identity resolution (September Ingestion Slice 2) runs only on the
+      // Chief-facing editable grid state below — never on the
+      // createRawRosterUpload call above, which must keep recording the
+      // parser's raw, unresolved output verbatim. combined_gop/
+      // accident_emergency/satellite_outreach are the three grid types
+      // with a workforce_id-bearing field; consultant_gop and
+      // afternoon_supervision are deliberately left untouched (see
+      // rosterIdentityIngest.ts's header for why Supervision can't safely
+      // take a resolved id).
       if (rosterType === 'consultant_gop') { setGopGrid(parsedResult.data as GopClinicGrid); setGridTab('gop'); }
-      if (rosterType === 'combined_gop') { setGopGrid(parsedResult.data as GopClinicGrid); setGridTab('gop'); }
-      if (rosterType === 'accident_emergency') { setEmergencyGrid(parsedResult.data as EmergencyCallGrid); setGridTab('emergency'); }
+      if (rosterType === 'combined_gop') { setGopGrid(applyIdentityResolutionToGopGrid(parsedResult.data as GopClinicGrid, workforce)); setGridTab('gop'); }
+      if (rosterType === 'accident_emergency') { setEmergencyGrid(applyIdentityResolutionToEmergencyGrid(parsedResult.data as EmergencyCallGrid, workforce)); setGridTab('emergency'); }
       if (rosterType === 'afternoon_supervision') { setSupervisionGrid(parsedResult.data as SupervisionGrid); setGridTab('supervision'); }
-      if (rosterType === 'satellite_outreach') { setSatelliteGrid(parsedResult.data as SatelliteGrid); setGridTab('satellite'); }
+      if (rosterType === 'satellite_outreach') { setSatelliteGrid(applyIdentityResolutionToSatelliteGrid(parsedResult.data as SatelliteGrid, workforce)); setGridTab('satellite'); }
 
       setStatusMessage(`${INGESTION_TYPES.find(t => t.id === rosterType)?.label} parsed — review in the grid below.`);
       setTimeout(() => setStatusMessage(''), 4000);

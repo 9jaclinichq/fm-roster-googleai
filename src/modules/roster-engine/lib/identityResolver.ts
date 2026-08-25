@@ -57,3 +57,40 @@ export function resolveParsedNameToWorkforceId(
   if (matches.length === 1) return { status: 'resolved', workforceId: matches[0].id };
   return { status: 'ambiguous', candidateWorkforceIds: matches.map(m => m.id) };
 }
+
+export interface BatchIdentityResolution {
+  // Deduplicated workforce ids for names that resolved uniquely.
+  resolvedWorkforceIds: string[];
+  // Original name text for names matching more than one workforce member —
+  // never auto-associated with any of them.
+  ambiguousNames: string[];
+  // Original name text for names matching no workforce member — expected
+  // for consultants/external/free-text roster participants.
+  unresolvedNames: string[];
+}
+
+// Batch form of resolveParsedNameToWorkforceId (September Ingestion Slice
+// 2, 2026-08-25), used by rosterIdentityIngest.ts to resolve every name in
+// a parsed roster slot/shift/posting in one pass. Pure — never mutates
+// `parsedNames` or `workforce`.
+export function resolveParsedNamesToWorkforceIds(
+  parsedNames: string[],
+  workforce: WorkforceMember[]
+): BatchIdentityResolution {
+  const resolvedWorkforceIds: string[] = [];
+  const ambiguousNames: string[] = [];
+  const unresolvedNames: string[] = [];
+
+  for (const name of parsedNames) {
+    const result = resolveParsedNameToWorkforceId(name, workforce);
+    if (result.status === 'resolved') {
+      if (!resolvedWorkforceIds.includes(result.workforceId)) resolvedWorkforceIds.push(result.workforceId);
+    } else if (result.status === 'ambiguous') {
+      ambiguousNames.push(name);
+    } else {
+      unresolvedNames.push(name);
+    }
+  }
+
+  return { resolvedWorkforceIds, ambiguousNames, unresolvedNames };
+}
