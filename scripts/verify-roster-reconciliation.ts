@@ -10,6 +10,8 @@
 // Run: npx tsx scripts/verify-roster-reconciliation.ts
 
 import { computeReconciliationIssues, groupReconciliationIssuesForDisplay } from '../src/modules/roster-engine/lib/rosterReconciliation';
+import { extractDayHeader } from '../src/modules/roster-engine/lib/dayHeaderParsing';
+import { resolveParsedNameToWorkforceId } from '../src/modules/roster-engine/lib/identityResolver';
 import type { SubmissionWithWorkforce, WorkforceMember, Rotation, CombinedMasterRoster, ReconciliationIssue } from '../src/types';
 
 let failures = 0;
@@ -361,6 +363,84 @@ function makeIssue(overrides: Partial<ReconciliationIssue>): ReconciliationIssue
   const snapshot = JSON.stringify(issues);
   groupReconciliationIssuesForDisplay(issues);
   check('groupReconciliationIssuesForDisplay does not mutate its input', JSON.stringify(issues) === snapshot);
+}
+
+// --------------------------------------------------------------------
+// September Ingestion Slice 1 (2026-08-25): day-header parsing for the
+// real September/August roster document formats, and the new exact-match
+// identity resolver. Neither is wired into any ingestion/admin/publish
+// path yet — these are standalone-function tests only. Fixtures below are
+// sanitized/shaped like the real documents, not the actual individuals.
+// --------------------------------------------------------------------
+
+// --- Day-header parsing ---
+
+check('new format: abbreviated day + numeric date ("Tue 01/09")', extractDayHeader('Tue 01/09') === 'Tue 01/09');
+check('new format: 4-letter abbreviation seen in real source ("THUR 06/08/26")', extractDayHeader('THUR 06/08/26') === 'THUR 06/08/26');
+check('new format: ordinal + parenthesized abbreviated day ("1st (Tue)")', extractDayHeader('1st (Tue)') === '1st (Tue)');
+check('already-supported: full day name + comma + date ("Tuesday, 01/09")', extractDayHeader('Tuesday, 01/09') === 'Tuesday, 01/09');
+check('already-supported: bare day name ("Monday")', extractDayHeader('Monday') === 'Monday');
+check('already-supported: bare numeric date ("12/08")', extractDayHeader('12/08') === '12/08');
+check('already-supported: ordinal + month name ("12th August")', extractDayHeader('12th August') === '12th August');
+
+check('rejects impossible month ("Sat 15/20" — month 20 does not exist)', extractDayHeader('Sat 15/20 patients discharged') === null);
+check('rejects impossible day-of-month for the given month ("Wed 30/02" — Feb never has 30 days)', extractDayHeader('Wed 30/02') === null);
+check('rejects ordinary prose that happens to start with a day-abbreviation-like token ("Satisfactory outcome noted")', extractDayHeader('Satisfactory outcome noted') === null);
+check('rejects ordinary prose with a number but no date shape ("Sat 15 patients seen")', extractDayHeader('Sat 15 patients seen') === null);
+check('rejects a 2-letter prefix that would otherwise collide with "Wednesday"/"Sunday" ("We need extra cover")', extractDayHeader('We need extra cover') === null);
+check('accepts a real leap-permissive boundary ("Thu 29/02" — Feb 29 is plausible without year context)', extractDayHeader('Thu 29/02') === 'Thu 29/02');
+
+// --- Identity resolution ---
+
+const sampleWorkforce: WorkforceMember[] = [
+  { id: 'w-onigbinde', full_name: 'Dr. Onigbinde', category: 'Senior Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+  { id: 'w-alawode', full_name: 'Alawode', category: 'Senior Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+  { id: 'w-dup-1', full_name: 'Sample Duplicate', category: 'Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+  { id: 'w-dup-2', full_name: 'Sample Duplicate', category: 'Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+];
+
+{
+  const r = resolveParsedNameToWorkforceId('Onigbinde', sampleWorkforce);
+  check('exact unique match after Dr-prefix normalization ("Onigbinde" vs stored "Dr. Onigbinde")', r.status === 'resolved' && r.workforceId === 'w-onigbinde');
+}
+{
+  const r = resolveParsedNameToWorkforceId('dr onigbinde', sampleWorkforce);
+  check('case-insensitive + DR (no period) prefix variation resolves the same', r.status === 'resolved' && r.workforceId === 'w-onigbinde');
+}
+{
+  const r = resolveParsedNameToWorkforceId('  Alawode  ', sampleWorkforce);
+  check('extra surrounding/collapsed whitespace resolves correctly', r.status === 'resolved' && r.workforceId === 'w-alawode');
+}
+{
+  const r = resolveParsedNameToWorkforceId('Dr.    Alawode', sampleWorkforce);
+  check('collapsed repeated internal whitespace resolves correctly', r.status === 'resolved' && r.workforceId === 'w-alawode');
+}
+{
+  const r = resolveParsedNameToWorkforceId('Dr. Salam', sampleWorkforce);
+  check('consultant/free-text name absent from workforce is preserved unresolved, not guessed', r.status === 'unresolved');
+}
+{
+  const r = resolveParsedNameToWorkforceId('Sample Duplicate', sampleWorkforce);
+  check('duplicate full_name across two workforce rows resolves ambiguous, not guessed', r.status === 'ambiguous' && r.candidateWorkforceIds?.length === 2);
+}
+{
+  // A bare surname where the stored full_name is longer must not be
+  // guessed as a match, even though it reads as "the same person" to a
+  // human — this resolver only ever does exact full-string comparison.
+  const workforceWithFullName: WorkforceMember[] = [
+    { id: 'w-uma', full_name: 'Uma Ukwu', category: 'Senior Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+  ];
+  const r = resolveParsedNameToWorkforceId('Uma', workforceWithFullName);
+  check('surname-only source against a longer stored full_name resolves unresolved, never guessed', r.status === 'unresolved');
+}
+{
+  const r = resolveParsedNameToWorkforceId('', sampleWorkforce);
+  check('empty/whitespace-only input resolves unresolved without throwing', r.status === 'unresolved');
+}
+{
+  const snapshot = JSON.stringify(sampleWorkforce);
+  resolveParsedNameToWorkforceId('Onigbinde', sampleWorkforce);
+  check('resolveParsedNameToWorkforceId does not mutate its workforce input', JSON.stringify(sampleWorkforce) === snapshot);
 }
 
 console.log('');

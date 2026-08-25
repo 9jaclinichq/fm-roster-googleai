@@ -14,6 +14,7 @@ import {
   WorkforceMember,
 } from '../../../types';
 import { KNOWN_SATELLITE_FACILITIES } from './satelliteFacilities';
+import { extractDayHeader } from './dayHeaderParsing';
 
 // Structures raw UCH Family Medicine roster documents (pasted text, or
 // text extracted from an uploaded file) into the grid shapes used by
@@ -28,29 +29,12 @@ import { KNOWN_SATELLITE_FACILITIES } from './satelliteFacilities';
 // Chief to resolve by hand in the merge grid — this parser structures
 // what the document says, it does not decide who works where.
 
-const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-
 function splitNames(text: string): string[] {
   return text
     .split(/,|&|\band\b|;/i)
     .map(s => s.trim())
     .filter(Boolean)
     .filter((s, i, arr) => arr.findIndex(x => x.toLowerCase() === s.toLowerCase()) === i);
-}
-
-// A line is treated as a new "day" section header if it starts with a day
-// name or looks like a date (e.g. "12/08", "August 12", "12th August").
-function extractDayHeader(line: string): string | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-
-  const dayMatch = DAY_NAMES.find(d => new RegExp(`^${d}`, 'i').test(trimmed));
-  if (dayMatch) return trimmed.replace(/[:\-]\s*$/, '');
-
-  if (/^\d{1,2}[/\-]\d{1,2}([/\-]\d{2,4})?$/.test(trimmed)) return trimmed;
-  if (/^\d{1,2}(st|nd|rd|th)?\s+[A-Za-z]+(\s+\d{4})?$/i.test(trimmed)) return trimmed.replace(/[:\-]\s*$/, '');
-
-  return null;
 }
 
 function groupByDay(rawText: string): { day: string; lines: string[] }[] {
