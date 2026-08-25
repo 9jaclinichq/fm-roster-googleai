@@ -12,6 +12,7 @@
 import { computeReconciliationIssues, groupReconciliationIssuesForDisplay } from '../src/modules/roster-engine/lib/rosterReconciliation';
 import { extractDayHeader } from '../src/modules/roster-engine/lib/dayHeaderParsing';
 import { resolveParsedNameToWorkforceId } from '../src/modules/roster-engine/lib/identityResolver';
+import { CLINIC_TYPE_PATTERNS } from '../src/modules/roster-engine/lib/clinicTypeMatching';
 import {
   applyIdentityResolutionToGopGrid,
   applyIdentityResolutionToEmergencyGrid,
@@ -442,6 +443,43 @@ const sampleWorkforce: WorkforceMember[] = [
   const r = resolveParsedNameToWorkforceId('', sampleWorkforce);
   check('empty/whitespace-only input resolves unresolved without throwing', r.status === 'unresolved');
 }
+
+// --- A&E "FM – Dr <Surname>" identity normalization (Slice 2B) ---
+
+const aeWorkforce: WorkforceMember[] = [
+  { id: 'w-ihedioha', full_name: 'Ihedioha', category: 'Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+  { id: 'w-ovolen', full_name: 'Ovolen', category: 'Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+];
+
+{
+  const r = resolveParsedNameToWorkforceId('FM – Dr Ihedioha', aeWorkforce);
+  check('real A&E shape "FM – Dr Ihedioha" (en-dash) resolves to the correct unique workforce member', r.status === 'resolved' && r.workforceId === 'w-ihedioha');
+}
+{
+  const r1 = resolveParsedNameToWorkforceId('FM- Dr Ihedioha', aeWorkforce);
+  const r2 = resolveParsedNameToWorkforceId('fm — DR IHEDIOHA', aeWorkforce);
+  check('evidenced dash/case variations ("FM- Dr X", "fm — DR X") resolve the same', r1.status === 'resolved' && r1.workforceId === 'w-ihedioha' && r2.status === 'resolved' && r2.workforceId === 'w-ihedioha');
+}
+{
+  const r = resolveParsedNameToWorkforceId('FM – Dr Somebody', aeWorkforce);
+  check('unknown "FM – Dr <name>" not present in workforce is preserved unresolved, not guessed', r.status === 'unresolved');
+}
+{
+  // Real evidenced spelling drift: the actual A&E document spells this
+  // Registrar's surname "Ovonlen"; workforce.full_name stores "Ovolen".
+  // Must remain unresolved — never auto-corrected.
+  const r = resolveParsedNameToWorkforceId('FM – Dr Ovonlen', aeWorkforce);
+  check('real spelling drift ("Ovonlen" vs stored "Ovolen") remains unresolved, never corrected', r.status === 'unresolved');
+}
+{
+  const r = resolveParsedNameToWorkforceId('Family Medicine Dr Ihedioha', aeWorkforce);
+  check('the FM strip is anchored to "FM" + dash only — "Family Medicine" prefix is not stripped and does not resolve', r.status === 'unresolved');
+}
+{
+  const before = JSON.stringify(aeWorkforce);
+  resolveParsedNameToWorkforceId('FM – Dr Ihedioha', aeWorkforce);
+  check('FM-prefix resolution does not mutate its workforce input', JSON.stringify(aeWorkforce) === before);
+}
 {
   const snapshot = JSON.stringify(sampleWorkforce);
   resolveParsedNameToWorkforceId('Onigbinde', sampleWorkforce);
@@ -526,6 +564,60 @@ const sampleWorkforce: WorkforceMember[] = [
   };
   const resolved = applyIdentityResolutionToGopGrid(grid, sampleWorkforce);
   check('GOP: identity resolution never changes date_or_day or clinic_type', resolved.slots[0].date_or_day === 'Tue 01/09' && resolved.slots[0].clinic_type === 'Triage');
+}
+
+// --- Floor Clinic parsing + existing-type regression (Slice 2B) ---
+
+function matchClinicLine(line: string) {
+  return CLINIC_TYPE_PATTERNS.find(c => c.pattern.test(line));
+}
+
+{
+  const match = matchClinicLine('Floor Clinic: Dr Ihedioha');
+  check('real Floor Clinic line is recognized as a clinic type (previously unrecognized, fell to unparsed_notes)', match?.type === 'Floor Clinic');
+  const afterLabel = match ? 'Floor Clinic: Dr Ihedioha'.replace(match.pattern, '').replace(/^[:\-\s]+/, '').trim() : null;
+  check('Floor Clinic label strips correctly, leaving only the name', afterLabel === 'Dr Ihedioha');
+}
+{
+  // Regression: the 4 pre-existing recognized types must still match
+  // correctly and must NOT be confused with the new Floor Clinic pattern.
+  check('Triage still matches, not Floor Clinic', matchClinicLine('Triage: Dr Salam')?.type === 'Triage');
+  check('Male Sorting still matches, not Floor Clinic', matchClinicLine('Male Sorting: Dr Alawode')?.type === 'Male Sorting');
+  check('Female Sorting still matches, not Floor Clinic', matchClinicLine('Female Sorting: Dr Olujitan')?.type === 'Female Sorting');
+  check('Children Sorting still matches, not Floor Clinic', matchClinicLine('Children Sorting: Dr Uma')?.type === 'Children Sorting');
+  check('Managed Care still matches, not Floor Clinic', matchClinicLine('Managed Care: Dr Ikor')?.type === 'Managed Care');
+  check('Annexe still matches, not Floor Clinic', matchClinicLine('Annexe: Dr Ulasi')?.type === 'Annexe');
+  check('a Floor Clinic line does not accidentally match any pre-existing type', matchClinicLine('Floor Clinic: Dr Muibi')?.type === 'Floor Clinic');
+}
+{
+  // End-to-end: a Floor Clinic slot flows through identity resolution
+  // exactly like any other clinic_type — same consultants[]/residents[]
+  // representation, same My Assignment compatibility (migration 67's GOP
+  // match has no clinic_type filter).
+  const grid: GopClinicGrid = {
+    slots: [{ date_or_day: 'Tue 01/09', clinic_type: 'Floor Clinic', consultants: ['Dr Ihedioha'], residents: [] }],
+    unparsed_notes: [],
+  };
+  const resolved = applyIdentityResolutionToGopGrid(grid, [
+    { id: 'w-ihedioha2', full_name: 'Ihedioha', category: 'Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+  ]);
+  check('Floor Clinic slot resolves through the existing GOP identity-resolution seam like any other clinic type', resolved.slots[0].residents?.includes('w-ihedioha2') === true);
+  check('Floor Clinic slot: date_or_day/clinic_type/consultants are unchanged by resolution', resolved.slots[0].date_or_day === 'Tue 01/09' && resolved.slots[0].clinic_type === 'Floor Clinic' && JSON.stringify(resolved.slots[0].consultants) === JSON.stringify(['Dr Ihedioha']));
+}
+{
+  // Real A&E shape flowing through the same on_call ingest seam used by
+  // Slice 2, confirming the FM-prefix fix actually reaches resolution
+  // (not just the standalone resolver function tested above).
+  const grid: EmergencyCallGrid = {
+    shifts: [{ date_or_day: 'Tue 01/09', shift: '4pm-10pm', on_call: ['FM – Dr Ihedioha', 'FM – Dr Ovonlen'] }],
+    unparsed_notes: [],
+  };
+  const resolved = applyIdentityResolutionToEmergencyGrid(grid, [
+    { id: 'w-ihedioha3', full_name: 'Ihedioha', category: 'Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+    { id: 'w-ovolen', full_name: 'Ovolen', category: 'Registrar' as any, active: true, on_floor: true, created_at: '', tenant_id: 't1' } as any,
+  ]);
+  check('A&E ingest seam: "FM – Dr Ihedioha" resolves to a workforce_id in on_call[]', resolved.shifts[0].on_call[0] === 'w-ihedioha3');
+  check('A&E ingest seam: real spelling drift ("FM – Dr Ovonlen" vs stored "Ovolen") survives as unresolved free text, never corrected', resolved.shifts[0].on_call[1] === 'FM – Dr Ovonlen');
 }
 
 console.log('');

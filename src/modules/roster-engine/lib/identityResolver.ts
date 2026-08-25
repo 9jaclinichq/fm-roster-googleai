@@ -21,19 +21,28 @@ export type IdentityResolution =
   | { status: 'unresolved' }
   | { status: 'ambiguous'; candidateWorkforceIds: string[] };
 
-// Normalization is intentionally narrow: whitespace trimming/collapsing
-// and a leading "Dr"/"Dr."/"DR" prefix are the only "harmless presentation
-// differences" the real source documents actually show (confirmed during
-// DISCOVER — e.g. "Dr Onigbinde" in the Floor roster vs however
-// workforce.full_name happens to be stored). Applied identically to both
-// the parsed name and each workforce member's full_name, so either side
-// having or lacking the prefix still compares correctly. Comparison itself
-// is case-insensitive, matching this module's existing exact-match
-// (never fuzzy) convention elsewhere in roster-engine.
+// Normalization is intentionally narrow: whitespace trimming/collapsing,
+// a leading "Dr"/"Dr."/"DR" prefix, and (Slice 2B, 2026-08-25) a leading
+// "FM" structural specialty-label prefix are the only "harmless
+// presentation differences" the real source documents actually show
+// (confirmed during DISCOVER — e.g. "Dr Onigbinde" in the Floor roster,
+// and "FM – Dr Ihedioha" in the real A&E roster, vs however
+// workforce.full_name happens to be stored). The FM strip is anchored
+// specifically to the literal "FM" token followed by a dash-like
+// character (ASCII hyphen, or a Unicode dash in U+2010-U+2015, which
+// covers the real document's en-dash "–") — it is a specialty-label strip
+// evidenced by that one real document, not a general-purpose
+// prefix-stripping mechanism, so no other prefix is recognized here.
+// Applied identically to both the parsed name and each workforce member's
+// full_name, so either side having or lacking either prefix still
+// compares correctly. Comparison itself is case-insensitive, matching
+// this module's existing exact-match (never fuzzy) convention elsewhere
+// in roster-engine.
 function normalizeForComparison(name: string): string {
   return name
     .trim()
     .replace(/\s+/g, ' ')
+    .replace(/^fm\s*[-‐-―]\s*/i, '')
     .replace(/^dr\.?\s+/i, '')
     .toLowerCase();
 }

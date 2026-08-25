@@ -585,7 +585,7 @@ export interface RawRosterUpload {
   created_at: string;
 }
 
-export type ClinicType = 'Triage' | 'Male Sorting' | 'Female Sorting' | 'Children Sorting' | 'Managed Care' | 'Annexe' | 'Other';
+export type ClinicType = 'Triage' | 'Male Sorting' | 'Female Sorting' | 'Children Sorting' | 'Floor Clinic' | 'Managed Care' | 'Annexe' | 'Other';
 
 export interface GopClinicSlot {
   date_or_day: string;

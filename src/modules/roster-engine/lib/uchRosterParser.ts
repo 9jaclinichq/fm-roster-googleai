@@ -4,7 +4,6 @@ import {
   RosterParseResult,
   GopClinicGrid,
   GopClinicSlot,
-  ClinicType,
   EmergencyCallGrid,
   EmergencyShift,
   SupervisionGrid,
@@ -15,6 +14,7 @@ import {
 } from '../../../types';
 import { KNOWN_SATELLITE_FACILITIES } from './satelliteFacilities';
 import { extractDayHeader } from './dayHeaderParsing';
+import { CLINIC_TYPE_PATTERNS } from './clinicTypeMatching';
 
 // Structures raw UCH Family Medicine roster documents (pasted text, or
 // text extracted from an uploaded file) into the grid shapes used by
@@ -61,15 +61,6 @@ function groupByDay(rawText: string): { day: string; lines: string[] }[] {
   }
   return groups;
 }
-
-const CLINIC_TYPE_PATTERNS: { type: ClinicType; pattern: RegExp }[] = [
-  { type: 'Triage', pattern: /\btriage\b/i },
-  { type: 'Male Sorting', pattern: /\bmale\s*sorting\b/i },
-  { type: 'Female Sorting', pattern: /\bfemale\s*sorting\b/i },
-  { type: 'Children Sorting', pattern: /\bchildren'?s?\s*sorting\b/i },
-  { type: 'Managed Care', pattern: /\bmanaged\s*care\b/i },
-  { type: 'Annexe', pattern: /\bannex(e)?\b/i },
-];
 
 function parseGopLines(lines: string[], day: string, includeResidents: boolean, unparsed: string[]): GopClinicSlot[] {
   const slots: GopClinicSlot[] = [];
