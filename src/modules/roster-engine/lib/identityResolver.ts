@@ -38,7 +38,16 @@ export type IdentityResolution =
 // compares correctly. Comparison itself is case-insensitive, matching
 // this module's existing exact-match (never fuzzy) convention elsewhere
 // in roster-engine.
-function normalizeForComparison(name: string): string {
+//
+// Exported (2026-08-27) so rosterReconciliation.ts's Supervision-grid
+// matching can reuse this exact, already-tested contract instead of a
+// second ad hoc implementation — this is the canonical normalization
+// semantic for both the client and the resident_get_current_assignment()
+// RPC (migration 70). The FM-prefix strip above is inert for Supervision
+// text (no real Supervision duty ever begins with an "FM –" specialty
+// label), so reusing this function as-is introduces no behavior change
+// beyond the intended Dr/Dr. equivalence.
+export function normalizeForComparison(name: string): string {
   return name
     .trim()
     .replace(/\s+/g, ' ')

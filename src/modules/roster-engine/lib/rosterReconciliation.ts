@@ -7,6 +7,7 @@ import {
   ClinicType,
 } from '../../../types';
 import { KNOWN_SATELLITE_FACILITIES } from './satelliteFacilities';
+import { normalizeForComparison } from './identityResolver';
 
 // Workforce Option A — read-only reconciliation. See
 // docs/WORKFORCE_V1_RECOVERY_SPEC.md for the full design and locked
@@ -119,10 +120,23 @@ function dateInRange(date: string, start: string, end: string): boolean {
 // MultiRosterManagerView.tsx's own assignToSupervisionDuty, which stores
 // residentName(residentId) rather than the id). This is a real,
 // transitional inconsistency in the existing grid data model, not a
-// choice made here — Supervision matching is therefore exact full_name
-// equality, which will silently stop matching if a member is renamed in
-// `workforce` after a supervision assignment was made. Documented, not
-// fixed, in this slice.
+// choice made here.
+//
+// Supervision matching (2026-08-27 fix): parser/AI-derived duty text
+// preserves the source document's own title form (every real September
+// document writes "Dr Muibi", no period), while a manual drag/tap
+// assignment writes the live workforce.full_name value directly (e.g.
+// "Dr. Muibi", with period) via assignToSupervisionDuty's
+// residentName(id) call — so the same field can hold either form for the
+// same person. Comparison now reuses identityResolver.ts's canonical,
+// already-tested normalizeForComparison() (trim, collapse whitespace,
+// case-insensitive, strip only a leading "Dr"/"Dr." prefix) instead of
+// bare string equality, so "Dr Muibi" and "Dr. Muibi" correctly identify
+// the same member — still exact identity matching after that narrow
+// title normalization, never fuzzy/surname-only. A member whose
+// normalized full_name doesn't exactly match either duty field still
+// silently misses (e.g. a genuine rename beyond title punctuation), same
+// documented limitation as before, just narrower now.
 interface GridAppearance {
   gridLabel: string;
   dayName: string;
@@ -149,8 +163,11 @@ function findGridAppearancesForMember(
       appearances.push({ gridLabel: 'Satellite Grid', dayName: posting.date_or_day });
     }
   }
+  const normalizedMemberName = normalizeForComparison(member.full_name);
   for (const duty of masterRoster.supervision_grid?.duties || []) {
-    if (duty.first_on_duty === member.full_name || duty.second_on_duty === member.full_name) {
+    const matchesFirst = duty.first_on_duty !== null && normalizeForComparison(duty.first_on_duty) === normalizedMemberName;
+    const matchesSecond = duty.second_on_duty !== null && normalizeForComparison(duty.second_on_duty) === normalizedMemberName;
+    if (matchesFirst || matchesSecond) {
       appearances.push({ gridLabel: 'Supervision Grid', dayName: duty.date_or_day });
     }
   }

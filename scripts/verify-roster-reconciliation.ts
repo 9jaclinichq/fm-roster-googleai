@@ -11,7 +11,12 @@
 
 import { computeReconciliationIssues, groupReconciliationIssuesForDisplay } from '../src/modules/roster-engine/lib/rosterReconciliation';
 import { extractDayHeader } from '../src/modules/roster-engine/lib/dayHeaderParsing';
-import { resolveParsedNameToWorkforceId } from '../src/modules/roster-engine/lib/identityResolver';
+import { resolveParsedNameToWorkforceId, normalizeForComparison } from '../src/modules/roster-engine/lib/identityResolver';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { CLINIC_TYPE_PATTERNS } from '../src/modules/roster-engine/lib/clinicTypeMatching';
 import {
   applyIdentityResolutionToGopGrid,
@@ -618,6 +623,110 @@ function matchClinicLine(line: string) {
   ]);
   check('A&E ingest seam: "FM – Dr Ihedioha" resolves to a workforce_id in on_call[]', resolved.shifts[0].on_call[0] === 'w-ihedioha3');
   check('A&E ingest seam: real spelling drift ("FM – Dr Ovonlen" vs stored "Ovolen") survives as unresolved free text, never corrected', resolved.shifts[0].on_call[1] === 'FM – Dr Ovonlen');
+}
+
+// --- Supervision Dr-vs-Dr. title normalization (2026-08-27 fix) ---
+// Real defect evidenced by the September ingest: every real Supervision
+// duty is written "Dr <Surname>" (no period, source-document form), while
+// workforce.full_name is stored "Dr. <Surname>" (with period). Both
+// rosterReconciliation.ts's findGridAppearancesForMember() and migration
+// 70's resident_get_current_assignment() now reuse the same canonical
+// normalizeForComparison() semantic to fix this — verified here from both
+// the direct-normalization angle and end-to-end via
+// computeReconciliationIssues()'s leave_roster_overlap check.
+
+check('normalizeForComparison: "Dr Muibi" and "Dr. Muibi" normalize identically', normalizeForComparison('Dr Muibi') === normalizeForComparison('Dr. Muibi'));
+check('normalizeForComparison: reversed direction ("Dr. Muibi" vs "Dr Muibi") also normalizes identically', normalizeForComparison('Dr. Muibi') === normalizeForComparison('Dr Muibi'));
+check('normalizeForComparison: case and extra whitespace variations normalize identically to the canonical form', normalizeForComparison('  DR.   Muibi  ') === normalizeForComparison('Dr Muibi'));
+check('normalizeForComparison: a genuinely different name does NOT normalize the same', normalizeForComparison('Dr Onigbinde') !== normalizeForComparison('Dr Muibi'));
+check('normalizeForComparison: "Uma" vs an unrelated name does not become a fuzzy match', normalizeForComparison('Dr Uma') !== normalizeForComparison('Dr Umaru'));
+
+{
+  // End-to-end: Supervision leave-overlap now sees the intended member
+  // despite the Dr/Dr. mismatch between the duty text and workforce.full_name.
+  const w = makeMember('w-sup-1', 'Dr. Muibi', true);
+  const s = makeSubmission({ workforce_id: 'w-sup-1', taking_leave: true, leave_start: '2026-08-01', leave_end: '2026-08-31' });
+  const roster: CombinedMasterRoster = {
+    ...emptyRoster,
+    supervision_grid: { duties: [{ date_or_day: 'Monday', first_on_duty: 'Dr Muibi', second_on_duty: null }], unparsed_notes: [] },
+  };
+  const issues = computeReconciliationIssues([s], [w], rotations, roster);
+  check('Supervision leave-overlap fires for "Dr Muibi" duty text against workforce "Dr. Muibi" (previously silently missed)', issues.some(i => i.type === 'leave_roster_overlap'));
+}
+{
+  // Reverse direction: manually-assigned duty text (which stores the live
+  // full_name verbatim, i.e. WITH the period) must still match.
+  const w = makeMember('w-sup-2', 'Dr. Alawode', true);
+  const s = makeSubmission({ workforce_id: 'w-sup-2', taking_leave: true, leave_start: '2026-08-01', leave_end: '2026-08-31' });
+  const roster: CombinedMasterRoster = {
+    ...emptyRoster,
+    supervision_grid: { duties: [{ date_or_day: 'Monday', first_on_duty: null, second_on_duty: 'Dr. Alawode' }], unparsed_notes: [] },
+  };
+  const issues = computeReconciliationIssues([s], [w], rotations, roster);
+  check('Supervision leave-overlap fires for "Dr. Alawode" (with period) duty text against workforce "Dr. Alawode"', issues.some(i => i.type === 'leave_roster_overlap'));
+}
+{
+  // A genuinely different/unrelated person in the duty slot must never match.
+  const w = makeMember('w-sup-3', 'Dr. Onigbinde', true);
+  const s = makeSubmission({ workforce_id: 'w-sup-3', taking_leave: true, leave_start: '2026-08-01', leave_end: '2026-08-31' });
+  const roster: CombinedMasterRoster = {
+    ...emptyRoster,
+    supervision_grid: { duties: [{ date_or_day: 'Monday', first_on_duty: 'Dr Muibi', second_on_duty: null }], unparsed_notes: [] },
+  };
+  const issues = computeReconciliationIssues([s], [w], rotations, roster);
+  check('Supervision leave-overlap does NOT fire for an unrelated member ("Dr Muibi" duty vs workforce "Dr. Onigbinde")', issues.every(i => i.type !== 'leave_roster_overlap'));
+}
+{
+  // GOP/A&E/Satellite id-based matching (also reachable via
+  // findGridAppearancesForMember) must remain completely unaffected by
+  // the Supervision-only normalization change.
+  const w = makeMember('w-sup-4', 'Dr. Regression', true);
+  const s = makeSubmission({ workforce_id: 'w-sup-4', taking_leave: true, leave_start: '2026-08-01', leave_end: '2026-08-31' });
+  const roster: CombinedMasterRoster = {
+    ...emptyRoster,
+    gop_clinic_grid: { slots: [{ date_or_day: 'Monday', clinic_type: 'FM Clinic' as any, consultants: [], residents: ['w-sup-4'] }], unparsed_notes: [] },
+    emergency_call_grid: { shifts: [{ date_or_day: 'Monday', shift: '4pm-10pm', on_call: ['w-sup-4'] }], unparsed_notes: [] },
+    satellite_grid: { postings: [{ facility: 'Ikolaba', date_or_day: 'Monday', assigned: ['w-sup-4'] }], unparsed_notes: [] },
+  };
+  const issues = computeReconciliationIssues([s], [w], rotations, roster);
+  const overlaps = issues.filter(i => i.type === 'leave_roster_overlap');
+  const gridsSeen = new Set(overlaps.map(i => (i.evidence as any)?.grid));
+  check('GOP/A&E/Satellite id-based leave-overlap matching still fires (unaffected by the Supervision normalization fix)', overlaps.length >= 1);
+  check('GOP/A&E/Satellite id-based leave-overlap matching covers all 3 grids (not just one)', gridsSeen.has('GOP Clinic Grid') && gridsSeen.has('A&E Emergency Grid') && gridsSeen.has('Satellite Grid'));
+}
+
+// --- Migration 70 structural review: preserves everything except the
+// Supervision comparison contract ---
+{
+  const migration67Path = path.join(__dirname, '..', 'supabase', 'migrations', '67_resident_get_current_assignment.sql');
+  const migration70Path = path.join(__dirname, '..', 'supabase', 'migrations', '70_resident_get_current_assignment_title_normalization.sql');
+  const m67 = fs.readFileSync(migration67Path, 'utf8');
+  const m70 = fs.readFileSync(migration70Path, 'utf8');
+
+  check('migration 70 file exists at the expected next-available number (70)', fs.existsSync(migration70Path));
+
+  const preservedFragments = [
+    "LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$",
+    "RAISE EXCEPTION 'Invalid access code' USING ERRCODE = '28000';",
+    "SELECT s.current_collection_id INTO v_current_collection_id",
+    "AND cmr.status = 'published';",
+    "-- GOP Clinic Grid — workforce_id match.",
+    "'grid_label', 'GOP Clinic Grid',",
+    "-- A&E Emergency Grid — workforce_id match.",
+    "'grid_label', 'A&E Emergency Grid',",
+    "nullif(v_slot->>'date_or_day', '') IS NOT NULL AND EXISTS (",
+    "'grid_label', 'Satellite Grid',",
+    "RETURN QUERY SELECT 'published_no_assignment'::text, v_roster.month, v_roster.year, '[]'::jsonb;",
+    "RETURN QUERY SELECT 'published_with_assignment'::text, v_roster.month, v_roster.year, v_assignments;",
+    "GRANT EXECUTE ON FUNCTION public.resident_get_current_assignment(uuid, text) TO anon, authenticated;",
+  ];
+  for (const fragment of preservedFragments) {
+    check(`migration 67 and 70 share preserved fragment verbatim: ${JSON.stringify(fragment.slice(0, 48))}...`, m67.includes(fragment) && m70.includes(fragment));
+  }
+
+  check('migration 70 changes the Supervision comparison to use a normalization helper (no longer bare string equality)', !m70.includes("(v_slot->>'first_on_duty') = v_full_name") && m70.includes('_normalize_supervision_name'));
+  check('migration 67 (unchanged, still on disk) still shows the original bare-equality Supervision comparison', m67.includes("(v_slot->>'first_on_duty') = v_full_name"));
+  check('migration 70 does not modify migration 67\'s file', fs.existsSync(migration67Path) && m67.includes("-- Migration 67:"));
 }
 
 console.log('');
