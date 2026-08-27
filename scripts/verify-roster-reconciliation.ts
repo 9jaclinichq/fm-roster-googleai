@@ -729,6 +729,49 @@ check('normalizeForComparison: "Uma" vs an unrelated name does not become a fuzz
   check('migration 70 does not modify migration 67\'s file', fs.existsSync(migration67Path) && m67.includes("-- Migration 67:"));
 }
 
+// --- Migration 71 structural review: preserves everything from 70 except
+// adding assignment_detail to each of the 4 result-builders (My
+// Assignment Slice A, 2026-08-27) ---
+{
+  const migration70Path = path.join(__dirname, '..', 'supabase', 'migrations', '70_resident_get_current_assignment_title_normalization.sql');
+  const migration71Path = path.join(__dirname, '..', 'supabase', 'migrations', '71_resident_get_current_assignment_detail.sql');
+  const m70 = fs.readFileSync(migration70Path, 'utf8');
+  const m71 = fs.readFileSync(migration71Path, 'utf8');
+
+  check('migration 71 file exists at the expected next-available number (71)', fs.existsSync(migration71Path));
+
+  const preservedFragments70to71 = [
+    "LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$",
+    "RAISE EXCEPTION 'Invalid access code' USING ERRCODE = '28000';",
+    "SELECT s.current_collection_id INTO v_current_collection_id",
+    "AND cmr.status = 'published';",
+    "'grid_label', 'GOP Clinic Grid',",
+    "'grid_label', 'A&E Emergency Grid',",
+    "nullif(v_slot->>'date_or_day', '') IS NOT NULL AND EXISTS (",
+    "'grid_label', 'Satellite Grid',",
+    "RETURN QUERY SELECT 'published_no_assignment'::text, v_roster.month, v_roster.year, '[]'::jsonb;",
+    "RETURN QUERY SELECT 'published_with_assignment'::text, v_roster.month, v_roster.year, v_assignments;",
+    "GRANT EXECUTE ON FUNCTION public.resident_get_current_assignment(uuid, text) TO anon, authenticated;",
+    "public._normalize_supervision_name(v_slot->>'first_on_duty') = public._normalize_supervision_name(v_full_name)",
+    "public._normalize_supervision_name(v_slot->>'second_on_duty') = public._normalize_supervision_name(v_full_name)",
+  ];
+  for (const fragment of preservedFragments70to71) {
+    check(`migration 70 and 71 share preserved fragment verbatim: ${JSON.stringify(fragment.slice(0, 48))}...`, m70.includes(fragment) && m71.includes(fragment));
+  }
+
+  check('migration 71 does NOT redefine _normalize_supervision_name (reuses migration 70\'s helper as-is)', !m71.includes('CREATE OR REPLACE FUNCTION public._normalize_supervision_name'));
+
+  check('migration 71 adds assignment_detail to the GOP result (v_slot clinic_type, pass-through)', m71.includes("'assignment_detail', v_slot->>'clinic_type'") && !m70.includes("'assignment_detail'"));
+  check('migration 71 adds assignment_detail to the A&E result (v_slot shift, pass-through)', m71.includes("'assignment_detail', v_slot->>'shift'"));
+  check('migration 71 adds assignment_detail to the Satellite result (v_slot facility, pass-through)', m71.includes("'assignment_detail', v_slot->>'facility'"));
+  check('migration 71 adds assignment_detail to the Supervision result using the two generic duty labels only', m71.includes("'assignment_detail', '1st On Duty'") && m71.includes("'assignment_detail', '2nd On Duty'"));
+
+  check('migration 71 restructures Supervision matching as IF/ELSIF (was IF/OR in migration 70) — which slots match is unchanged, only which label attaches', !m70.includes('ELSIF') && m71.includes('ELSIF'));
+
+  check('migration 70 (unchanged, still on disk) has no assignment_detail key anywhere', !m70.includes('assignment_detail'));
+  check('migration 71 does not modify migration 70\'s file', fs.existsSync(migration70Path) && m70.includes('-- Migration 70:'));
+}
+
 console.log('');
 console.log(`${failures} failure(s).`);
 process.exit(failures > 0 ? 1 : 0);

@@ -155,9 +155,23 @@ export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, ac
           </p>
           <div className="space-y-2.5">
             {result.assignments.map((a, i) => (
-              <div key={i} className="flex items-center justify-between border border-slate-100 rounded-xl px-3.5 py-2.5">
-                <span className="text-sm font-semibold text-slate-800">{a.grid_label}</span>
-                <span className="text-xs font-medium text-slate-500">{a.date_or_day}</span>
+              <div key={i} className="border border-slate-100 rounded-xl px-3.5 py-2.5">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-slate-500">{a.date_or_day}</span>
+                  <span className="text-[10px] font-medium text-slate-400">{a.grid_label}</span>
+                </div>
+                {/* assignment_detail (migration 71) is additive — an older
+                    RPC response or a genuinely detail-less entry simply
+                    omits it, so this renders nothing extra rather than an
+                    empty/undefined line. Rendered verbatim: whatever
+                    service-point/shift/facility/duty text the
+                    organization's own roster data (or the generic "1st On
+                    Duty"/"2nd On Duty" duty-position label) contains —
+                    never reinterpreted or mapped through any UCH-specific
+                    vocabulary here. */}
+                {a.assignment_detail && (
+                  <p className="text-sm font-semibold text-slate-800">{a.assignment_detail}</p>
+                )}
               </div>
             ))}
           </div>

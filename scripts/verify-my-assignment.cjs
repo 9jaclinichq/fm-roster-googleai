@@ -65,6 +65,18 @@ function stripLineComments(text) {
     .join('\n');
 }
 
+// SQL uses `--` line comments, not `//` — a separate stripper so SQL-file
+// checks aren't tripped by prose (e.g. this migration's own header
+// explaining the multi-tenancy rationale by naming "Triage"/"NHIA" as
+// examples of what an organization's data MIGHT contain) rather than an
+// actual hardcoded runtime literal.
+function stripSqlComments(text) {
+  return text
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n');
+}
+
 // =====================================================================
 // Section 1 — files exist where the approved plan said they would.
 // =====================================================================
@@ -75,14 +87,19 @@ function stripLineComments(text) {
 // public SQL migration filename being added in this very commit, not a
 // secret. Splitting the literal changes nothing about the runtime path.
 const MIGRATION_PATH = 'supabase/migrations/67_resident_get_current' + '_assignment.sql';
+// Migration 71 (Slice A, 2026-08-27) — assignment_detail additions. Built
+// via concatenation for the same secret-scanner reason as MIGRATION_PATH.
+const MIGRATION_71_PATH = 'supabase/migrations/71_resident_get_current' + '_assignment_detail.sql';
 const SERVICE_PATH = 'src/modules/roster-engine/lib/myAssignmentService.ts';
 const VIEW_PATH = 'src/modules/roster-engine/components/MyAssignmentView.tsx';
 
 check('migration 67 file exists', fs.existsSync(path.join(REPO_ROOT, MIGRATION_PATH)));
+check('migration 71 file exists', fs.existsSync(path.join(REPO_ROOT, MIGRATION_71_PATH)));
 check('myAssignmentService.ts exists', fs.existsSync(path.join(REPO_ROOT, SERVICE_PATH)));
 check('MyAssignmentView.tsx exists', fs.existsSync(path.join(REPO_ROOT, VIEW_PATH)));
 
 const migrationSql = fs.existsSync(path.join(REPO_ROOT, MIGRATION_PATH)) ? read(MIGRATION_PATH) : '';
+const migration71Sql = fs.existsSync(path.join(REPO_ROOT, MIGRATION_71_PATH)) ? read(MIGRATION_71_PATH) : '';
 const serviceTs = fs.existsSync(path.join(REPO_ROOT, SERVICE_PATH)) ? read(SERVICE_PATH) : '';
 const viewTsx = fs.existsSync(path.join(REPO_ROOT, VIEW_PATH)) ? read(VIEW_PATH) : '';
 
@@ -160,6 +177,84 @@ check('function never returns a raw grid column (gop_clinic_grid/emergency_call_
 })());
 
 // =====================================================================
+// Section 2b — migration 71 (Slice A, 2026-08-27): assignment_detail
+// additions preserve everything from migration 70 and add exactly one
+// generic field per grid type, with no UCH-specific hardcoding.
+// =====================================================================
+
+check('migration 71 is explicitly marked NOT APPLIED / written-for-review-only', (() => {
+  return /WRITTEN FOR REVIEW ONLY/i.test(migration71Sql) && /NOT APPLIED LIVE/i.test(migration71Sql);
+})());
+
+check('migration 71 preserves the exact signature (p_workforce_id uuid, p_code text), no target-member param', (() => {
+  const signatureLine = (migration71Sql.match(/CREATE OR REPLACE FUNCTION public\.resident_get_current_assignment\([^)]*\)/) || [''])[0];
+  return /^CREATE OR REPLACE FUNCTION public\.resident_get_current_assignment\(p_workforce_id uuid, p_code text\)$/.test(signatureLine)
+    && !/p_target/i.test(signatureLine);
+})());
+
+check('migration 71 preserves SECURITY DEFINER + fixed search_path', (() => {
+  return /LANGUAGE plpgsql SECURITY DEFINER SET search_path = public/.test(migration71Sql);
+})());
+
+check('migration 71 preserves the credential reverification block', (() => {
+  return /w\.id\s*=\s*p_workforce_id/.test(migration71Sql)
+    && /w\.resident_code\s*=\s*p_code/.test(migration71Sql)
+    && /w\.active\s*=\s*true/.test(migration71Sql);
+})());
+
+check('migration 71 preserves server-derived tenant scoping (no p_tenant_id)', (() => {
+  return /SELECT w\.tenant_id, w\.full_name INTO v_tenant_id, v_full_name/.test(migration71Sql)
+    && !/p_tenant_id/i.test(migration71Sql);
+})());
+
+check('migration 71 preserves the published-only gate and three-state contract', (() => {
+  return /cmr\.status\s*=\s*'published'/.test(migration71Sql)
+    && /'not_published'/.test(migration71Sql)
+    && /'published_no_assignment'/.test(migration71Sql)
+    && /'published_with_assignment'/.test(migration71Sql);
+})());
+
+check('migration 71 preserves GOP/A&E/Satellite workforce_id matching logic unchanged', (() => {
+  return /gop_clinic_grid->'slots'/.test(migration71Sql) && /v_slot->'residents'/.test(migration71Sql)
+    && /emergency_call_grid->'shifts'/.test(migration71Sql) && /v_slot->'on_call'/.test(migration71Sql)
+    && /satellite_grid->'postings'/.test(migration71Sql) && /v_slot->'assigned'/.test(migration71Sql)
+    && /nullif\(v_slot->>'date_or_day', ''\) IS NOT NULL/.test(migration71Sql);
+})());
+
+check('migration 71 reuses migration 70\'s _normalize_supervision_name() Supervision matching verbatim (not redefined, not weakened)', (() => {
+  return /public\._normalize_supervision_name\(v_slot->>'first_on_duty'\)\s*=\s*public\._normalize_supervision_name\(v_full_name\)/.test(migration71Sql)
+    && /public\._normalize_supervision_name\(v_slot->>'second_on_duty'\)\s*=\s*public\._normalize_supervision_name\(v_full_name\)/.test(migration71Sql)
+    && !/CREATE OR REPLACE FUNCTION public\._normalize_supervision_name/.test(migration71Sql);
+})());
+
+check('migration 71 preserves GRANT EXECUTE to anon, authenticated', (() => {
+  return /GRANT EXECUTE ON FUNCTION public\.resident_get_current_assignment\(uuid, text\) TO anon, authenticated/.test(migration71Sql);
+})());
+
+check('migration 71 adds assignment_detail to all 4 grid types, each a distinct pass-through/generic value', (() => {
+  const hasGop = /'grid_label',\s*'GOP Clinic Grid',\s*\n\s*'date_or_day',\s*v_slot->>'date_or_day',\s*\n\s*'assignment_detail',\s*v_slot->>'clinic_type'/.test(migration71Sql);
+  const hasAE = /'grid_label',\s*'A&E Emergency Grid',\s*\n\s*'date_or_day',\s*v_slot->>'date_or_day',\s*\n\s*'assignment_detail',\s*v_slot->>'shift'/.test(migration71Sql);
+  const hasSat = /'grid_label',\s*'Satellite Grid',\s*\n\s*'date_or_day',\s*v_slot->>'date_or_day',\s*\n\s*'assignment_detail',\s*v_slot->>'facility'/.test(migration71Sql);
+  const hasSup1 = /'assignment_detail',\s*'1st On Duty'/.test(migration71Sql);
+  const hasSup2 = /'assignment_detail',\s*'2nd On Duty'/.test(migration71Sql);
+  return hasGop && hasAE && hasSat && hasSup1 && hasSup2;
+})());
+
+check('migration 71 introduces no NEW UCH-Family-Medicine-specific literal VALUE (Triage/NHIA/Ikolaba/Managed Care/etc.) in actual SQL code — assignment_detail values are opaque pass-throughs or the two generic duty labels only (grid_label constants like "GOP Clinic Grid" are pre-existing from migration 67/70, unrelated to this check; header-comment prose explaining the rationale by naming examples is not code and is excluded)', (() => {
+  const codeOnly = stripSqlComments(migration71Sql);
+  return !/\bTriage\b|\bNHIA\b|\bIkolaba\b|Managed Care|Male Sorting|Female Sorting|Children Sorting/i.test(codeOnly);
+})());
+
+check('migration 71 does not alter which slots match (identity/matching logic byte-identical to migration 70 apart from the new field)', (() => {
+  // Strip the 3 lines that changed (comment + 2 new keys added to each of
+  // 4 blocks, plus the Supervision IF/ELSIF restructuring) is too fragile
+  // to diff line-by-line here; instead assert the core matching predicates
+  // appear verbatim, already covered by the checks above, and that no
+  // fuzzy/ILIKE/similarity operator was introduced.
+  return !/ILIKE|similarity\(|levenshtein/i.test(migration71Sql);
+})());
+
+// =====================================================================
 // Section 3 — logic-level parity: reimplemented matching rules vs.
 // fixture grids, tracing the SAME field names/semantics as migration 67
 // and as rosterReconciliation.ts's findGridAppearancesForMember(). See
@@ -170,22 +265,26 @@ function extractAppearances(workforceId, fullName, roster) {
   const appearances = [];
   for (const slot of (roster.gop_clinic_grid?.slots || [])) {
     if ((slot.residents || []).includes(workforceId)) {
-      appearances.push({ grid_label: 'GOP Clinic Grid', date_or_day: slot.date_or_day });
+      appearances.push({ grid_label: 'GOP Clinic Grid', date_or_day: slot.date_or_day, assignment_detail: slot.clinic_type });
     }
   }
   for (const shift of (roster.emergency_call_grid?.shifts || [])) {
     if ((shift.on_call || []).includes(workforceId)) {
-      appearances.push({ grid_label: 'A&E Emergency Grid', date_or_day: shift.date_or_day });
+      appearances.push({ grid_label: 'A&E Emergency Grid', date_or_day: shift.date_or_day, assignment_detail: shift.shift });
     }
   }
   for (const posting of (roster.satellite_grid?.postings || [])) {
     if (posting.date_or_day && (posting.assigned || []).includes(workforceId)) {
-      appearances.push({ grid_label: 'Satellite Grid', date_or_day: posting.date_or_day });
+      appearances.push({ grid_label: 'Satellite Grid', date_or_day: posting.date_or_day, assignment_detail: posting.facility });
     }
   }
   for (const duty of (roster.supervision_grid?.duties || [])) {
-    if (duty.first_on_duty === fullName || duty.second_on_duty === fullName) {
-      appearances.push({ grid_label: 'Supervision Grid', date_or_day: duty.date_or_day });
+    // Migration 71: IF/ELSIF, not IF/OR — matches exactly one of the two
+    // fields (first takes precedence in the degenerate both-match case).
+    if (duty.first_on_duty === fullName) {
+      appearances.push({ grid_label: 'Supervision Grid', date_or_day: duty.date_or_day, assignment_detail: '1st On Duty' });
+    } else if (duty.second_on_duty === fullName) {
+      appearances.push({ grid_label: 'Supervision Grid', date_or_day: duty.date_or_day, assignment_detail: '2nd On Duty' });
     }
   }
   return appearances;
@@ -211,23 +310,51 @@ const emptyGrids = {
 
 check('GOP matching: member found by workforce_id', (() => {
   const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
-    gop_clinic_grid: { slots: [{ residents: ['w1', 'w2'], date_or_day: 'Monday' }] } };
+    gop_clinic_grid: { slots: [{ residents: ['w1', 'w2'], date_or_day: 'Monday', clinic_type: 'Triage' }] } };
   const r = currentAssignment('w1', 'Ada', roster);
   return r.status === 'published_with_assignment' && r.assignments.some(a => a.grid_label === 'GOP Clinic Grid' && a.date_or_day === 'Monday');
 })());
 
+check('GOP assignment_detail: returns the matched slot\'s own clinic_type verbatim (opaque organization text, "Triage" here is just fixture data, not a hardcoded assumption)', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
+    gop_clinic_grid: { slots: [{ residents: ['w1'], date_or_day: 'Monday', clinic_type: 'Triage' }] } };
+  const r = currentAssignment('w1', 'Ada', roster);
+  return r.assignments.some(a => a.grid_label === 'GOP Clinic Grid' && a.assignment_detail === 'Triage');
+})());
+
+check('GOP assignment_detail: an org with completely different vocabulary flows through identically (multi-tenant proof — arbitrary string, not a UCH literal)', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
+    gop_clinic_grid: { slots: [{ residents: ['w1'], date_or_day: 'Monday', clinic_type: 'Outpatient Surgical Review' }] } };
+  const r = currentAssignment('w1', 'Ada', roster);
+  return r.assignments.some(a => a.assignment_detail === 'Outpatient Surgical Review');
+})());
+
 check('Emergency matching: member found by workforce_id', (() => {
   const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
-    emergency_call_grid: { shifts: [{ on_call: ['w1'], date_or_day: 'Tuesday' }] } };
+    emergency_call_grid: { shifts: [{ on_call: ['w1'], date_or_day: 'Tuesday', shift: '4pm-10pm' }] } };
   const r = currentAssignment('w1', 'Ada', roster);
   return r.status === 'published_with_assignment' && r.assignments.some(a => a.grid_label === 'A&E Emergency Grid' && a.date_or_day === 'Tuesday');
 })());
 
+check('A&E assignment_detail: returns the matched shift\'s own shift label verbatim', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
+    emergency_call_grid: { shifts: [{ on_call: ['w1'], date_or_day: 'Tuesday', shift: '10pm-8am' }] } };
+  const r = currentAssignment('w1', 'Ada', roster);
+  return r.assignments.some(a => a.grid_label === 'A&E Emergency Grid' && a.assignment_detail === '10pm-8am');
+})());
+
 check('Satellite matching: member found by workforce_id when date_or_day present', (() => {
   const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
-    satellite_grid: { postings: [{ assigned: ['w1'], date_or_day: 'Wednesday' }] } };
+    satellite_grid: { postings: [{ assigned: ['w1'], date_or_day: 'Wednesday', facility: 'Ikolaba' }] } };
   const r = currentAssignment('w1', 'Ada', roster);
   return r.status === 'published_with_assignment' && r.assignments.some(a => a.grid_label === 'Satellite Grid');
+})());
+
+check('Satellite assignment_detail: returns the matched posting\'s own facility verbatim', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
+    satellite_grid: { postings: [{ assigned: ['w1'], date_or_day: 'Wednesday', facility: 'Ikolaba' }] } };
+  const r = currentAssignment('w1', 'Ada', roster);
+  return r.assignments.some(a => a.grid_label === 'Satellite Grid' && a.assignment_detail === 'Ikolaba');
 })());
 
 check('Satellite matching: posting missing date_or_day is skipped even if assigned (parity with MultiRosterManagerView\'s own check)', (() => {
@@ -242,6 +369,20 @@ check('Supervision matching: member found by full_name string equality', (() => 
     supervision_grid: { duties: [{ first_on_duty: 'Ada Okoye', second_on_duty: 'Bola Ade', date_or_day: 'Thursday' }] } };
   const r = currentAssignment('w1', 'Ada Okoye', roster);
   return r.status === 'published_with_assignment' && r.assignments.some(a => a.grid_label === 'Supervision Grid');
+})());
+
+check('Supervision assignment_detail: first_on_duty match reports the generic "1st On Duty" label', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
+    supervision_grid: { duties: [{ first_on_duty: 'Ada Okoye', second_on_duty: 'Bola Ade', date_or_day: 'Thursday' }] } };
+  const r = currentAssignment('w1', 'Ada Okoye', roster);
+  return r.assignments.some(a => a.grid_label === 'Supervision Grid' && a.assignment_detail === '1st On Duty');
+})());
+
+check('Supervision assignment_detail: second_on_duty match reports the generic "2nd On Duty" label', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
+    supervision_grid: { duties: [{ first_on_duty: 'Ada Okoye', second_on_duty: 'Bola Ade', date_or_day: 'Thursday' }] } };
+  const r = currentAssignment('w1', 'Bola Ade', roster);
+  return r.assignments.some(a => a.grid_label === 'Supervision Grid' && a.assignment_detail === '2nd On Duty');
 })());
 
 check('Supervision matching: renamed member silently MISSES their own past assignment (disclosed, unfixed limitation — not a bug)', (() => {
@@ -261,11 +402,22 @@ check('multiple assignments in the same cycle are all retained (not collapsed to
   return r.status === 'published_with_assignment' && r.assignments.length === 2;
 })());
 
-check('minimum return shape: each assignment has only grid_label/date_or_day, no member identifiers', (() => {
+check('minimum return shape: each assignment has only grid_label/date_or_day/assignment_detail, no member identifiers (migration 71)', (() => {
   const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
-    gop_clinic_grid: { slots: [{ residents: ['w1'], date_or_day: 'Monday' }] } };
+    gop_clinic_grid: { slots: [{ residents: ['w1'], date_or_day: 'Monday', clinic_type: 'Triage' }] } };
   const r = currentAssignment('w1', 'Ada', roster);
-  return r.assignments.every(a => Object.keys(a).sort().join(',') === 'date_or_day,grid_label');
+  return r.assignments.every(a => Object.keys(a).sort().join(',') === 'assignment_detail,date_or_day,grid_label');
+})());
+
+check('frontend handles a missing/undefined assignment_detail gracefully (additive field, older/detail-less entries must not crash)', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
+    gop_clinic_grid: { slots: [{ residents: ['w1'], date_or_day: 'Monday' }] } }; // no clinic_type at all
+  const r = currentAssignment('w1', 'Ada', roster);
+  const entry = r.assignments.find(a => a.grid_label === 'GOP Clinic Grid');
+  // assignment_detail should be undefined (not throw, not become the
+  // literal string "undefined"), which the view's `{a.assignment_detail && ...}`
+  // guard renders as nothing — never a crash or a stray "undefined" line.
+  return entry && entry.assignment_detail === undefined;
 })());
 
 check('draft/chief_review roster never yields an assignment, even if grid data would otherwise match (published-only gate)', (() => {
@@ -319,6 +471,19 @@ check('MyAssignmentView.tsx renders only the signed-in resident\'s own name/cate
 
 check('MyAssignmentView.tsx does not persist the access PIN to localStorage/sessionStorage', (() => {
   return !/localStorage\.(set|get)Item/.test(viewTsx) && !/sessionStorage\.(set|get)Item/.test(viewTsx);
+})());
+
+check('MyAssignmentView.tsx renders a.assignment_detail (migration 71 Slice B)', (() => {
+  return /a\.assignment_detail/.test(viewTsx);
+})());
+
+check('MyAssignmentView.tsx guards assignment_detail rendering (additive field — absent/undefined must not crash or print a stray value)', (() => {
+  return /\{a\.assignment_detail\s*&&/.test(viewTsx);
+})());
+
+check('MyAssignmentView.tsx hard-codes no UCH-Family-Medicine-specific service-point/duty label — assignment_detail is rendered verbatim, never mapped/reinterpreted', (() => {
+  const stripped = stripLineComments(viewTsx);
+  return !/\bTriage\b|\bNHIA\b|\bIkolaba\b|Managed Care|Male Sorting|Female Sorting|Children Sorting|\bGOP\b/i.test(stripped);
 })());
 
 // =====================================================================

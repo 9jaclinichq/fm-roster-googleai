@@ -23,6 +23,15 @@ export type MyAssignmentStatus = 'not_published' | 'published_no_assignment' | '
 export interface MyAssignmentEntry {
   grid_label: string;
   date_or_day: string;
+  // Migration 71: the matched slot's own actual service point / shift /
+  // facility / duty position (e.g. a GOP clinic_type, an A&E shift label,
+  // a Satellite facility, or the generic "1st On Duty"/"2nd On Duty" for
+  // Supervision) — opaque, organization-supplied text, rendered verbatim.
+  // Optional/additive: older RPC responses (pre-migration-71, or any
+  // future response that genuinely has nothing to report) omit this
+  // field entirely, so every consumer must treat it as possibly absent,
+  // never assume it exists.
+  assignment_detail?: string;
 }
 
 export interface MyAssignmentResult {
