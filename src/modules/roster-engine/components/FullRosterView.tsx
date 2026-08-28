@@ -1,6 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { fullRosterService, FullRosterResult } from '../lib/fullRosterService';
-import { Table2, RefreshCw, Lock, AlertCircle, StickyNote } from 'lucide-react';
+import { rosterSectionPresentationService } from '../lib/rosterSectionPresentationService';
+import { RosterSectionKey, RosterSectionPresentation, ROSTER_SECTION_KEYS, resolveRosterSectionPresentation } from '../lib/rosterSectionPresentation';
+import { Table2, RefreshCw, Lock, AlertCircle, StickyNote, Stethoscope, ShieldCheck, MapPin, Clock, Users } from 'lucide-react';
+
+// Small, bounded icon-name -> component lookup for the OPTIONAL
+// tenant-configured `icon` field (migration 74). Not an extensible
+// icon-picker system — just enough to prove the config model cleanly. An
+// unrecognized/absent icon renders nothing (safe fallback), never a
+// broken reference.
+const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+  Table2, Stethoscope, ShieldCheck, MapPin, Clock, Users,
+};
 
 interface FullRosterViewProps {
   resident: { id: string; name: string; category: string };
@@ -39,21 +50,23 @@ interface RosterRow {
   assignees: RosterAssignee[];
 }
 interface RosterSection {
-  key: 'gop' | 'emergency' | 'supervision' | 'satellite';
-  // Current stored/display vocabulary, used verbatim for now per this
-  // slice's explicit scope boundary (no roster_section_config yet) — this
-  // is data/presentation text, not a hardcoded assumption baked into the
-  // section's own key or into any matching/business logic.
+  key: RosterSectionKey;
+  // Migration 74: resolved via resolveRosterSectionPresentation (tenant
+  // config with deterministic current-behavior fallback) — never
+  // hardcoded here directly. Presentation only; rows/assignees below are
+  // completely unaffected by any of these fields.
   label: string;
+  shortLabel: string | null;
+  accentColor: string | null;
+  icon: string | null;
   rows: RosterRow[];
   notes: string[];
 }
 
-function buildSections(result: FullRosterResult): RosterSection[] {
-  return [
-    {
+function buildSections(result: FullRosterResult, presentation: RosterSectionPresentation[]): RosterSection[] {
+  const bySectionKey: Record<RosterSectionKey, Omit<RosterSection, 'label' | 'shortLabel' | 'accentColor' | 'icon'>> = {
+    gop: {
       key: 'gop',
-      label: 'GOP Clinic Grid',
       rows: result.gop_clinic_grid.slots.map((s) => ({
         date_or_day: s.date_or_day,
         duty_or_service_point: s.clinic_type,
@@ -64,9 +77,8 @@ function buildSections(result: FullRosterResult): RosterSection[] {
       })),
       notes: result.gop_clinic_grid.unparsed_notes,
     },
-    {
+    emergency: {
       key: 'emergency',
-      label: 'A&E Emergency Grid',
       rows: result.emergency_call_grid.shifts.map((s) => ({
         date_or_day: s.date_or_day,
         duty_or_service_point: s.shift,
@@ -74,9 +86,8 @@ function buildSections(result: FullRosterResult): RosterSection[] {
       })),
       notes: result.emergency_call_grid.unparsed_notes,
     },
-    {
+    supervision: {
       key: 'supervision',
-      label: 'Supervision Grid',
       rows: result.supervision_grid.duties.map((d) => ({
         date_or_day: d.date_or_day,
         duty_or_service_point: null,
@@ -89,9 +100,8 @@ function buildSections(result: FullRosterResult): RosterSection[] {
       })),
       notes: result.supervision_grid.unparsed_notes,
     },
-    {
+    satellite: {
       key: 'satellite',
-      label: 'Satellite Grid',
       rows: result.satellite_grid.postings.map((p) => ({
         date_or_day: p.date_or_day,
         duty_or_service_point: p.facility,
@@ -99,7 +109,25 @@ function buildSections(result: FullRosterResult): RosterSection[] {
       })),
       notes: result.satellite_grid.unparsed_notes,
     },
-  ];
+  };
+
+  // Order follows tenant-configured display_order where configured,
+  // falling back to today's current order — never a fixed literal order
+  // here.
+  return ROSTER_SECTION_KEYS
+    .map((key) => {
+      const resolved = resolveRosterSectionPresentation(key, presentation);
+      return {
+        ...bySectionKey[key],
+        label: resolved.display_label,
+        shortLabel: resolved.short_label,
+        accentColor: resolved.accent_color,
+        icon: resolved.icon,
+        _order: resolved.display_order,
+      };
+    })
+    .sort((a, b) => a._order - b._order)
+    .map(({ _order, ...section }) => section);
 }
 
 export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, accessCode }) => {
@@ -108,6 +136,12 @@ export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, access
   const [result, setResult] = useState<FullRosterResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // Migration 74: tenant-configured section presentation. Loaded
+  // best-effort alongside the roster itself — a failed load simply leaves
+  // this empty, and resolveRosterSectionPresentation still renders
+  // today's current fallback labels/order, so a presentation-load
+  // failure never blocks or breaks the actual roster view.
+  const [presentation, setPresentation] = useState<RosterSectionPresentation[]>([]);
 
   const load = useCallback(async (code: string) => {
     setIsLoading(true);
@@ -116,6 +150,9 @@ export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, access
       const res = await fullRosterService.getCurrentFullRoster(resident.id, code);
       setResult(res);
       setActiveCode(code);
+      rosterSectionPresentationService.getResidentPresentation(resident.id, code)
+        .then(setPresentation)
+        .catch((err) => console.warn('Failed to load roster section presentation (using fallback labels):', err));
     } catch (err) {
       console.warn('Failed to load current full roster:', err);
       setResult(null);
@@ -215,9 +252,24 @@ export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, access
           <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">
             {result.month && result.year ? `${MONTH_NAMES[result.month - 1]} ${result.year}` : 'Current Cycle'}
           </p>
-          {buildSections(result).map((section) => (
-            <div key={section.key} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-4 sm:px-5 py-3 border-b border-slate-100">
+          {buildSections(result, presentation).map((section) => {
+            // Color is purely visual metadata (migration 74) — never a
+            // substitute for the textual label, which always renders
+            // regardless of whether a color is configured. An
+            // unrecognized/absent accent_color simply renders no
+            // border/dot at all (safe fallback), never a broken style.
+            const SectionIcon = section.icon ? ICON_MAP[section.icon] : undefined;
+            return (
+            <div
+              key={section.key}
+              className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden"
+              style={section.accentColor ? { borderLeftWidth: 4, borderLeftColor: section.accentColor } : undefined}
+            >
+              <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+                {section.accentColor && (
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: section.accentColor }} aria-hidden="true" />
+                )}
+                {SectionIcon && <SectionIcon size={14} className="text-slate-400 shrink-0" />}
                 <h3 className="font-bold text-slate-800 text-sm">{section.label}</h3>
               </div>
 
@@ -310,7 +362,8 @@ export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, access
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       ) : null}
     </div>

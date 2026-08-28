@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { myAssignmentService, MyAssignmentResult } from '../lib/myAssignmentService';
+import { rosterSectionPresentationService } from '../lib/rosterSectionPresentationService';
+import { RosterSectionPresentation, GRID_LABEL_TO_SECTION_KEY, resolveRosterSectionPresentation } from '../lib/rosterSectionPresentation';
 import { useTerminology } from '../../shared/terminology';
 import { CalendarCheck, RefreshCw, Lock, AlertCircle } from 'lucide-react';
 
@@ -34,6 +36,12 @@ export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, ac
   const [result, setResult] = useState<MyAssignmentResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // Migration 74: tenant-configured section presentation (display label
+  // only — never assignment data). Loaded best-effort alongside the
+  // assignment itself; if this call fails, resolveRosterSectionPresentation
+  // still renders today's current fallback labels, so a presentation-load
+  // failure never blocks or breaks the actual assignment view.
+  const [presentation, setPresentation] = useState<RosterSectionPresentation[]>([]);
 
   const load = useCallback(async (code: string) => {
     setIsLoading(true);
@@ -42,6 +50,9 @@ export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, ac
       const res = await myAssignmentService.getCurrentAssignment(resident.id, code);
       setResult(res);
       setActiveCode(code);
+      rosterSectionPresentationService.getResidentPresentation(resident.id, code)
+        .then(setPresentation)
+        .catch((err) => console.warn('Failed to load roster section presentation (using fallback labels):', err));
     } catch (err) {
       console.warn('Failed to load current assignment:', err);
       setResult(null);
@@ -166,7 +177,18 @@ export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, ac
                   {a.date_or_day && (
                     <span className="text-xs font-medium text-slate-500">{a.date_or_day}</span>
                   )}
-                  <span className="text-[10px] font-medium text-slate-400">{a.grid_label}</span>
+                  {/* Migration 74: a.grid_label is still the fixed string
+                      resident_get_current_assignment() has always
+                      returned (that RPC is unchanged) — resolved here to
+                      the tenant's configured display label via the
+                      section_key bridge, falling back to the raw
+                      grid_label verbatim if it's ever unrecognized. */}
+                  <span className="text-[10px] font-medium text-slate-400">
+                    {(() => {
+                      const sectionKey = GRID_LABEL_TO_SECTION_KEY[a.grid_label];
+                      return sectionKey ? resolveRosterSectionPresentation(sectionKey, presentation).display_label : a.grid_label;
+                    })()}
+                  </span>
                 </div>
                 {/* assignment_detail (migration 71) is additive — an older
                     RPC response or a genuinely detail-less entry simply

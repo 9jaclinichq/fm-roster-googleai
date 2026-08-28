@@ -13,6 +13,7 @@
 // only the exact function set approved for this extraction moved here.
 import { databaseService, checkSupabase, supabase } from '../databaseService';
 import { Tenant, PublicTenant, ChiefTenantConfig, TenantPlanType, TenantStatus } from '../../types';
+import { RosterSectionKey, RosterSectionPresentation } from '../../modules/roster-engine/lib/rosterSectionPresentation';
 
 export const tenantService = {
   // Unsafe — depends on tenants' permissive direct-read RLS (migration
@@ -325,6 +326,51 @@ export const tenantService = {
 
     if (error) {
       console.warn('Error updating tenant module flags:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  // Chief-scoped roster section presentation config (migration 74). Same
+  // admin-code-verification pattern as chiefUpdateTenantTerminology above
+  // — the RPC derives tenant only from the verified admin code, so a
+  // Chief can never read/write another tenant's configuration. Returns
+  // the already-fallback-resolved 4 sections (same shape the resident
+  // RPC returns) so the config UI can render "what residents currently
+  // see" and edit from there.
+  async chiefGetRosterSectionConfig(adminCode: string): Promise<RosterSectionPresentation[]> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_get_roster_section_config', {
+      p_admin_code: adminCode,
+    });
+
+    if (error) {
+      console.warn('Error fetching roster section config:', error);
+      throw error;
+    }
+    return Array.isArray(data) ? data : [];
+  },
+
+  async chiefUpsertRosterSectionConfig(
+    adminCode: string,
+    sectionKey: RosterSectionKey,
+    updates: { display_label?: string | null; short_label?: string | null; display_order?: number | null; accent_color?: string | null; icon?: string | null }
+  ): Promise<RosterSectionPresentation> {
+    checkSupabase();
+
+    const { data, error } = await supabase!.rpc('chief_upsert_roster_section_config', {
+      p_admin_code: adminCode,
+      p_section_key: sectionKey,
+      p_display_label: updates.display_label ?? null,
+      p_short_label: updates.short_label ?? null,
+      p_display_order: updates.display_order ?? null,
+      p_accent_color: updates.accent_color ?? null,
+      p_icon: updates.icon ?? null,
+    });
+
+    if (error) {
+      console.warn('Error saving roster section config:', error);
       throw error;
     }
     return data;

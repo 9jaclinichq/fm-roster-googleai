@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { databaseService } from '../../../../lib/databaseService';
 import { ChiefTenantConfig, CallDutyRule, TenantAiAdaptationRule } from '../../../../types';
 import { TERMINOLOGY_DEFAULTS, useTerminology } from '../../../shared/terminology';
-import { Settings2, Sliders, Tag, Sparkles, RefreshCw, Plus } from 'lucide-react';
+import { RosterSectionKey, RosterSectionPresentation, ROSTER_SECTION_KEYS, ROSTER_SECTION_ICON_NAMES } from '../../../roster-engine/lib/rosterSectionPresentation';
+import { Settings2, Sliders, Tag, Sparkles, RefreshCw, Plus, Palette } from 'lucide-react';
 
 // Integrated into ChiefDashboardView as a tab. Operates on the Chief's own
 // resolved tenant (migration 23 made the admin code per-tenant, closing
@@ -49,14 +50,20 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
   const [newRuleValue, setNewRuleValue] = useState('');
   const [newFeatureKey, setNewFeatureKey] = useState('');
   const [newFeaturePrompt, setNewFeaturePrompt] = useState('');
+  // Migration 74 — tenant-configurable roster section presentation.
+  // Already resolved-with-fallback by chief_get_roster_section_config
+  // (same shape residents receive), so this panel always shows "what
+  // would currently display" even with zero configuration saved yet.
+  const [rosterSections, setRosterSections] = useState<RosterSectionPresentation[]>([]);
 
   const load = async () => {
     setIsLoading(true);
     try {
-      const [chiefTenant, rules, adapt] = await Promise.all([
+      const [chiefTenant, rules, adapt, sections] = await Promise.all([
         databaseService.chiefGetTenant(adminCode),
         databaseService.getCallDutyRules(tenantId),
         databaseService.getTenantAiAdaptationRules(tenantId),
+        databaseService.chiefGetRosterSectionConfig(adminCode),
       ]);
       if (chiefTenant) {
         setTenant(chiefTenant);
@@ -66,6 +73,7 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
       }
       setCallDutyRules(rules);
       setAdaptationRules(adapt);
+      setRosterSections(sections);
     } catch (err) {
       console.warn(err);
       setStatusMessage('Failed to load tenant customization data.');
@@ -112,6 +120,26 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
     } catch (err) {
       console.warn(err);
       setStatusMessage('Failed to save terminology.');
+    }
+  };
+
+  const updateRosterSectionField = <K extends keyof RosterSectionPresentation>(sectionKey: RosterSectionKey, field: K, value: RosterSectionPresentation[K]) => {
+    setRosterSections(prev => prev.map(s => (s.section_key === sectionKey ? { ...s, [field]: value } : s)));
+  };
+
+  const saveRosterSection = async (section: RosterSectionPresentation) => {
+    try {
+      await databaseService.chiefUpsertRosterSectionConfig(adminCode, section.section_key, {
+        display_label: section.display_label,
+        short_label: section.short_label,
+        display_order: section.display_order,
+        accent_color: section.accent_color,
+        icon: section.icon,
+      });
+      setStatusMessage(`${section.display_label} presentation saved.`);
+    } catch (err) {
+      console.warn(err);
+      setStatusMessage('Failed to save roster section presentation.');
     }
   };
 
@@ -245,6 +273,88 @@ export const TenantCustomizationView: React.FC<TenantCustomizationViewProps> = (
           ))}
         </div>
         <button onClick={saveTerminology} className="text-xs font-bold bg-slate-900 text-white px-3 py-2 rounded-lg hover:bg-slate-800 cursor-pointer">Save Terminology</button>
+      </div>
+
+      {/* Roster section presentation (migration 74) — display label/short
+          label/order/color/icon ONLY. Never touches assignment data,
+          matching logic, or any other tenant's configuration; unchanged
+          fields simply keep resolving to today's current behavior. */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4">
+        <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-1"><Palette size={16} /> Roster Section Presentation</h3>
+        <p className="text-xs text-slate-500 mb-3">
+          Controls how each roster section is labeled, ordered, and colored for {t('members', 'Residents')} in
+          Full Roster and My Assignment. Purely presentational — assignment data and matching are never affected.
+          Leave a field blank to keep today's default.
+        </p>
+        <div className="space-y-3">
+          {ROSTER_SECTION_KEYS.map((key) => {
+            const section = rosterSections.find(s => s.section_key === key);
+            if (!section) return null;
+            return (
+              <div key={key} className="border border-slate-100 rounded-xl p-3">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">section_key: {key}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Display Label</label>
+                    <input
+                      value={section.display_label}
+                      onChange={e => updateRosterSectionField(key, 'display_label', e.target.value)}
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Short Label</label>
+                    <input
+                      value={section.short_label ?? ''}
+                      onChange={e => updateRosterSectionField(key, 'short_label', e.target.value || null)}
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Display Order</label>
+                    <input
+                      type="number"
+                      value={section.display_order}
+                      onChange={e => updateRosterSectionField(key, 'display_order', Number(e.target.value))}
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Accent Color (optional)</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={section.accent_color ?? ''}
+                        onChange={e => updateRosterSectionField(key, 'accent_color', e.target.value || null)}
+                        placeholder="#2563eb"
+                        className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm font-mono"
+                      />
+                      {section.accent_color && (
+                        <span className="w-6 h-6 rounded-full border border-slate-200 shrink-0" style={{ backgroundColor: section.accent_color }} title={section.accent_color} />
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Icon (optional)</label>
+                    <select
+                      value={section.icon ?? ''}
+                      onChange={e => updateRosterSectionField(key, 'icon', e.target.value || null)}
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white"
+                    >
+                      <option value="">None</option>
+                      {ROSTER_SECTION_ICON_NAMES.map(name => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <button
+                  onClick={() => saveRosterSection(section)}
+                  className="mt-3 text-xs font-bold bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 cursor-pointer"
+                >
+                  Save {section.display_label}
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* AI Behavior Tuning */}
