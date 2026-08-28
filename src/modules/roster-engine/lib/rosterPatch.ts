@@ -144,9 +144,18 @@ export function workforceNameMap(workforce: WorkforceMember[]): Map<string, stri
   return new Map(workforce.map((w) => [w.id, w.full_name]));
 }
 
-function operationWorkforceIds(op: RosterPatchOperation): string[] {
+// Exported so rosterRebase.ts can re-check identity validity against a
+// freshly-fetched workforce list without duplicating this switch.
+export function operationWorkforceIds(op: RosterPatchOperation): string[] {
   if (op.op === 'replace') return [op.from_workforce_id, op.to_workforce_id];
   return [op.workforce_id];
+}
+
+// Exported so rosterNetDiff.ts / rosterRebase.ts can read a specific
+// operation's own target field value without re-deriving the
+// scalar-vs-array distinction a second time.
+export function isSupervisionScalarField(section: RosterSection, field: RosterPatchField): boolean {
+  return section === 'supervision' && SUPERVISION_SCALAR_FIELDS.includes(field);
 }
 
 // Deep-clones the 4 grids (so a caller always gets a fresh object it can

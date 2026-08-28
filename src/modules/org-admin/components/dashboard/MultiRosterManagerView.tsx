@@ -18,12 +18,16 @@ import {
   RosterSection,
   RosterPatchOperation,
   RosterPatchField,
+  RosterGrids,
   applyRosterPatch,
   fieldsForSection,
   fieldLabelFor,
   rowsForSection,
   rowLabelFor,
 } from '../../../roster-engine/lib/rosterPatch';
+import { computeNetRosterDiff, computeNetReconciliationIssues } from '../../../roster-engine/lib/rosterNetDiff';
+import { buildRebasePreview, RebasePreview } from '../../../roster-engine/lib/rosterRebase';
+import { compileSwapToOperations } from '../../../roster-engine/lib/rosterSwap';
 import {
   WorkforceMember,
   Collection,
@@ -130,6 +134,35 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
   const [patchWorkforceId, setPatchWorkforceId] = useState<string>('');
   const [patchFromWorkforceId, setPatchFromWorkforceId] = useState<string>('');
   const [patchReason, setPatchReason] = useState<string>('');
+
+  // Net diff + stale-revision rebase review. lastAppliedOperations
+  // accumulates every operation successfully baked into local grid state
+  // (via applyPendingOperations) since activeRevision was last synced
+  // from the server — this, not pendingOperations (which only holds
+  // NOT-yet-applied operations), is "the Chief's pending patch" that a
+  // stale-save rejection needs to classify and that Save Draft/Publish
+  // are about to persist. Reset to [] every time activeRevision is freshly
+  // set from a server round-trip (load/save/publish/discard/rebase).
+  const [lastAppliedOperations, setLastAppliedOperations] = useState<RosterPatchOperation[]>([]);
+  const [rebasePreview, setRebasePreview] = useState<RebasePreview | null>(null);
+  const [pendingLatestRevision, setPendingLatestRevision] = useState<RosterRevision | null>(null);
+  const [isRebasing, setIsRebasing] = useState(false);
+
+  // Swap UI (convenience form only). Per this slice's design, swap is
+  // NOT a new patch primitive — compileSwapToOperations() (rosterSwap.ts)
+  // always compiles a swap into exactly 2 existing 'replace' operations,
+  // which get queued into the SAME pendingOperations list as any manual
+  // structured edit. No persistence or schema anywhere knows about swap.
+  const [swapASection, setSwapASection] = useState<RosterSection>('gop');
+  const [swapARowIndex, setSwapARowIndex] = useState<number>(0);
+  const [swapAField, setSwapAField] = useState<RosterPatchField>('residents');
+  const [swapAWorkforceId, setSwapAWorkforceId] = useState<string>('');
+  const [swapBSection, setSwapBSection] = useState<RosterSection>('gop');
+  const [swapBRowIndex, setSwapBRowIndex] = useState<number>(0);
+  const [swapBField, setSwapBField] = useState<RosterPatchField>('residents');
+  const [swapBWorkforceId, setSwapBWorkforceId] = useState<string>('');
+  const [swapReason, setSwapReason] = useState<string>('');
+
   // Workforce Option A (read-only reconciliation) — see
   // docs/WORKFORCE_V1_RECOVERY_SPEC.md. submissions/rotations are read
   // only to compute reconciliationIssues below; never written here.
@@ -168,6 +201,17 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     setSelectedResidentId(prev => (prev === residentId ? null : residentId));
   };
 
+  // Migration 75 revision grids, with the same null-fallback shape used
+  // throughout load()/discardRevision() — reused here so rosterNetDiff.ts/
+  // rosterRebase.ts always get well-formed RosterGrids, never a partially
+  // null revision row.
+  const revisionGridsOrEmpty = (revision: RosterRevision): RosterGrids => ({
+    gop_clinic_grid: revision.gop_clinic_grid?.slots ? revision.gop_clinic_grid : EMPTY_GOP,
+    emergency_call_grid: revision.emergency_call_grid?.shifts ? revision.emergency_call_grid : EMPTY_EMERGENCY,
+    supervision_grid: revision.supervision_grid?.duties ? revision.supervision_grid : EMPTY_SUPERVISION,
+    satellite_grid: revision.satellite_grid?.postings ? revision.satellite_grid : EMPTY_SATELLITE,
+  });
+
   const load = async () => {
     setIsLoading(true);
     try {
@@ -200,12 +244,14 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
         if (mr.status === 'published') {
           const revision = await rosterRevisionService.startRevision(adminCode);
           setActiveRevision(revision);
+          setLastAppliedOperations([]);
           setGopGrid(revision.gop_clinic_grid?.slots ? revision.gop_clinic_grid : EMPTY_GOP);
           setEmergencyGrid(revision.emergency_call_grid?.shifts ? revision.emergency_call_grid : EMPTY_EMERGENCY);
           setSupervisionGrid(revision.supervision_grid?.duties ? revision.supervision_grid : EMPTY_SUPERVISION);
           setSatelliteGrid(revision.satellite_grid?.postings ? revision.satellite_grid : EMPTY_SATELLITE);
         } else {
           setActiveRevision(null);
+          setLastAppliedOperations([]);
           setGopGrid(mr.gop_clinic_grid?.slots ? mr.gop_clinic_grid : EMPTY_GOP);
           setEmergencyGrid(mr.emergency_call_grid?.shifts ? mr.emergency_call_grid : EMPTY_EMERGENCY);
           setSupervisionGrid(mr.supervision_grid?.duties ? mr.supervision_grid : EMPTY_SUPERVISION);
@@ -399,6 +445,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
         const revision = activeRevision ?? await rosterRevisionService.startRevision(adminCode);
         const saved = await rosterRevisionService.saveRevision(adminCode, revision.id, revision.updated_at, currentGridsSnapshot());
         setActiveRevision(saved);
+        setLastAppliedOperations([]);
         setStatusMessage(`Saved to Revision #${saved.revision_number} — not yet published. Residents still see the current published roster.`);
       } else {
         // Unchanged: nothing has been published yet, so there is nothing
@@ -413,7 +460,11 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
       setTimeout(() => setStatusMessage(''), 4000);
     } catch (err) {
       console.warn(err);
-      setStatusMessage(err instanceof Error && /changed elsewhere/i.test(err.message) ? err.message : 'Failed to save draft.');
+      if (err instanceof Error && /changed elsewhere/i.test(err.message) && activeRevision) {
+        await enterRebaseReview();
+      } else {
+        setStatusMessage(err instanceof Error ? err.message : 'Failed to save draft.');
+      }
     } finally {
       setIsSaving(false);
     }
@@ -465,7 +516,11 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
       setTimeout(() => setStatusMessage(''), 4000);
     } catch (err) {
       console.warn(err);
-      setStatusMessage(err instanceof Error && /changed elsewhere/i.test(err.message) ? err.message : 'Failed to publish roster.');
+      if (err instanceof Error && /changed elsewhere/i.test(err.message) && activeRevision) {
+        await enterRebaseReview();
+      } else {
+        setStatusMessage(err instanceof Error ? err.message : 'Failed to publish roster.');
+      }
     } finally {
       setIsSaving(false);
     }
@@ -477,6 +532,9 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     try {
       await rosterRevisionService.discardRevision(adminCode, activeRevision.id);
       setActiveRevision(null);
+      setLastAppliedOperations([]);
+      setRebasePreview(null);
+      setPendingLatestRevision(null);
       // Revert local grid state to the untouched, still-live published
       // content — the revision being discarded is exactly what protected
       // it from ever being written.
@@ -492,6 +550,82 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     } finally {
       setIsRevisionBusy(false);
     }
+  };
+
+  // ------------------------------------------------------------------
+  // Stale-revision rebase review. migration 75's updated_at optimistic
+  // concurrency check (unchanged, still authoritative server-side) is
+  // what triggers this — saveDraft()/publish() call this ONLY after that
+  // check has already rejected the save. This never silently replays
+  // anything: it fetches the latest revision, classifies
+  // lastAppliedOperations (everything baked into local grid state since
+  // the Chief's last sync) against (last-synced base -> latest) via
+  // rosterRebase.ts, and surfaces a Rebase Review the Chief must
+  // explicitly confirm before anything is reapplied.
+  // ------------------------------------------------------------------
+  const enterRebaseReview = async () => {
+    if (!activeRevision) return;
+    setIsRebasing(true);
+    try {
+      const latest = await rosterRevisionService.startRevision(adminCode);
+      const baseGrids = revisionGridsOrEmpty(activeRevision);
+      const latestGrids = revisionGridsOrEmpty(latest);
+      const preview = buildRebasePreview(baseGrids, latestGrids, lastAppliedOperations, workforce);
+      setRebasePreview(preview);
+      setPendingLatestRevision(latest);
+      setStatusMessage('This revision changed elsewhere — review below before continuing.');
+      setTimeout(() => setStatusMessage(''), 6000);
+    } catch (err) {
+      console.warn(err);
+      setStatusMessage('Failed to load the latest revision for rebase review.');
+    } finally {
+      setIsRebasing(false);
+    }
+  };
+
+  // Chief-confirmed replay: applies ONLY the classified-REPLAYABLE
+  // operations onto the fetched latest revision, adopts that revision as
+  // the new local base, and keeps the replayed operations as the new
+  // lastAppliedOperations (applied-but-unsaved relative to this new
+  // base). CONFLICT / TARGET_NO_LONGER_VALID operations are dropped, not
+  // guessed at — the Chief sees how many were dropped and can redo them
+  // manually against the fresh state. Save Draft/Publish afterward go
+  // through the exact same persistence path, unchanged.
+  const confirmRebase = async () => {
+    if (!rebasePreview || !pendingLatestRevision) return;
+    setIsRebasing(true);
+    try {
+      const latestGrids = revisionGridsOrEmpty(pendingLatestRevision);
+      const replayed = applyRosterPatch(latestGrids, rebasePreview.replayableOperations, workforce);
+      setActiveRevision(pendingLatestRevision);
+      setGopGrid(replayed.grids.gop_clinic_grid);
+      setEmergencyGrid(replayed.grids.emergency_call_grid);
+      setSupervisionGrid(replayed.grids.supervision_grid);
+      setSatelliteGrid(replayed.grids.satellite_grid);
+      setLastAppliedOperations(rebasePreview.replayableOperations);
+      const droppedCount = rebasePreview.results.length - rebasePreview.replayableOperations.length;
+      const revisionNumber = pendingLatestRevision.revision_number;
+      setRebasePreview(null);
+      setPendingLatestRevision(null);
+      setStatusMessage(
+        droppedCount > 0
+          ? `Rebased onto Revision #${revisionNumber}. ${rebasePreview.replayableOperations.length} change(s) replayed; ${droppedCount} change(s) dropped (conflict or no longer valid) — review and redo them if still needed, then Save Draft again.`
+          : `Rebased onto Revision #${revisionNumber}. All ${rebasePreview.replayableOperations.length} change(s) replayed cleanly — Save Draft again to persist.`
+      );
+      setTimeout(() => setStatusMessage(''), 7000);
+    } catch (err) {
+      console.warn(err);
+      setStatusMessage('Failed to rebase onto the latest revision.');
+    } finally {
+      setIsRebasing(false);
+    }
+  };
+
+  const cancelRebase = () => {
+    setRebasePreview(null);
+    setPendingLatestRevision(null);
+    setStatusMessage('Rebase cancelled — your local changes remain unsaved. Discard the revision if you want to start over from the latest state instead.');
+    setTimeout(() => setStatusMessage(''), 6000);
   };
 
   // Migration 75: minimal, deterministic, human-readable diff sufficient
@@ -567,6 +701,8 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     // error for the Chief to fix or remove) — the ones that succeeded
     // are now reflected in the grids above and cleared from the queue.
     const failedSignatures = new Set(patchPreview.errors.map((e) => JSON.stringify(e.operation)));
+    const succeededOperations = pendingOperations.filter((op) => !failedSignatures.has(JSON.stringify(op)));
+    setLastAppliedOperations((prev) => [...prev, ...succeededOperations]);
     setPendingOperations((prev) => prev.filter((op) => failedSignatures.has(JSON.stringify(op))));
     setStatusMessage(
       patchPreview.errors.length > 0
@@ -574,6 +710,51 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
         : `Applied ${patchPreview.diffs.length} change(s) to the local snapshot. Click Save Draft to persist to the revision.`
     );
     setTimeout(() => setStatusMessage(''), 5000);
+  };
+
+  // ------------------------------------------------------------------
+  // Net roster diff — base (last-synced revision) vs. final (patchPreview
+  // above already models base + lastAppliedOperations + pendingOperations
+  // in one hypothetical snapshot). This is a pure before/after comparison
+  // with no awareness of which operations produced the final state, so
+  // cancel-out sequences (assign then unassign, replace then replace
+  // back) collapse to "no change" automatically — see rosterNetDiff.ts.
+  // Per this slice's design, Chief approval is based on THIS net result,
+  // not the raw per-operation list above (which remains visible too).
+  // ------------------------------------------------------------------
+  const netDiffBaseGrids = activeRevision ? revisionGridsOrEmpty(activeRevision) : null;
+  const netDiffEntries = (netDiffBaseGrids && patchPreview)
+    ? computeNetRosterDiff(netDiffBaseGrids, patchPreview.grids, workforce)
+    : [];
+  const netReconciliationIssues = (netDiffBaseGrids && masterRoster && patchPreview)
+    ? computeNetReconciliationIssues(
+        computeReconciliationIssues(submissions, workforce, rotations, { ...masterRoster, ...netDiffBaseGrids }),
+        computeReconciliationIssues(submissions, workforce, rotations, { ...masterRoster, ...patchPreview.grids })
+      )
+    : null;
+
+  // Swap UI — convenience form only. Compiles into 2 existing 'replace'
+  // operations (rosterSwap.ts) queued into the SAME pendingOperations
+  // list as any manual structured edit; no new patch primitive.
+  const addSwapToPending = () => {
+    const result = compileSwapToOperations(
+      currentGridsSnapshot(),
+      { section: swapASection, row_index: swapARowIndex, field: swapAField, workforce_id: swapAWorkforceId },
+      { section: swapBSection, row_index: swapBRowIndex, field: swapBField, workforce_id: swapBWorkforceId },
+      workforce,
+      swapReason || undefined
+    );
+    if (result.status === 'rejected') {
+      setStatusMessage(result.reason);
+      setTimeout(() => setStatusMessage(''), 5000);
+      return;
+    }
+    setPendingOperations((prev) => [...prev, ...result.operations]);
+    setSwapAWorkforceId('');
+    setSwapBWorkforceId('');
+    setSwapReason('');
+    setStatusMessage('Swap queued as 2 replace operations — review in Pending Changes below.');
+    setTimeout(() => setStatusMessage(''), 4000);
   };
 
   if (isLoading) {
@@ -637,6 +818,78 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
         </div>
       </div>
 
+      {/* Stale-revision Rebase Review. Only ever shown after a Save/
+          Publish attempt was rejected by migration 75's updated_at
+          concurrency check (unchanged, still authoritative). Nothing here
+          replays anything until the Chief explicitly clicks "Confirm
+          Rebase" below — see enterRebaseReview()/confirmRebase(). */}
+      {rebasePreview && pendingLatestRevision && (
+        <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="text-rose-600" size={16} />
+            <h3 className="font-bold text-rose-800 text-sm">
+              Rebase Review — this revision changed elsewhere (now at #{pendingLatestRevision.revision_number})
+            </h3>
+          </div>
+          <p className="text-[11px] text-rose-700">
+            Your changes were not saved. Review each pending change against the latest revision below, then explicitly confirm before anything is reapplied.
+          </p>
+          <div className="space-y-1.5">
+            {rebasePreview.results.map((result, i) => (
+              <div key={i} className={`rounded-lg px-3 py-2 text-xs border ${
+                result.classification === 'REPLAYABLE' ? 'bg-emerald-50 border-emerald-200' :
+                result.classification === 'CONFLICT' ? 'bg-rose-100 border-rose-300' :
+                'bg-slate-100 border-slate-300'
+              }`}>
+                <p className="font-semibold text-slate-700">
+                  {PATCH_SECTION_LABELS.find(([k]) => k === result.operation.section)?.[1]} — Row {result.operation.row_index} — {fieldLabelFor(result.operation.field)}
+                  <span className={`ml-2 text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
+                    result.classification === 'REPLAYABLE' ? 'bg-emerald-200 text-emerald-800' :
+                    result.classification === 'CONFLICT' ? 'bg-rose-200 text-rose-800' :
+                    'bg-slate-200 text-slate-700'
+                  }`}>
+                    {result.classification}
+                  </span>
+                </p>
+                <p className="text-slate-600 mt-0.5">{result.reason}</p>
+                <p className="text-slate-500 mt-0.5">
+                  Latest current value: {Array.isArray(result.latestValue) ? (result.latestValue.join(', ') || 'nobody') : (result.latestValue ?? 'nobody')}
+                </p>
+              </div>
+            ))}
+          </div>
+          {rebasePreview.netDiffIfReplayed.length > 0 && (
+            <div className="bg-white border border-rose-200 rounded-lg px-3 py-2 text-xs space-y-1">
+              <p className="font-bold text-rose-800">If confirmed, this would change on Revision #{pendingLatestRevision.revision_number}:</p>
+              {rebasePreview.netDiffIfReplayed.map((entry, i) => (
+                <p key={i} className="text-rose-700">
+                  {PATCH_SECTION_LABELS.find(([k]) => k === entry.section)?.[1]} — {entry.dateOrDay ?? `Row ${entry.row_index}`} — {entry.fieldLabel}: {' '}
+                  {entry.removedNames.length > 0 && <span>removes {entry.removedNames.join(', ')}</span>}
+                  {entry.removedNames.length > 0 && entry.addedNames.length > 0 && <span>, </span>}
+                  {entry.addedNames.length > 0 && <span>adds {entry.addedNames.join(', ')}</span>}
+                </p>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={confirmRebase}
+              disabled={isRebasing}
+              className="px-3 py-1.5 bg-rose-700 hover:bg-rose-800 disabled:bg-slate-400 text-white font-bold rounded-lg text-xs transition cursor-pointer"
+            >
+              Confirm Rebase — replay {rebasePreview.replayableOperations.length} change(s) onto #{pendingLatestRevision.revision_number}
+            </button>
+            <button
+              onClick={cancelRebase}
+              disabled={isRebasing}
+              className="px-3 py-1.5 border border-rose-300 hover:bg-rose-100 text-rose-800 font-bold rounded-lg text-xs transition cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Migration 75: revision-safety indicator. Only ever shown once a
           roster has already been published — combined_master_rosters is
           not written to at all while this is visible; residents keep
@@ -665,6 +918,51 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
           >
             Discard Revision
           </button>
+        </div>
+      )}
+
+      {/* Net Effect — base (last-synced revision) vs. final hypothetical
+          snapshot (base + everything applied locally + everything still
+          queued). Per this slice's design, Chief approval should be based
+          on this net result, not the raw per-operation list (kept
+          available below in the Structured Edit panel). This is a pure
+          before/after diff — cancel-out sequences (assign then unassign,
+          replace then replace back) collapse to nothing automatically,
+          with no special-casing of any specific sequence. */}
+      {activeRevision && (netDiffEntries.length > 0 || (netReconciliationIssues && (netReconciliationIssues.introducedByBatch.length > 0 || netReconciliationIssues.resolvedByBatch.length > 0))) && (
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <ClipboardCheck className="text-slate-500" size={16} />
+            <h3 className="font-bold text-slate-800 text-sm">Net Effect vs. Revision #{activeRevision.revision_number}</h3>
+          </div>
+          {netDiffEntries.length === 0 ? (
+            <p className="text-xs text-slate-400">No net change — any queued/applied edits cancel out to the last-saved revision.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {netDiffEntries.map((entry, i) => (
+                <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs">
+                  <p className="font-semibold text-slate-700">
+                    {PATCH_SECTION_LABELS.find(([k]) => k === entry.section)?.[1]} — {entry.dateOrDay ?? `Row ${entry.row_index}`} — {entry.fieldLabel}
+                  </p>
+                  <p className="text-slate-600 mt-0.5">
+                    {entry.removedNames.length > 0 && <span>Removed: {entry.removedNames.join(', ')}. </span>}
+                    {entry.addedNames.length > 0 && <span>Added: {entry.addedNames.join(', ')}.</span>}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+          {netReconciliationIssues && (netReconciliationIssues.introducedByBatch.length > 0 || netReconciliationIssues.resolvedByBatch.length > 0) && (
+            <div className="border-t border-slate-100 pt-2 space-y-1">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Net reconciliation impact (non-blocking)</p>
+              {netReconciliationIssues.introducedByBatch.map((issue, i) => (
+                <p key={`intro-${i}`} className="text-[10px] text-rose-700">Introduced: {issue.message}</p>
+              ))}
+              {netReconciliationIssues.resolvedByBatch.map((issue, i) => (
+                <p key={`resolved-${i}`} className="text-[10px] text-emerald-700">Resolved: {issue.message}</p>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -813,6 +1111,67 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                 </button>
               </div>
             )}
+          </div>
+        );
+      })()}
+
+      {/* Swap — convenience form only. Compiles into 2 existing 'replace'
+          operations (rosterSwap.ts), queued into the same Pending Changes
+          list above. No new patch primitive; no persistence or schema
+          knows about "swap" — see rosterSwap.ts's header. */}
+      {activeRevision && (() => {
+        const rowsA = rowsForSection(currentGridsSnapshot(), swapASection);
+        const rowsB = rowsForSection(currentGridsSnapshot(), swapBSection);
+        const fieldsA = fieldsForSection(swapASection);
+        const fieldsB = fieldsForSection(swapBSection);
+        return (
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-4">
+            <div className="flex items-center space-x-2">
+              <Edit3 className="text-slate-500" size={16} />
+              <h3 className="font-bold text-slate-800 text-sm">Swap — compiles into 2 replace operations</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {([
+                ['A' as const, swapASection, setSwapASection, swapARowIndex, setSwapARowIndex, swapAField, setSwapAField, swapAWorkforceId, setSwapAWorkforceId, rowsA, fieldsA],
+                ['B' as const, swapBSection, setSwapBSection, swapBRowIndex, setSwapBRowIndex, swapBField, setSwapBField, swapBWorkforceId, setSwapBWorkforceId, rowsB, fieldsB],
+              ] as const).map(([label, section, setSection, rowIndex, setRowIndex, field, setField, workforceId, setWorkforceId, rows, fields]) => (
+                <div key={label} className="border border-slate-200 rounded-xl p-3 space-y-2">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase">Target {label}</p>
+                  <select
+                    value={section}
+                    onChange={(e) => {
+                      const s = e.target.value as RosterSection;
+                      setSection(s);
+                      setRowIndex(0);
+                      setField(fieldsForSection(s)[0]);
+                    }}
+                    className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white"
+                  >
+                    {PATCH_SECTION_LABELS.map(([key, sLabel]) => <option key={key} value={key}>{sLabel}</option>)}
+                  </select>
+                  <select value={rowIndex} onChange={(e) => setRowIndex(Number(e.target.value))} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white">
+                    {rows.length === 0 && <option value={0}>(no rows in this section)</option>}
+                    {rows.map((row, i) => <option key={i} value={i}>{rowLabelFor(section, row)}</option>)}
+                  </select>
+                  <select value={field} onChange={(e) => setField(e.target.value as RosterPatchField)} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white">
+                    {fields.map((f) => <option key={f} value={f}>{fieldLabelFor(f)}</option>)}
+                  </select>
+                  <select value={workforceId} onChange={(e) => setWorkforceId(e.target.value)} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white">
+                    <option value="">Current occupant to swap out...</option>
+                    {workforce.map((w) => <option key={w.id} value={w.id}>{w.full_name}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Reason (optional)</label>
+                <input value={swapReason} onChange={(e) => setSwapReason(e.target.value)} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm" placeholder="e.g. mutual coverage swap" />
+              </div>
+              <button onClick={addSwapToPending} className="flex items-center gap-1 text-xs font-bold bg-slate-900 text-white px-3 py-2 rounded-lg hover:bg-slate-800 cursor-pointer shrink-0">
+                <Plus size={14} /> Queue Swap
+              </button>
+            </div>
           </div>
         );
       })()}

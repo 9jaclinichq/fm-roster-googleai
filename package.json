@@ -21,6 +21,7 @@
     "verify:roster-section-config": "node scripts/verify-roster-section-config.cjs",
     "verify:roster-revisions": "node scripts/verify-roster-revisions.cjs",
     "verify:roster-patch": "tsx scripts/verify-roster-patch.ts",
+    "verify:roster-safety-slice": "tsx scripts/verify-roster-safety-slice.ts",
     "verify:submission-review-status": "node scripts/verify-submission-review-status.cjs",
     "verify:pending-member-contacts": "node scripts/verify-pending-member-contacts.cjs",
     "verify:m19-dormant": "node scripts/verify-m19-dormant.cjs",
