@@ -17,6 +17,7 @@
     "verify:roster-reconciliation": "tsx scripts/verify-roster-reconciliation.ts",
     "verify:submission-status": "tsx scripts/verify-submission-status.ts",
     "verify:my-assignment": "node scripts/verify-my-assignment.cjs",
+    "verify:full-roster": "node scripts/verify-full-roster.cjs",
     "verify:submission-review-status": "node scripts/verify-submission-review-status.cjs",
     "verify:pending-member-contacts": "node scripts/verify-pending-member-contacts.cjs",
     "verify:m19-dormant": "node scripts/verify-m19-dormant.cjs",

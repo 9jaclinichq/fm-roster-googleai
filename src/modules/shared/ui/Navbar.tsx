@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { databaseService } from '../../../lib/databaseService';
 import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
 import { useTerminology } from '../terminology';
-import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard, Home, CalendarCheck } from 'lucide-react';
+import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard, Home, CalendarCheck, Table2 } from 'lucide-react';
 
 // Minimal event typing for the non-standard `beforeinstallprompt` event —
 // not part of the DOM lib TypeScript ships with.
@@ -32,6 +32,7 @@ interface NavbarProps {
   onNavigateToResidentForm: () => void;
   onNavigateToAnnouncements: () => void;
   onNavigateToMyAssignment: () => void;
+  onNavigateToFullRoster: () => void;
   onNavigateToDissertation: () => void;
   onNavigateToCasebook: () => void;
   onNavigateToLibrary: () => void;
@@ -47,6 +48,7 @@ interface NavbarProps {
     | 'resident'
     | 'resident-announcements'
     | 'resident-my-assignment'
+    | 'resident-full-roster'
     | 'resident-dissertation'
     | 'resident-casebook'
     | 'resident-library'
@@ -70,6 +72,7 @@ const RESIDENT_VIEWS = [
   'resident',
   'resident-announcements',
   'resident-my-assignment',
+  'resident-full-roster',
   'resident-dissertation',
   'resident-casebook',
   'resident-library',
@@ -94,6 +97,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigateToResidentForm,
   onNavigateToAnnouncements,
   onNavigateToMyAssignment,
+  onNavigateToFullRoster,
   onNavigateToDissertation,
   onNavigateToCasebook,
   onNavigateToLibrary,
@@ -324,6 +328,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <CalendarCheck size={13} />
               <span>My Assignment</span>
+            </button>
+            <button
+              onClick={onNavigateToFullRoster}
+              className={`flex items-center space-x-1.5 py-2.5 text-xs font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
+                currentView === 'resident-full-roster'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Table2 size={13} />
+              <span>Full Roster</span>
             </button>
             <button
               onClick={onNavigateToDissertation}

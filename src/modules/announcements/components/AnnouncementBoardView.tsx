@@ -1,10 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { databaseService } from '../../../lib/databaseService';
 import { Announcement, AnnouncementCategory } from '../../../types';
-import { Pin, Search, Megaphone, RefreshCw, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Pin, Search, Megaphone, RefreshCw, CheckCircle2, ChevronDown, ChevronUp, Table2 } from 'lucide-react';
 
 interface AnnouncementBoardViewProps {
   resident: { id: string; name: string; category: string };
+  // Optional — deep-links a roster-published announcement to the Full
+  // Roster view. Uses the announcement's EXISTING `category` field
+  // ('Roster') to decide when to show the action, so this needed no
+  // schema change (no action_route/deep-link column exists on
+  // `announcements` yet — that remains deferred, see this slice's report).
+  // Always navigates to the CURRENT published roster, not a snapshot of
+  // whichever roster was current when this specific announcement was
+  // posted — Full Roster has no versioning concept yet either.
+  onViewFullRoster?: () => void;
 }
 
 const CATEGORIES: AnnouncementCategory[] = ['Roster', 'Exam', 'CME', 'Admin'];
@@ -16,7 +25,7 @@ const CATEGORY_STYLES: Record<AnnouncementCategory, string> = {
   Admin: 'bg-slate-100 text-slate-700 border-slate-200',
 };
 
-export const AnnouncementBoardView: React.FC<AnnouncementBoardViewProps> = ({ resident }) => {
+export const AnnouncementBoardView: React.FC<AnnouncementBoardViewProps> = ({ resident, onViewFullRoster }) => {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -116,6 +125,20 @@ export const AnnouncementBoardView: React.FC<AnnouncementBoardViewProps> = ({ re
         {isExpanded && (
           <div className="px-4 sm:px-5 pb-5 border-t border-slate-100 pt-4">
             <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{announcement.body}</p>
+            {/* No schema change: this only reads the announcement's
+                existing `category` column. Always deep-links to the
+                CURRENT published roster (Full Roster has no per-
+                announcement snapshot/versioning concept). */}
+            {announcement.category === 'Roster' && onViewFullRoster && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onViewFullRoster(); }}
+                className="mt-3 inline-flex items-center space-x-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm transition cursor-pointer"
+              >
+                <Table2 size={13} />
+                <span>View Full Roster</span>
+              </button>
+            )}
             <div className="mt-3 flex items-center space-x-1.5 text-[10px] text-emerald-700 font-semibold">
               <CheckCircle2 size={12} />
               <span>Marked as read</span>

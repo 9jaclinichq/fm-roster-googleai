@@ -11,6 +11,7 @@ import { PostLoginEmailPrompt } from './modules/auth/components/PostLoginEmailPr
 import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
 import { MyAssignmentView } from './modules/roster-engine/components/MyAssignmentView';
+import { FullRosterView } from './modules/roster-engine/components/FullRosterView';
 import { AuthLandingView } from './modules/auth/components/AuthLandingView';
 import { TenantSelectorView } from './modules/auth/components/TenantSelectorView';
 import { DoctorAuthView } from './modules/auth/components/DoctorAuthView';
@@ -326,6 +327,7 @@ function MainAppContent() {
     if (path.startsWith('/workspace/home')) return 'resident-home';
     if (path.startsWith('/workspace/announcements')) return 'resident-announcements';
     if (path.startsWith('/workspace/my-assignment')) return 'resident-my-assignment';
+    if (path.startsWith('/workspace/full-roster')) return 'resident-full-roster';
     if (path.startsWith('/workspace/dissertation')) return 'resident-dissertation';
     if (path.startsWith('/workspace/casebook')) return 'resident-casebook';
     if (path.startsWith('/workspace/library')) return 'resident-library';
@@ -444,6 +446,7 @@ function MainAppContent() {
         onNavigateToResidentForm={() => navigate('/workspace/form')}
         onNavigateToAnnouncements={() => navigate('/workspace/announcements')}
         onNavigateToMyAssignment={() => navigate('/workspace/my-assignment')}
+        onNavigateToFullRoster={() => navigate('/workspace/full-roster')}
         onNavigateToDissertation={() => navigate('/workspace/dissertation')}
         onNavigateToCasebook={() => navigate('/workspace/casebook')}
         onNavigateToLibrary={() => navigate('/workspace/library')}
@@ -607,7 +610,7 @@ function MainAppContent() {
             path="/workspace/announcements"
             element={
               currentResident ? (
-                <AnnouncementBoardView resident={currentResident} />
+                <AnnouncementBoardView resident={currentResident} onViewFullRoster={() => navigate('/workspace/full-roster')} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )
@@ -625,6 +628,22 @@ function MainAppContent() {
             element={
               currentResident ? (
                 <MyAssignmentView resident={currentResident} accessCode={residentAccessCode} />
+              ) : (
+                <Navigate to="/workspace/login" replace />
+              )
+            }
+          />
+
+          {/* Full Roster — member-facing read-only projection of the ENTIRE
+              currently published roster (migration 73's
+              resident_get_current_full_roster() RPC), a sibling
+              projection of the same published source as My Assignment
+              above. Same residentAccessCode threading, same rationale. */}
+          <Route
+            path="/workspace/full-roster"
+            element={
+              currentResident ? (
+                <FullRosterView resident={currentResident} accessCode={residentAccessCode} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )
