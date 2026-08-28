@@ -22,7 +22,13 @@ export type MyAssignmentStatus = 'not_published' | 'published_no_assignment' | '
 
 export interface MyAssignmentEntry {
   grid_label: string;
-  date_or_day: string;
+  // Migration 72: a Satellite/Special Coverage posting whose source
+  // represents a period/range (e.g. "1-30 Sep") rather than a single date
+  // has date_or_day = null in the stored roster — the RPC now returns such
+  // postings (previously excluded entirely) and passes that null through
+  // verbatim rather than fabricating a date. Every consumer must handle
+  // date_or_day being null, not just being present.
+  date_or_day: string | null;
   // Migration 71: the matched slot's own actual service point / shift /
   // facility / duty position (e.g. a GOP clinic_type, an A&E shift label,
   // a Satellite facility, or the generic "1st On Duty"/"2nd On Duty" for

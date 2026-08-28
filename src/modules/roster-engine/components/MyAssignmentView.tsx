@@ -157,7 +157,15 @@ export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, ac
             {result.assignments.map((a, i) => (
               <div key={i} className="border border-slate-100 rounded-xl px-3.5 py-2.5">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-medium text-slate-500">{a.date_or_day}</span>
+                  {/* Migration 72: a Satellite/Special Coverage posting
+                      representing a period/range rather than a single date
+                      (e.g. a month-long posting) legitimately has
+                      date_or_day = null — guarded the same way
+                      assignment_detail already is below, so this renders
+                      nothing rather than a blank span or fabricated text. */}
+                  {a.date_or_day && (
+                    <span className="text-xs font-medium text-slate-500">{a.date_or_day}</span>
+                  )}
                   <span className="text-[10px] font-medium text-slate-400">{a.grid_label}</span>
                 </div>
                 {/* assignment_detail (migration 71) is additive — an older

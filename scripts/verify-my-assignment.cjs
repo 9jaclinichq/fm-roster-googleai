@@ -90,16 +90,21 @@ const MIGRATION_PATH = 'supabase/migrations/67_resident_get_current' + '_assignm
 // Migration 71 (Slice A, 2026-08-27) — assignment_detail additions. Built
 // via concatenation for the same secret-scanner reason as MIGRATION_PATH.
 const MIGRATION_71_PATH = 'supabase/migrations/71_resident_get_current' + '_assignment_detail.sql';
+// Migration 72 (2026-08-28) — Satellite/Special Coverage null date_or_day
+// (period/range posting) correctness fix. Same concatenation reason.
+const MIGRATION_72_PATH = 'supabase/migrations/72_resident_get_current_assignment' + '_satellite_range.sql';
 const SERVICE_PATH = 'src/modules/roster-engine/lib/myAssignmentService.ts';
 const VIEW_PATH = 'src/modules/roster-engine/components/MyAssignmentView.tsx';
 
 check('migration 67 file exists', fs.existsSync(path.join(REPO_ROOT, MIGRATION_PATH)));
 check('migration 71 file exists', fs.existsSync(path.join(REPO_ROOT, MIGRATION_71_PATH)));
+check('migration 72 file exists', fs.existsSync(path.join(REPO_ROOT, MIGRATION_72_PATH)));
 check('myAssignmentService.ts exists', fs.existsSync(path.join(REPO_ROOT, SERVICE_PATH)));
 check('MyAssignmentView.tsx exists', fs.existsSync(path.join(REPO_ROOT, VIEW_PATH)));
 
 const migrationSql = fs.existsSync(path.join(REPO_ROOT, MIGRATION_PATH)) ? read(MIGRATION_PATH) : '';
 const migration71Sql = fs.existsSync(path.join(REPO_ROOT, MIGRATION_71_PATH)) ? read(MIGRATION_71_PATH) : '';
+const migration72Sql = fs.existsSync(path.join(REPO_ROOT, MIGRATION_72_PATH)) ? read(MIGRATION_72_PATH) : '';
 const serviceTs = fs.existsSync(path.join(REPO_ROOT, SERVICE_PATH)) ? read(SERVICE_PATH) : '';
 const viewTsx = fs.existsSync(path.join(REPO_ROOT, VIEW_PATH)) ? read(VIEW_PATH) : '';
 
@@ -255,6 +260,87 @@ check('migration 71 does not alter which slots match (identity/matching logic by
 })());
 
 // =====================================================================
+// Section 2c — migration 72 (2026-08-28): Satellite/Special Coverage
+// null-date_or_day correctness fix. Preserves everything from migration 71
+// except the one Satellite guard clause.
+// =====================================================================
+
+check('migration 72 is explicitly marked NOT APPLIED / written-for-review-only', (() => {
+  return /WRITTEN FOR REVIEW ONLY/i.test(migration72Sql) && /NOT APPLIED LIVE/i.test(migration72Sql);
+})());
+
+check('migration 72 preserves the exact signature (p_workforce_id uuid, p_code text), no target-member param', (() => {
+  const signatureLine = (migration72Sql.match(/CREATE OR REPLACE FUNCTION public\.resident_get_current_assignment\([^)]*\)/) || [''])[0];
+  return /^CREATE OR REPLACE FUNCTION public\.resident_get_current_assignment\(p_workforce_id uuid, p_code text\)$/.test(signatureLine)
+    && !/p_target/i.test(signatureLine);
+})());
+
+check('migration 72 preserves SECURITY DEFINER + fixed search_path', (() => {
+  return /LANGUAGE plpgsql SECURITY DEFINER SET search_path = public/.test(migration72Sql);
+})());
+
+check('migration 72 preserves the credential reverification block', (() => {
+  return /w\.id\s*=\s*p_workforce_id/.test(migration72Sql)
+    && /w\.resident_code\s*=\s*p_code/.test(migration72Sql)
+    && /w\.active\s*=\s*true/.test(migration72Sql);
+})());
+
+check('migration 72 preserves server-derived tenant scoping (no p_tenant_id) — tenant isolation not weakened', (() => {
+  return /SELECT w\.tenant_id, w\.full_name INTO v_tenant_id, v_full_name/.test(migration72Sql)
+    && !/p_tenant_id/i.test(migration72Sql);
+})());
+
+check('migration 72 preserves the published-only gate and three-state contract', (() => {
+  return /cmr\.status\s*=\s*'published'/.test(migration72Sql)
+    && /'not_published'/.test(migration72Sql)
+    && /'published_no_assignment'/.test(migration72Sql)
+    && /'published_with_assignment'/.test(migration72Sql);
+})());
+
+check('migration 72 preserves GOP matching + assignment_detail unchanged', (() => {
+  return /gop_clinic_grid->'slots'/.test(migration72Sql) && /v_slot->'residents'/.test(migration72Sql)
+    && /'grid_label',\s*'GOP Clinic Grid',\s*\n\s*'date_or_day',\s*v_slot->>'date_or_day',\s*\n\s*'assignment_detail',\s*v_slot->>'clinic_type'/.test(migration72Sql);
+})());
+
+check('migration 72 preserves A&E matching + assignment_detail unchanged', (() => {
+  return /emergency_call_grid->'shifts'/.test(migration72Sql) && /v_slot->'on_call'/.test(migration72Sql)
+    && /'grid_label',\s*'A&E Emergency Grid',\s*\n\s*'date_or_day',\s*v_slot->>'date_or_day',\s*\n\s*'assignment_detail',\s*v_slot->>'shift'/.test(migration72Sql);
+})());
+
+check('migration 72 preserves Supervision matching + assignment_detail unchanged (migration 70 normalization reused verbatim, not redefined)', (() => {
+  return /public\._normalize_supervision_name\(v_slot->>'first_on_duty'\)\s*=\s*public\._normalize_supervision_name\(v_full_name\)/.test(migration72Sql)
+    && /public\._normalize_supervision_name\(v_slot->>'second_on_duty'\)\s*=\s*public\._normalize_supervision_name\(v_full_name\)/.test(migration72Sql)
+    && !/CREATE OR REPLACE FUNCTION public\._normalize_supervision_name/.test(migration72Sql)
+    && /'assignment_detail',\s*'1st On Duty'/.test(migration72Sql)
+    && /'assignment_detail',\s*'2nd On Duty'/.test(migration72Sql);
+})());
+
+check('migration 72 REMOVES the date_or_day-not-null guard from the Satellite loop — matches by assigned[] membership only, same as GOP/A&E', (() => {
+  const satelliteBlockCodeOnly = stripSqlComments(
+    migration72Sql.slice(migration72Sql.indexOf("-- Satellite Grid"), migration72Sql.indexOf('-- Supervision Grid'))
+  );
+  const stillHasOldGuard = /nullif\(v_slot->>'date_or_day', ''\) IS NOT NULL/.test(satelliteBlockCodeOnly);
+  const stillMatchesByAssigned = /satellite_grid->'postings'/.test(migration72Sql)
+    && /v_slot->'assigned'/.test(satelliteBlockCodeOnly)
+    && /'grid_label',\s*'Satellite Grid',\s*\n\s*'date_or_day',\s*v_slot->>'date_or_day',\s*\n\s*'assignment_detail',\s*v_slot->>'facility'/.test(migration72Sql);
+  return !stillHasOldGuard && stillMatchesByAssigned;
+})());
+
+check('migration 72 preserves GRANT EXECUTE to anon, authenticated', (() => {
+  return /GRANT EXECUTE ON FUNCTION public\.resident_get_current_assignment\(uuid, text\) TO anon, authenticated/.test(migration72Sql);
+})());
+
+check('migration 72 introduces no fuzzy/ILIKE/similarity matching and no new hardcoded UCH-specific term in actual SQL code', (() => {
+  const codeOnly = stripSqlComments(migration72Sql);
+  return !/ILIKE|similarity\(|levenshtein/i.test(migration72Sql)
+    && !/\bTriage\b|\bNHIA\b|\bIkolaba\b|Managed Care|Male Sorting|Female Sorting|Children Sorting/i.test(codeOnly);
+})());
+
+check('migration 71 file itself is unmodified by this slice (still contains the pre-72 date_or_day-not-null guard, proving no retroactive edit)', (() => {
+  return /nullif\(v_slot->>'date_or_day', ''\) IS NOT NULL/.test(migration71Sql);
+})());
+
+// =====================================================================
 // Section 3 — logic-level parity: reimplemented matching rules vs.
 // fixture grids, tracing the SAME field names/semantics as migration 67
 // and as rosterReconciliation.ts's findGridAppearancesForMember(). See
@@ -274,7 +360,12 @@ function extractAppearances(workforceId, fullName, roster) {
     }
   }
   for (const posting of (roster.satellite_grid?.postings || [])) {
-    if (posting.date_or_day && (posting.assigned || []).includes(workforceId)) {
+    // Migration 72: matches by assigned[] membership only, same as
+    // GOP/A&E above — a null date_or_day (period/range posting, e.g. a
+    // whole-month Special Coverage assignment) no longer excludes the
+    // posting. date_or_day is passed through verbatim, including null;
+    // never fabricated.
+    if ((posting.assigned || []).includes(workforceId)) {
       appearances.push({ grid_label: 'Satellite Grid', date_or_day: posting.date_or_day, assignment_detail: posting.facility });
     }
   }
@@ -357,11 +448,57 @@ check('Satellite assignment_detail: returns the matched posting\'s own facility 
   return r.assignments.some(a => a.grid_label === 'Satellite Grid' && a.assignment_detail === 'Ikolaba');
 })());
 
-check('Satellite matching: posting missing date_or_day is skipped even if assigned (parity with MultiRosterManagerView\'s own check)', (() => {
-  const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
-    satellite_grid: { postings: [{ assigned: ['w1'], date_or_day: null }] } };
+check('Satellite matching (migration 72): a period/range posting with date_or_day = null and a matching workforce_id IS now returned — this is the Dr. Olanipekun Agbeke/Airport/NYSC correctness fix, not an identity-resolution change', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 9, year: 2026,
+    satellite_grid: { postings: [{ assigned: ['w1'], date_or_day: null, facility: 'Agbeke Mercy' }] } };
+  const r = currentAssignment('w1', 'Dr. Olanipekun', roster);
+  return r.status === 'published_with_assignment'
+    && r.assignments.some(a => a.grid_label === 'Satellite Grid' && a.date_or_day === null && a.assignment_detail === 'Agbeke Mercy');
+})());
+
+check('Satellite matching (migration 72): date_or_day = null is passed through verbatim, never fabricated (no invented date/range string)', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 9, year: 2026,
+    satellite_grid: { postings: [{ assigned: ['w1'], date_or_day: null, facility: 'Airport PHC' }] } };
   const r = currentAssignment('w1', 'Ada', roster);
-  return r.status === 'published_no_assignment';
+  const entry = r.assignments.find(a => a.grid_label === 'Satellite Grid');
+  return entry && entry.date_or_day === null && typeof entry.date_or_day !== 'string';
+})());
+
+check('Satellite matching (migration 72): a normal, dated posting still matches exactly as before (regression check — the fix is additive, not a replacement)', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 8, year: 2026,
+    satellite_grid: { postings: [{ assigned: ['w1'], date_or_day: 'Fri 04/09', facility: 'Ikolaba' }] } };
+  const r = currentAssignment('w1', 'Ada', roster);
+  return r.status === 'published_with_assignment'
+    && r.assignments.some(a => a.grid_label === 'Satellite Grid' && a.date_or_day === 'Fri 04/09' && a.assignment_detail === 'Ikolaba');
+})());
+
+check('Satellite matching (migration 72): a resident NOT in assigned[] receives nothing, whether the posting is dated or null-dated (assigned[] membership is still the only gate)', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 9, year: 2026,
+    satellite_grid: { postings: [
+      { assigned: ['w2'], date_or_day: null, facility: 'Agbeke Mercy' },
+      { assigned: ['w2'], date_or_day: 'Fri 04/09', facility: 'Ikolaba' },
+    ] } };
+  const r = currentAssignment('w1', 'Ada', roster);
+  return r.status === 'published_no_assignment' && r.assignments.length === 0;
+})());
+
+check('Satellite matching (migration 72): multiple null-dated postings for the same member are all retained (real September shape — Agbeke Mercy + Airport PHC + NYSC, all date_or_day = null)', (() => {
+  const roster = { ...emptyGrids, status: 'published', month: 9, year: 2026,
+    satellite_grid: { postings: [
+      { assigned: ['w1'], date_or_day: null, facility: 'Agbeke Mercy' },
+      { assigned: ['w1'], date_or_day: null, facility: 'Airport PHC' },
+      { assigned: ['w1'], date_or_day: null, facility: 'NYSC' },
+    ] } };
+  const r = currentAssignment('w1', 'Dr. Olanipekun', roster);
+  const facilities = r.assignments.filter(a => a.grid_label === 'Satellite Grid').map(a => a.assignment_detail).sort();
+  return r.status === 'published_with_assignment' && facilities.join(',') === 'Agbeke Mercy,Airport PHC,NYSC';
+})());
+
+check('unpublished (draft/chief_review) roster behavior is unchanged by migration 72 — a null-dated Satellite posting in a draft still yields not_published', (() => {
+  const draftRoster = { ...emptyGrids, status: 'chief_review', month: 9, year: 2026,
+    satellite_grid: { postings: [{ assigned: ['w1'], date_or_day: null, facility: 'Agbeke Mercy' }] } };
+  const r = currentAssignment('w1', 'Dr. Olanipekun', draftRoster);
+  return r.status === 'not_published' && r.assignments.length === 0;
 })());
 
 check('Supervision matching: member found by full_name string equality', (() => {
@@ -484,6 +621,19 @@ check('MyAssignmentView.tsx guards assignment_detail rendering (additive field �
 check('MyAssignmentView.tsx hard-codes no UCH-Family-Medicine-specific service-point/duty label — assignment_detail is rendered verbatim, never mapped/reinterpreted', (() => {
   const stripped = stripLineComments(viewTsx);
   return !/\bTriage\b|\bNHIA\b|\bIkolaba\b|Managed Care|Male Sorting|Female Sorting|Children Sorting|\bGOP\b/i.test(stripped);
+})());
+
+check('myAssignmentService.ts MyAssignmentEntry.date_or_day is widened to string | null (migration 72 — a period/range Satellite posting may legitimately have no date)', (() => {
+  return /date_or_day:\s*string\s*\|\s*null/.test(serviceTs);
+})());
+
+check('MyAssignmentView.tsx guards date_or_day rendering (migration 72 — a null/absent date must render nothing, never an empty span, "null" string, or fabricated placeholder)', (() => {
+  return /\{a\.date_or_day\s*&&/.test(viewTsx);
+})());
+
+check('MyAssignmentView.tsx never renders a literal fabricated range/placeholder string (e.g. "1-30 Sep", "TBD", "N/A") in place of a missing date', (() => {
+  const stripped = stripLineComments(viewTsx);
+  return !/1-30 Sep|1–30 Sep|\bTBD\b|\bN\/A\b/i.test(stripped);
 })());
 
 // =====================================================================

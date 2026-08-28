@@ -772,6 +772,51 @@ check('normalizeForComparison: "Uma" vs an unrelated name does not become a fuzz
   check('migration 71 does not modify migration 70\'s file', fs.existsSync(migration70Path) && m70.includes('-- Migration 70:'));
 }
 
+// --- Migration 72 structural review: preserves everything from 71 except
+// removing the date_or_day-not-null guard from the Satellite loop (2026-08-28
+// Satellite/Special Coverage correctness fix — Dr. Olanipekun's Agbeke
+// Mercy/Airport PHC/NYSC null-date-or-day postings) ---
+{
+  const migration71Path = path.join(__dirname, '..', 'supabase', 'migrations', '71_resident_get_current_assignment_detail.sql');
+  const migration72Path = path.join(__dirname, '..', 'supabase', 'migrations', '72_resident_get_current_assignment_satellite_range.sql');
+  const m71 = fs.readFileSync(migration71Path, 'utf8');
+  const m72 = fs.readFileSync(migration72Path, 'utf8');
+
+  check('migration 72 file exists at the expected next-available number (72)', fs.existsSync(migration72Path));
+
+  const preservedFragments71to72 = [
+    "LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$",
+    "RAISE EXCEPTION 'Invalid access code' USING ERRCODE = '28000';",
+    "SELECT s.current_collection_id INTO v_current_collection_id",
+    "AND cmr.status = 'published';",
+    "'grid_label', 'GOP Clinic Grid',",
+    "'assignment_detail', v_slot->>'clinic_type'",
+    "'grid_label', 'A&E Emergency Grid',",
+    "'assignment_detail', v_slot->>'shift'",
+    "'grid_label', 'Satellite Grid',",
+    "'assignment_detail', v_slot->>'facility'",
+    "'assignment_detail', '1st On Duty'",
+    "'assignment_detail', '2nd On Duty'",
+    "RETURN QUERY SELECT 'published_no_assignment'::text, v_roster.month, v_roster.year, '[]'::jsonb;",
+    "RETURN QUERY SELECT 'published_with_assignment'::text, v_roster.month, v_roster.year, v_assignments;",
+    "GRANT EXECUTE ON FUNCTION public.resident_get_current_assignment(uuid, text) TO anon, authenticated;",
+    "public._normalize_supervision_name(v_slot->>'first_on_duty') = public._normalize_supervision_name(v_full_name)",
+    "public._normalize_supervision_name(v_slot->>'second_on_duty') = public._normalize_supervision_name(v_full_name)",
+    "ELSIF public._normalize_supervision_name(v_slot->>'second_on_duty')",
+  ];
+  for (const fragment of preservedFragments71to72) {
+    check(`migration 71 and 72 share preserved fragment verbatim: ${JSON.stringify(fragment.slice(0, 48))}...`, m71.includes(fragment) && m72.includes(fragment));
+  }
+
+  check('migration 71 (unchanged, still on disk) still requires date_or_day to be non-null before checking Satellite assigned[] membership', m71.includes("nullif(v_slot->>'date_or_day', '') IS NOT NULL AND EXISTS ("));
+  check('migration 72 REMOVES that guard — Satellite now matches by assigned[] membership alone, same as GOP/A&E', !m72.includes("nullif(v_slot->>'date_or_day', '') IS NOT NULL AND EXISTS ("));
+
+  check('migration 72 does NOT redefine _normalize_supervision_name (reuses migration 70\'s helper as-is)', !m72.includes('CREATE OR REPLACE FUNCTION public._normalize_supervision_name'));
+  check('migration 72 does not introduce fuzzy/ILIKE/similarity matching anywhere', !/ILIKE|similarity\(|levenshtein/i.test(m72));
+
+  check('migration 72 does not modify migration 71\'s file', fs.existsSync(migration71Path) && m71.includes('-- Migration 71:'));
+}
+
 console.log('');
 console.log(`${failures} failure(s).`);
 process.exit(failures > 0 ? 1 : 0);
