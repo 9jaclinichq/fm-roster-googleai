@@ -15,6 +15,16 @@ import {
 } from '../../../roster-engine/lib/rosterIdentityIngest';
 import { rosterRevisionService } from '../../../roster-engine/lib/rosterRevisionService';
 import {
+  RosterSection,
+  RosterPatchOperation,
+  RosterPatchField,
+  applyRosterPatch,
+  fieldsForSection,
+  fieldLabelFor,
+  rowsForSection,
+  rowLabelFor,
+} from '../../../roster-engine/lib/rosterPatch';
+import {
   WorkforceMember,
   Collection,
   CombinedMasterRoster,
@@ -41,6 +51,8 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  Edit3,
+  Trash2,
 } from 'lucide-react';
 import { useTerminology } from '../../../shared/terminology';
 
@@ -52,6 +64,17 @@ const EMPTY_SATELLITE: SatelliteGrid = { postings: [], unparsed_notes: [] };
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 type GridTab = 'gop' | 'emergency' | 'supervision' | 'satellite';
+
+// Structured Chief editing (assign/replace/unassign only) — reuses the
+// exact same 4 section labels already shown on the grid tabs above, so
+// the new patch-builder picker and the existing tabs never disagree.
+const PATCH_SECTION_LABELS: [RosterSection, string][] = [
+  ['gop', 'GOP Clinic Grid'],
+  ['emergency', 'A&E Emergency'],
+  ['supervision', 'Supervision'],
+  ['satellite', 'Satellite'],
+];
+type PatchOpKind = 'assign' | 'replace' | 'unassign';
 
 // A function rather than a plain module-level constant because the
 // 'consultant_gop' entry's label embeds the tenant-aware `senior_reviewer`
@@ -92,6 +115,21 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
   // row for the entire editing session.
   const [activeRevision, setActiveRevision] = useState<RosterRevision | null>(null);
   const [isRevisionBusy, setIsRevisionBusy] = useState(false);
+
+  // Structured Chief editing (assign/replace/unassign only) — a queue of
+  // not-yet-applied RosterPatchOperation[], reviewed as a list before
+  // being applied to the local revision snapshot. Only ever shown/usable
+  // while an editable revision is open (activeRevision !== null) — this
+  // slice's whole point is editing revisions safely, never
+  // combined_master_rosters directly.
+  const [pendingOperations, setPendingOperations] = useState<RosterPatchOperation[]>([]);
+  const [patchSection, setPatchSection] = useState<RosterSection>('gop');
+  const [patchRowIndex, setPatchRowIndex] = useState<number>(0);
+  const [patchField, setPatchField] = useState<RosterPatchField>('residents');
+  const [patchOp, setPatchOp] = useState<PatchOpKind>('assign');
+  const [patchWorkforceId, setPatchWorkforceId] = useState<string>('');
+  const [patchFromWorkforceId, setPatchFromWorkforceId] = useState<string>('');
+  const [patchReason, setPatchReason] = useState<string>('');
   // Workforce Option A (read-only reconciliation) — see
   // docs/WORKFORCE_V1_RECOVERY_SPEC.md. submissions/rotations are read
   // only to compute reconciliationIssues below; never written here.
@@ -470,6 +508,74 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     return changed;
   };
 
+  // ------------------------------------------------------------------
+  // Structured Chief editing (assign / replace / unassign only).
+  // structured edit -> patch -> deterministic LOCAL application to the
+  // revision snapshot -> validation -> human-readable diff -> [existing]
+  // Save Draft persists to the revision via chief_save_roster_revision,
+  // completely unchanged. combined_master_rosters is never touched here.
+  // ------------------------------------------------------------------
+  const addPendingOperation = () => {
+    if (patchOp === 'assign' && !patchWorkforceId) { setStatusMessage('Choose a workforce member to assign.'); return; }
+    if (patchOp === 'unassign' && !patchWorkforceId) { setStatusMessage('Choose which workforce member to unassign.'); return; }
+    if (patchOp === 'replace' && (!patchFromWorkforceId || !patchWorkforceId)) { setStatusMessage('Choose both the current and replacement workforce member.'); return; }
+    if (patchOp === 'replace' && patchFromWorkforceId === patchWorkforceId) { setStatusMessage('Replacement must be a different person from the one being replaced.'); return; }
+
+    let operation: RosterPatchOperation;
+    if (patchOp === 'assign') {
+      operation = { op: 'assign', section: patchSection, row_index: patchRowIndex, field: patchField, workforce_id: patchWorkforceId, reason: patchReason || undefined };
+    } else if (patchOp === 'replace') {
+      operation = { op: 'replace', section: patchSection, row_index: patchRowIndex, field: patchField, from_workforce_id: patchFromWorkforceId, to_workforce_id: patchWorkforceId, reason: patchReason || undefined };
+    } else {
+      operation = { op: 'unassign', section: patchSection, row_index: patchRowIndex, field: patchField, workforce_id: patchWorkforceId, reason: patchReason || undefined };
+    }
+    setPendingOperations(prev => [...prev, operation]);
+    setPatchWorkforceId('');
+    setPatchFromWorkforceId('');
+    setPatchReason('');
+  };
+
+  const removePendingOperation = (index: number) => {
+    setPendingOperations(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Deterministic, pure, recomputed every render — never stale relative
+  // to pendingOperations. Only meaningful while an editable revision is
+  // open; the pending queue itself is also only ever shown/usable then.
+  const patchPreview = activeRevision
+    ? applyRosterPatch(currentGridsSnapshot(), pendingOperations, workforce)
+    : null;
+
+  // Reuses computeReconciliationIssues() completely unmodified against
+  // the HYPOTHETICAL post-patch grids — per this slice's own design doc,
+  // some of these findings (missing_expected_coverage/
+  // ineligible_assignment) are already-disclosed UCH/Family-Medicine-
+  // specific adapter logic, not universal Workspc rules; shown here as
+  // non-blocking warnings either way, matching current behavior (this
+  // panel has never blocked save/publish).
+  const patchReconciliationIssues = (patchPreview && masterRoster)
+    ? computeReconciliationIssues(submissions, workforce, rotations, { ...masterRoster, ...patchPreview.grids })
+    : [];
+
+  const applyPendingOperations = () => {
+    if (!patchPreview) return;
+    setGopGrid(patchPreview.grids.gop_clinic_grid);
+    setEmergencyGrid(patchPreview.grids.emergency_call_grid);
+    setSupervisionGrid(patchPreview.grids.supervision_grid);
+    setSatelliteGrid(patchPreview.grids.satellite_grid);
+    // Keep only the operations that FAILED (still visible with their
+    // error for the Chief to fix or remove) — the ones that succeeded
+    // are now reflected in the grids above and cleared from the queue.
+    const failedSignatures = new Set(patchPreview.errors.map((e) => JSON.stringify(e.operation)));
+    setPendingOperations((prev) => prev.filter((op) => failedSignatures.has(JSON.stringify(op))));
+    setStatusMessage(
+      patchPreview.errors.length > 0
+        ? `Applied ${patchPreview.diffs.length} change(s) to the local snapshot. ${patchPreview.errors.length} operation(s) could not be applied — see errors below.`
+        : `Applied ${patchPreview.diffs.length} change(s) to the local snapshot. Click Save Draft to persist to the revision.`
+    );
+    setTimeout(() => setStatusMessage(''), 5000);
+  };
+
   if (isLoading) {
     return (
       <div className="text-center py-12 bg-white border border-slate-200 rounded-2xl">
@@ -561,6 +667,155 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
           </button>
         </div>
       )}
+
+      {/* Structured Chief editing (assign / replace / unassign only) —
+          only ever shown/usable while an editable revision is open. Row
+          addressing (below) is safe ONLY because this slice never
+          inserts/deletes/reorders a row — see rosterPatch.ts's header. */}
+      {activeRevision && (() => {
+        const rows = rowsForSection(currentGridsSnapshot(), patchSection);
+        const availableFields = fieldsForSection(patchSection);
+        return (
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-4">
+            <div className="flex items-center space-x-2">
+              <Edit3 className="text-slate-500" size={16} />
+              <h3 className="font-bold text-slate-800 text-sm">Structured Edit — assign / replace / unassign</h3>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Section</label>
+                <select
+                  value={patchSection}
+                  onChange={(e) => {
+                    const section = e.target.value as RosterSection;
+                    setPatchSection(section);
+                    setPatchRowIndex(0);
+                    setPatchField(fieldsForSection(section)[0]);
+                  }}
+                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white"
+                >
+                  {PATCH_SECTION_LABELS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Row</label>
+                <select
+                  value={patchRowIndex}
+                  onChange={(e) => setPatchRowIndex(Number(e.target.value))}
+                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white"
+                >
+                  {rows.length === 0 && <option value={0}>(no rows in this section)</option>}
+                  {rows.map((row, i) => <option key={i} value={i}>{rowLabelFor(patchSection, row)}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Field</label>
+                <select
+                  value={patchField}
+                  onChange={(e) => setPatchField(e.target.value as RosterPatchField)}
+                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white"
+                >
+                  {availableFields.map((f) => <option key={f} value={f}>{fieldLabelFor(f)}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Operation</label>
+                <select
+                  value={patchOp}
+                  onChange={(e) => setPatchOp(e.target.value as PatchOpKind)}
+                  className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white"
+                >
+                  <option value="assign">Assign</option>
+                  <option value="replace">Replace</option>
+                  <option value="unassign">Unassign</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end">
+              {patchOp === 'replace' && (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Currently assigned (to replace)</label>
+                  <select value={patchFromWorkforceId} onChange={(e) => setPatchFromWorkforceId(e.target.value)} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white">
+                    <option value="">Choose...</option>
+                    {workforce.map((w) => <option key={w.id} value={w.id}>{w.full_name}</option>)}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">
+                  {patchOp === 'assign' ? 'Assign' : patchOp === 'replace' ? 'Replacement' : 'Unassign'}
+                </label>
+                <select value={patchWorkforceId} onChange={(e) => setPatchWorkforceId(e.target.value)} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm bg-white">
+                  <option value="">Choose...</option>
+                  {workforce.map((w) => <option key={w.id} value={w.id}>{w.full_name}</option>)}
+                </select>
+              </div>
+              <div className="lg:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Reason (optional)</label>
+                <input value={patchReason} onChange={(e) => setPatchReason(e.target.value)} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm" placeholder="e.g. covering approved leave" />
+              </div>
+            </div>
+
+            <button onClick={addPendingOperation} className="flex items-center gap-1 text-xs font-bold bg-slate-900 text-white px-3 py-2 rounded-lg hover:bg-slate-800 cursor-pointer">
+              <Plus size={14} /> Add to Pending Changes
+            </button>
+
+            {pendingOperations.length > 0 && (
+              <div className="border-t border-slate-100 pt-3 space-y-2">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Pending Changes ({pendingOperations.length})</p>
+                {pendingOperations.map((op, i) => {
+                  const diff = patchPreview?.diffs.find((d) => d.operation === op);
+                  const error = patchPreview?.errors.find((e) => e.operation === op);
+                  return (
+                    <div key={i} className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs ${error ? 'bg-rose-50 border border-rose-200' : 'bg-slate-50'}`}>
+                      <div>
+                        <p className="font-semibold text-slate-700">
+                          {PATCH_SECTION_LABELS.find(([k]) => k === op.section)?.[1]} — {diff?.dateOrDay ?? ''} — {fieldLabelFor(op.field)}
+                        </p>
+                        {error ? (
+                          <p className="text-rose-700 mt-0.5">{error.message}</p>
+                        ) : diff ? (
+                          <p className="text-slate-600 mt-0.5">
+                            {diff.removedName && diff.addedName ? `Replaced ${diff.removedName} with ${diff.addedName}` : diff.addedName ? `Added ${diff.addedName}` : `Removed ${diff.removedName}`}
+                          </p>
+                        ) : null}
+                        {op.reason && <p className="text-slate-400 mt-0.5 italic">"{op.reason}"</p>}
+                      </div>
+                      <button onClick={() => removePendingOperation(i)} className="shrink-0 text-slate-400 hover:text-rose-600 cursor-pointer" title="Remove from pending changes">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+
+                {patchReconciliationIssues.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs space-y-1">
+                    <p className="font-bold text-amber-800">Reconciliation warnings for the resulting snapshot (non-blocking):</p>
+                    {patchReconciliationIssues.map((issue, i) => (
+                      <p key={i} className="text-amber-700">
+                        {issue.message}
+                        <span className="text-amber-500 ml-1">
+                          ({issue.type === 'missing_expected_coverage' || issue.type === 'ineligible_assignment' ? 'FM-specific check' : 'generic check'})
+                        </span>
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  onClick={applyPendingOperations}
+                  disabled={patchPreview?.diffs.length === 0}
+                  className="flex items-center gap-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white px-3 py-2 rounded-lg cursor-pointer"
+                >
+                  <CheckCircle2 size={14} /> Apply Pending Changes to Local Snapshot
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Workforce Option A — read-only reconciliation checklist. Not a
           new page/tab; positioned immediately before the existing Floor
