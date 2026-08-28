@@ -644,6 +644,55 @@ export interface CombinedMasterRoster {
   satellite_grid: SatelliteGrid;
   published_at: string | null;
   created_at: string;
+  // Migration 75 — Chief/audit-tooling metadata only (nullable, additive).
+  // No resident-facing RPC reads this; it exists so Chief/audit tooling
+  // can answer "which revision produced this row's current content"
+  // without a separate lookup. Null for rows published before the
+  // revision model existed, or that have never had a revision published
+  // into them yet.
+  current_revision_id?: string | null;
+}
+
+// Migration 75 — revision-safe Chief roster editing. See
+// WORKSPC_REVISION_SAFE_CHIEF_ROSTER_EDITING_DISCOVER_AND_PLAN_2026-08-28.md
+// for the full design. combined_master_rosters remains the ONLY thing
+// residents ever read (My Assignment / Full Roster RPCs are unaffected);
+// a RosterRevision is Chief-editing-only working state.
+export type RosterRevisionStatus = 'editing' | 'published' | 'superseded' | 'discarded';
+// 'chief_manual' is the only value any current RPC produces.
+// 'external_import'/'ai_proposal' are schema headroom for future seams
+// (Drive/Docs import, AI-proposed edits) — neither is implemented yet.
+export type RosterRevisionSource = 'chief_manual' | 'external_import' | 'ai_proposal';
+
+export interface RosterRevisionDiffSummary {
+  based_on_revision_id: string | null;
+  sections_changed: {
+    gop: boolean;
+    emergency: boolean;
+    supervision: boolean;
+    satellite: boolean;
+  };
+}
+
+export interface RosterRevision {
+  id: string;
+  collection_id: string;
+  tenant_id: string;
+  revision_number: number;
+  status: RosterRevisionStatus;
+  gop_clinic_grid: GopClinicGrid;
+  emergency_call_grid: EmergencyCallGrid;
+  supervision_grid: SupervisionGrid;
+  satellite_grid: SatelliteGrid;
+  based_on_revision_id: string | null;
+  source: RosterRevisionSource;
+  source_reference: string | null;
+  changed_by: string;
+  change_reason: string | null;
+  diff_summary: RosterRevisionDiffSummary | null;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
 }
 
 export interface RosterParseResult<T> {

@@ -1292,7 +1292,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         {/* TAB 7: MULTI-ROSTER MANAGER */}
         {activeTab === 'roster' && (
           <Suspense fallback={<LoadingShell />}>
-            <MultiRosterManagerView tenantId={tenantId ?? DEFAULT_TENANT_ID} />
+            <MultiRosterManagerView tenantId={tenantId ?? DEFAULT_TENANT_ID} adminCode={adminCode} />
           </Suspense>
         )}
 

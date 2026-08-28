@@ -13,6 +13,7 @@ import {
   applyIdentityResolutionToEmergencyGrid,
   applyIdentityResolutionToSatelliteGrid,
 } from '../../../roster-engine/lib/rosterIdentityIngest';
+import { rosterRevisionService } from '../../../roster-engine/lib/rosterRevisionService';
 import {
   WorkforceMember,
   Collection,
@@ -24,6 +25,7 @@ import {
   RosterTypeId,
   SubmissionWithWorkforce,
   Rotation,
+  RosterRevision,
 } from '../../../../types';
 import {
   ListChecks,
@@ -66,15 +68,30 @@ const getIngestionTypes = (t: (key: string, fallback?: string) => string): { id:
 
 interface MultiRosterManagerViewProps {
   tenantId: string;
+  // Migration 75 — verified server-side by every chief_*_roster_revision
+  // RPC (same pattern as chiefUpdateTenantTerminology/
+  // chiefUpsertRosterSectionConfig) — passed through from the existing
+  // Chief session (ChiefDashboardView's `fm_admin_code` localStorage
+  // read), not a new persistence mechanism.
+  adminCode: string;
 }
 
-export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ tenantId }) => {
+export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ tenantId, adminCode }) => {
   const { t } = useTerminology();
   const INGESTION_TYPES = getIngestionTypes(t);
   const [isLoading, setIsLoading] = useState(true);
   const [collection, setCollection] = useState<Collection | null>(null);
   const [workforce, setWorkforce] = useState<WorkforceMember[]>([]);
   const [masterRoster, setMasterRoster] = useState<CombinedMasterRoster | null>(null);
+  // Migration 75 — revision-safe editing. Non-null only while the Chief
+  // is actively editing an already-published roster's revision; null the
+  // rest of the time (including the whole pre-first-publish flow, which
+  // is completely unchanged — see saveDraft()/publish() below). While
+  // this is non-null, saveDraft() writes ONLY to this revision, never to
+  // combined_master_rosters — residents keep reading the untouched live
+  // row for the entire editing session.
+  const [activeRevision, setActiveRevision] = useState<RosterRevision | null>(null);
+  const [isRevisionBusy, setIsRevisionBusy] = useState(false);
   // Workforce Option A (read-only reconciliation) — see
   // docs/WORKFORCE_V1_RECOVERY_SPEC.md. submissions/rotations are read
   // only to compute reconciliationIssues below; never written here.
@@ -134,10 +151,28 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
         ]);
         setMasterRoster(mr);
         setSubmissions(activeCollSubmissions);
-        setGopGrid(mr.gop_clinic_grid?.slots ? mr.gop_clinic_grid : EMPTY_GOP);
-        setEmergencyGrid(mr.emergency_call_grid?.shifts ? mr.emergency_call_grid : EMPTY_EMERGENCY);
-        setSupervisionGrid(mr.supervision_grid?.duties ? mr.supervision_grid : EMPTY_SUPERVISION);
-        setSatelliteGrid(mr.satellite_grid?.postings ? mr.satellite_grid : EMPTY_SATELLITE);
+
+        // Migration 75: once a roster has been published, editing means
+        // editing a revision, never the live row directly. start
+        // Revision is idempotent (returns the existing 'editing' revision
+        // if the Chief already had one in progress, from this or an
+        // earlier session, rather than re-snapshotting over it) — this is
+        // what lets a Chief safely resume in-progress work instead of
+        // silently losing it to a fresh copy of the live published grids.
+        if (mr.status === 'published') {
+          const revision = await rosterRevisionService.startRevision(adminCode);
+          setActiveRevision(revision);
+          setGopGrid(revision.gop_clinic_grid?.slots ? revision.gop_clinic_grid : EMPTY_GOP);
+          setEmergencyGrid(revision.emergency_call_grid?.shifts ? revision.emergency_call_grid : EMPTY_EMERGENCY);
+          setSupervisionGrid(revision.supervision_grid?.duties ? revision.supervision_grid : EMPTY_SUPERVISION);
+          setSatelliteGrid(revision.satellite_grid?.postings ? revision.satellite_grid : EMPTY_SATELLITE);
+        } else {
+          setActiveRevision(null);
+          setGopGrid(mr.gop_clinic_grid?.slots ? mr.gop_clinic_grid : EMPTY_GOP);
+          setEmergencyGrid(mr.emergency_call_grid?.shifts ? mr.emergency_call_grid : EMPTY_EMERGENCY);
+          setSupervisionGrid(mr.supervision_grid?.duties ? mr.supervision_grid : EMPTY_SUPERVISION);
+          setSatelliteGrid(mr.satellite_grid?.postings ? mr.satellite_grid : EMPTY_SATELLITE);
+        }
       } else {
         setSubmissions([]);
       }
@@ -305,23 +340,42 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     setSelectedResidentId(null);
   };
 
+  // Migration 75: the current in-memory grid state, bundled once, for
+  // either a direct combined_master_rosters write (pre-first-publish) or
+  // a revision save (post-publish) — same 4 fields either way.
+  const currentGridsSnapshot = () => ({
+    gop_clinic_grid: gopGrid,
+    emergency_call_grid: emergencyGrid,
+    supervision_grid: supervisionGrid,
+    satellite_grid: satelliteGrid,
+  });
+
   const saveDraft = async () => {
     if (!masterRoster) return;
     setIsSaving(true);
     try {
-      const updated = await databaseService.updateMasterRoster(masterRoster.id, {
-        gop_clinic_grid: gopGrid,
-        emergency_call_grid: emergencyGrid,
-        supervision_grid: supervisionGrid,
-        satellite_grid: satelliteGrid,
-        status: masterRoster.status === 'published' ? 'published' : 'chief_review',
-      });
-      setMasterRoster(updated);
-      setStatusMessage('Draft saved.');
-      setTimeout(() => setStatusMessage(''), 3000);
+      if (masterRoster.status === 'published') {
+        // Revision-safe path — combined_master_rosters is NEVER written
+        // here. startRevision() is idempotent (reopens an existing
+        // in-progress revision rather than re-snapshotting over it).
+        const revision = activeRevision ?? await rosterRevisionService.startRevision(adminCode);
+        const saved = await rosterRevisionService.saveRevision(adminCode, revision.id, revision.updated_at, currentGridsSnapshot());
+        setActiveRevision(saved);
+        setStatusMessage(`Saved to Revision #${saved.revision_number} — not yet published. Residents still see the current published roster.`);
+      } else {
+        // Unchanged: nothing has been published yet, so there is nothing
+        // for a revision to protect residents from.
+        const updated = await databaseService.updateMasterRoster(masterRoster.id, {
+          ...currentGridsSnapshot(),
+          status: 'chief_review',
+        });
+        setMasterRoster(updated);
+        setStatusMessage('Draft saved.');
+      }
+      setTimeout(() => setStatusMessage(''), 4000);
     } catch (err) {
       console.warn(err);
-      setStatusMessage('Failed to save draft.');
+      setStatusMessage(err instanceof Error && /changed elsewhere/i.test(err.message) ? err.message : 'Failed to save draft.');
     } finally {
       setIsSaving(false);
     }
@@ -331,31 +385,89 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     if (!masterRoster || !collection) return;
     setIsSaving(true);
     try {
-      const updated = await databaseService.updateMasterRoster(masterRoster.id, {
-        gop_clinic_grid: gopGrid,
-        emergency_call_grid: emergencyGrid,
-        supervision_grid: supervisionGrid,
-        satellite_grid: satelliteGrid,
-        status: 'published',
-        published_at: new Date().toISOString(),
-      });
-      setMasterRoster(updated);
+      if (masterRoster.status === 'published') {
+        // Ensure the revision reflects the CURRENT in-memory grid state
+        // before promoting it — Publish must never bypass Save.
+        const revision = activeRevision ?? await rosterRevisionService.startRevision(adminCode);
+        const saved = await rosterRevisionService.saveRevision(adminCode, revision.id, revision.updated_at, currentGridsSnapshot());
+        await rosterRevisionService.publishRevision(adminCode, saved.id, saved.updated_at);
+        // Single atomic UPDATE already happened server-side — reload to
+        // pick up the new live combined_master_rosters content (and its
+        // current_revision_id) rather than hand-reconciling state here.
+        await load();
+        setActiveRevision(null);
 
-      await databaseService.createAnnouncement({
-        title: `${MONTH_NAMES[month - 1]} ${year} Duty Roster Published`,
-        body: `The combined GOP, A&E, supervision, and satellite duty roster for ${MONTH_NAMES[month - 1]} ${year} has been published. Check the roster for your assignments.`,
-        category: 'Roster',
-        pinned: true,
-      }, tenantId);
+        await databaseService.createAnnouncement({
+          title: `${MONTH_NAMES[month - 1]} ${year} Duty Roster Updated`,
+          body: `The combined GOP, A&E, supervision, and satellite duty roster for ${MONTH_NAMES[month - 1]} ${year} has been updated (Revision #${saved.revision_number} published). Check the roster for your assignments.`,
+          category: 'Roster',
+          pinned: true,
+        }, tenantId);
 
-      setStatusMessage('Roster published and announcement posted.');
+        setStatusMessage(`Revision #${saved.revision_number} published and announcement posted.`);
+      } else {
+        // Unchanged: first-ever publish for this collection — no
+        // revision is involved because nothing has been published yet.
+        const updated = await databaseService.updateMasterRoster(masterRoster.id, {
+          ...currentGridsSnapshot(),
+          status: 'published',
+          published_at: new Date().toISOString(),
+        });
+        setMasterRoster(updated);
+
+        await databaseService.createAnnouncement({
+          title: `${MONTH_NAMES[month - 1]} ${year} Duty Roster Published`,
+          body: `The combined GOP, A&E, supervision, and satellite duty roster for ${MONTH_NAMES[month - 1]} ${year} has been published. Check the roster for your assignments.`,
+          category: 'Roster',
+          pinned: true,
+        }, tenantId);
+
+        setStatusMessage('Roster published and announcement posted.');
+      }
       setTimeout(() => setStatusMessage(''), 4000);
     } catch (err) {
       console.warn(err);
-      setStatusMessage('Failed to publish roster.');
+      setStatusMessage(err instanceof Error && /changed elsewhere/i.test(err.message) ? err.message : 'Failed to publish roster.');
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const discardRevision = async () => {
+    if (!activeRevision || !masterRoster) return;
+    setIsRevisionBusy(true);
+    try {
+      await rosterRevisionService.discardRevision(adminCode, activeRevision.id);
+      setActiveRevision(null);
+      // Revert local grid state to the untouched, still-live published
+      // content — the revision being discarded is exactly what protected
+      // it from ever being written.
+      setGopGrid(masterRoster.gop_clinic_grid?.slots ? masterRoster.gop_clinic_grid : EMPTY_GOP);
+      setEmergencyGrid(masterRoster.emergency_call_grid?.shifts ? masterRoster.emergency_call_grid : EMPTY_EMERGENCY);
+      setSupervisionGrid(masterRoster.supervision_grid?.duties ? masterRoster.supervision_grid : EMPTY_SUPERVISION);
+      setSatelliteGrid(masterRoster.satellite_grid?.postings ? masterRoster.satellite_grid : EMPTY_SATELLITE);
+      setStatusMessage('Revision discarded — reverted to the currently published roster.');
+      setTimeout(() => setStatusMessage(''), 4000);
+    } catch (err) {
+      console.warn(err);
+      setStatusMessage('Failed to discard revision.');
+    } finally {
+      setIsRevisionBusy(false);
+    }
+  };
+
+  // Migration 75: minimal, deterministic, human-readable diff sufficient
+  // for this slice — which of the 4 sections have unsaved local changes
+  // relative to the currently-published content. Deliberately NOT a
+  // sophisticated visual diff engine (see the design doc).
+  const sectionsWithUnsavedChanges = (): string[] => {
+    if (!masterRoster || !activeRevision) return [];
+    const changed: string[] = [];
+    if (JSON.stringify(gopGrid) !== JSON.stringify(masterRoster.gop_clinic_grid)) changed.push('GOP Clinic Grid');
+    if (JSON.stringify(emergencyGrid) !== JSON.stringify(masterRoster.emergency_call_grid)) changed.push('A&E Emergency Grid');
+    if (JSON.stringify(supervisionGrid) !== JSON.stringify(masterRoster.supervision_grid)) changed.push('Supervision Grid');
+    if (JSON.stringify(satelliteGrid) !== JSON.stringify(masterRoster.satellite_grid)) changed.push('Satellite Grid');
+    return changed;
   };
 
   if (isLoading) {
@@ -414,10 +526,41 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
           </button>
           <button onClick={publish} disabled={isSaving} className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-slate-950 hover:bg-slate-900 disabled:bg-slate-400 text-white font-bold rounded-lg text-xs shadow-sm transition cursor-pointer">
             <Megaphone size={13} />
-            <span>Publish</span>
+            <span>{activeRevision ? 'Publish Revision' : 'Publish'}</span>
           </button>
         </div>
       </div>
+
+      {/* Migration 75: revision-safety indicator. Only ever shown once a
+          roster has already been published — combined_master_rosters is
+          not written to at all while this is visible; residents keep
+          reading the untouched, currently-published content the whole
+          time. Minimal, deterministic diff (which sections changed),
+          not a sophisticated visual diff engine, per this slice's scope. */}
+      {activeRevision && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <p className="text-xs font-bold text-amber-800">
+              Editing Revision #{activeRevision.revision_number} — not yet published
+            </p>
+            <p className="text-[11px] text-amber-700 mt-0.5">
+              Residents currently see the previously published roster. {(() => {
+                const changed = sectionsWithUnsavedChanges();
+                return changed.length > 0
+                  ? `Unsaved changes: ${changed.join(', ')}.`
+                  : 'No unsaved changes since this revision was last saved.';
+              })()}
+            </p>
+          </div>
+          <button
+            onClick={discardRevision}
+            disabled={isRevisionBusy || isSaving}
+            className="px-3 py-1.5 border border-amber-300 hover:bg-amber-100 text-amber-800 font-bold rounded-lg text-xs transition cursor-pointer"
+          >
+            Discard Revision
+          </button>
+        </div>
+      )}
 
       {/* Workforce Option A — read-only reconciliation checklist. Not a
           new page/tab; positioned immediately before the existing Floor
