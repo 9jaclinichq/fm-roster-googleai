@@ -11,12 +11,17 @@ interface MyAssignmentViewProps {
   // residentAccessCode). Deliberately never persisted to localStorage —
   // see App.tsx's own comment on that state variable — so this is null on
   // every session restore (page reload / returning in a later visit), not
-  // only occasionally. resident_get_current_assignment() requires
-  // (workforce_id, code) on every call, same as every other resident RPC
-  // (verify_resident_login, resident_set_email) — there is no session
-  // token to substitute for it under the current transitional login
-  // model, and inventing one is explicitly out of scope for this slice.
+  // only occasionally.
   accessCode: string | null;
+  // Migration 78: true when a real Supabase Auth session exists
+  // (App.tsx's `!!currentDoctor`). Never a credential itself — only a
+  // signal that it is worth attempting resident_get_current_assignment()
+  // with no code at all, since that RPC's own authenticated-membership
+  // check now runs before it ever inspects p_code. When false (a
+  // legacy-only session), this component's behavior is byte-for-byte what
+  // it was before this migration — no auth-first attempt, no added
+  // latency, straight to the PIN form when accessCode is null.
+  hasAuthenticatedSession: boolean;
 }
 
 const MONTH_NAMES = [
@@ -24,18 +29,24 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, accessCode }) => {
+export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, accessCode, hasAuthenticatedSession }) => {
   const { t } = useTerminology();
 
-  // The PIN re-entered here (only when accessCode is null) is held in this
+  // The PIN re-entered here (only when neither accessCode nor an
+  // authenticated-membership match is available) is held in this
   // component's state alone — never written to localStorage, never lifted
   // into App.tsx's session state, never reused outside this one RPC call.
   // Same non-persistence discipline as App.tsx's own residentAccessCode.
   const [enteredCode, setEnteredCode] = useState<string>('');
-  const [activeCode, setActiveCode] = useState<string | null>(accessCode);
   const [result, setResult] = useState<MyAssignmentResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // Migration 78: tracks whether at least one load attempt has completed
+  // (silent auth-first, accessCode-based, or manual) — used only to decide
+  // whether the PIN-entry form should render yet. The actual authorization
+  // decision is made entirely server-side; this never gates the RPC call
+  // itself, only this component's own "have we tried yet" UI state.
+  const [hasAttempted, setHasAttempted] = useState<boolean>(false);
   // Migration 74: tenant-configured section presentation (display label
   // only — never assignment data). Loaded best-effort alongside the
   // assignment itself; if this call fails, resolveRosterSectionPresentation
@@ -43,34 +54,54 @@ export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, ac
   // failure never blocks or breaks the actual assignment view.
   const [presentation, setPresentation] = useState<RosterSectionPresentation[]>([]);
 
-  const load = useCallback(async (code: string) => {
+  const load = useCallback(async (code: string | null, options?: { silent?: boolean }) => {
     setIsLoading(true);
-    setError(null);
+    if (!options?.silent) setError(null);
     try {
       const res = await myAssignmentService.getCurrentAssignment(resident.id, code);
       setResult(res);
-      setActiveCode(code);
-      rosterSectionPresentationService.getResidentPresentation(resident.id, code)
-        .then(setPresentation)
-        .catch((err) => console.warn('Failed to load roster section presentation (using fallback labels):', err));
+      // roster-section presentation (migration 74) is explicitly out of
+      // scope for migration 78 and still requires a real code — only
+      // called here when one exists; a successful auth-first (code=null)
+      // load simply keeps today's existing fallback display labels.
+      if (code) {
+        rosterSectionPresentationService.getResidentPresentation(resident.id, code)
+          .then(setPresentation)
+          .catch((err) => console.warn('Failed to load roster section presentation (using fallback labels):', err));
+      }
     } catch (err) {
       console.warn('Failed to load current assignment:', err);
       setResult(null);
-      setError('That access PIN was not accepted. Please check it and try again.');
+      // A silent auth-first attempt failing is the expected legacy/
+      // unclaimed-resident case, not a user mistake — it falls through to
+      // the ordinary PIN-entry form below with no error shown. Only a
+      // manual PIN submission failure surfaces this message.
+      if (!options?.silent) {
+        setError('That access PIN was not accepted. Please check it and try again.');
+      }
     } finally {
       setIsLoading(false);
+      setHasAttempted(true);
     }
   }, [resident.id]);
 
   useEffect(() => {
     if (accessCode) {
       load(accessCode);
+    } else if (hasAuthenticatedSession) {
+      // Restored session, no PIN in memory, but a real Supabase Auth
+      // session exists — try authenticated-membership-first (migration 78)
+      // silently. If this resident hasn't claimed this workforce identity
+      // (or has no active membership), the RPC's own legacy path simply
+      // rejects the null code, exactly like an unrecognized code today,
+      // and this falls through to the PIN form below with no error shown.
+      load(null, { silent: true });
     }
-    // Only run this on the code the session actually carried in at mount —
-    // a subsequent manual re-entry below (activeCode) is handled by its
-    // own submit handler, not by this effect re-firing.
+    // Only re-run when the session's own carried-in credentials change —
+    // a subsequent manual re-entry below is handled by its own submit
+    // handler, not by this effect re-firing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessCode]);
+  }, [accessCode, hasAuthenticatedSession]);
 
   const handleConfirmCode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,10 +109,11 @@ export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, ac
     await load(enteredCode.trim());
   };
 
-  // Session genuinely has no PIN in memory (restored session) and none has
-  // been confirmed yet this view-visit — ask for it once, here, rather
-  // than silently failing or inventing a persistent credential store.
-  if (!activeCode && !isLoading) {
+  // Nothing has resolved yet (no result), no load is in flight, and at
+  // least one attempt has already run its course (or there was never a
+  // session to attempt with) — ask for the PIN once, here, rather than
+  // silently failing or inventing a persistent credential store.
+  if (!result && !isLoading && (hasAttempted || !hasAuthenticatedSession)) {
     return (
       <div className="max-w-md mx-auto my-8 px-4">
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm text-center">
@@ -133,17 +165,6 @@ export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, ac
         <div className="text-center py-12 bg-white border border-slate-200 rounded-2xl">
           <RefreshCw size={26} className="text-slate-400 animate-spin mx-auto mb-2" />
           <p className="text-sm text-slate-500">Loading your assignment...</p>
-        </div>
-      ) : error ? (
-        <div className="text-center py-10 bg-white border border-slate-200 rounded-2xl px-4">
-          <AlertCircle size={26} className="text-rose-400 mx-auto mb-2" />
-          <p className="text-sm text-rose-600 font-medium mb-3">{error}</p>
-          <button
-            onClick={() => { setActiveCode(null); setEnteredCode(''); setError(null); }}
-            className="px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md text-xs font-semibold cursor-pointer"
-          >
-            Try Again
-          </button>
         </div>
       ) : result?.status === 'not_published' ? (
         <div className="text-center py-12 bg-white border border-slate-200 rounded-2xl text-slate-400">

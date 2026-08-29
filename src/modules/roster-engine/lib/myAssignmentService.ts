@@ -48,7 +48,14 @@ export interface MyAssignmentResult {
 }
 
 export const myAssignmentService = {
-  async getCurrentAssignment(workforceId: string, code: string): Promise<MyAssignmentResult> {
+  // Migration 78: code is now string | null — a restored session with no
+  // PIN in memory (an authenticated, previously-claimed resident) passes
+  // null. The RPC's own authenticated-membership-first check runs before
+  // it ever inspects p_code, so a null/absent code is only ever a problem
+  // if that check also doesn't match (an unclaimed or legacy-only caller),
+  // in which case the RPC raises its existing 'Invalid access code' error
+  // exactly as it already does for a wrong code today.
+  async getCurrentAssignment(workforceId: string, code: string | null): Promise<MyAssignmentResult> {
     const { data, error } = await supabase!.rpc('resident_get_current_assignment', {
       p_workforce_id: workforceId,
       p_code: code,

@@ -72,10 +72,17 @@ interface IntelligenceHarnessHomeProps {
   // The in-memory-only access PIN captured at fresh login (App.tsx's
   // residentAccessCode) — the exact same value already passed to
   // /workspace/my-assignment and /workspace/full-roster. null on every
-  // session restore (page reload / returning later) — see the My
-  // Assignment card below, which never attempts the RPC or duplicates
-  // the PIN re-entry flow when this is null.
+  // session restore (page reload / returning later).
   accessCode: string | null;
+  // Migration 78: true when a real Supabase Auth session exists (App.tsx's
+  // `!!currentDoctor`). When true, the My Assignment card below attempts
+  // resident_get_current_assignment() even with accessCode null, since
+  // that RPC's own authenticated-membership check now runs before it ever
+  // inspects the code — a claimed, actively-linked resident can see their
+  // assignment here after a restore without retaining the PIN. When false
+  // (legacy-only session), behavior is byte-for-byte unchanged: the static
+  // link-out card below, no RPC attempt, no duplicated PIN re-entry flow.
+  hasAuthenticatedSession: boolean;
 }
 
 interface QuickAccessTile {
@@ -116,7 +123,7 @@ interface TodaysFocusState {
   reviewStatus: SubmissionReviewStatus | null;
 }
 
-export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = ({ resident, accessCode }) => {
+export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = ({ resident, accessCode, hasAuthenticatedSession }) => {
   const navigate = useNavigate();
   const { t } = useTerminology();
   const tenantId = resident.tenant_id ?? DEFAULT_TENANT_ID;
@@ -133,7 +140,13 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
   });
   const [assignment, setAssignment] = useState<MyAssignmentResult | null>(null);
   const [assignmentPresentation, setAssignmentPresentation] = useState<RosterSectionPresentation[]>([]);
-  const [assignmentLoading, setAssignmentLoading] = useState<boolean>(!!accessCode);
+  const [assignmentLoading, setAssignmentLoading] = useState<boolean>(!!accessCode || hasAuthenticatedSession);
+  // Migration 78: true only when there is genuinely nothing to attempt
+  // with (no code, no authenticated session) OR a real attempt already
+  // ran and failed — distinct from "haven't tried yet", so the initial
+  // render never briefly flashes "Roster not yet published" before the
+  // authenticated-membership attempt below has even started.
+  const [assignmentUnavailable, setAssignmentUnavailable] = useState<boolean>(!accessCode && !hasAuthenticatedSession);
 
   useEffect(() => {
     let cancelled = false;
@@ -209,27 +222,40 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
     };
   }, [tenantId, resident.id]);
 
-  // My Assignment compact summary. Only ever calls the RPC when accessCode
-  // is present (fresh login) — on a restored session (accessCode === null,
-  // the common case, not the edge case) this never fires, and the render
-  // below shows a static link-out card instead, never a second PIN
+  // My Assignment compact summary. Migration 78: calls the RPC whenever
+  // either a fresh-login accessCode is present OR a real Supabase Auth
+  // session exists (hasAuthenticatedSession) — the RPC's own
+  // authenticated-membership-first check runs before it ever inspects a
+  // null code, so a claimed, actively-linked resident can see this card
+  // populate after a restore without retaining the PIN. A legacy-only
+  // session (neither present) never fires this at all, and the render
+  // below shows the static link-out card instead, never a second PIN
   // re-entry form (that already lives on /workspace/my-assignment).
   useEffect(() => {
     let cancelled = false;
-    if (!accessCode) {
+    if (!accessCode && !hasAuthenticatedSession) {
       setAssignmentLoading(false);
+      setAssignmentUnavailable(true);
       return;
     }
     setAssignmentLoading(true);
+    setAssignmentUnavailable(false);
     (async () => {
       try {
         const res = await myAssignmentService.getCurrentAssignment(resident.id, accessCode);
         if (!cancelled) setAssignment(res);
-        rosterSectionPresentationService.getResidentPresentation(resident.id, accessCode)
-          .then((p) => { if (!cancelled) setAssignmentPresentation(p); })
-          .catch((err) => console.warn('IntelligenceHarnessHome: roster section presentation load failed (using fallback labels)', err));
+        // roster-section presentation (migration 74) is out of scope for
+        // migration 78 and still requires a real code — skipped here when
+        // accessCode is null (an authenticated-membership-only load keeps
+        // today's existing fallback display labels instead).
+        if (accessCode) {
+          rosterSectionPresentationService.getResidentPresentation(resident.id, accessCode)
+            .then((p) => { if (!cancelled) setAssignmentPresentation(p); })
+            .catch((err) => console.warn('IntelligenceHarnessHome: roster section presentation load failed (using fallback labels)', err));
+        }
       } catch (err) {
         console.warn('IntelligenceHarnessHome: My Assignment summary load failed (non-fatal)', err);
+        if (!cancelled) setAssignmentUnavailable(true);
       } finally {
         if (!cancelled) setAssignmentLoading(false);
       }
@@ -237,7 +263,7 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
     return () => {
       cancelled = true;
     };
-  }, [accessCode, resident.id]);
+  }, [accessCode, hasAuthenticatedSession, resident.id]);
 
   const handleDismiss = async (id: string) => {
     if (!supabase) return;
@@ -392,14 +418,17 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
         {/* My Assignment (compact) — reuses myAssignmentService/
             rosterSectionPresentation directly (no new service). Never
             duplicates MyAssignmentView's own PIN re-entry form: when
-            accessCode is null (session restore, the common case) this
-            renders a static link-out only, and never attempts the RPC. */}
+            neither accessCode nor an authenticated-membership match is
+            available, this renders a static link-out only and never
+            attempts the RPC (migration 78: it DOES attempt the RPC with a
+            null code whenever hasAuthenticatedSession is true, even with
+            accessCode null — see assignmentUnavailable above). */}
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
           <div className="flex items-center space-x-2 mb-3">
             <CalendarCheck size={16} className="text-slate-500" />
             <h3 className="font-bold text-slate-900 text-sm">My Assignment</h3>
           </div>
-          {!accessCode ? (
+          {assignmentUnavailable ? (
             <div className="flex items-center space-x-2 text-slate-500 text-xs">
               <Lock size={14} className="shrink-0" />
               <span>View your current duty assignment</span>

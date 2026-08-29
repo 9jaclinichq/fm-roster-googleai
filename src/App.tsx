@@ -626,7 +626,7 @@ function MainAppContent() {
             path="/workspace/home"
             element={
               currentResident ? (
-                <IntelligenceHarnessHome resident={currentResident} accessCode={residentAccessCode} />
+                <IntelligenceHarnessHome resident={currentResident} accessCode={residentAccessCode} hasAuthenticatedSession={!!currentDoctor} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )
@@ -647,15 +647,19 @@ function MainAppContent() {
 
           {/* My Assignment — member-facing view of their own current
               published roster assignment (migration 67's
-              resident_get_current_assignment() RPC). residentAccessCode is
-              the in-memory-only PIN from a fresh login (null on session
+              resident_get_current_assignment() RPC, migrated by migration
+              78 to try authenticated institutional membership before
+              falling back to the legacy code). residentAccessCode is the
+              in-memory-only PIN from a fresh login (null on session
               restore) — see MyAssignmentView's own header for why it is
-              passed through rather than re-derived or persisted. */}
+              passed through rather than re-derived or persisted.
+              hasAuthenticatedSession lets it attempt the RPC with no code
+              at all on a restored, previously-claimed session. */}
           <Route
             path="/workspace/my-assignment"
             element={
               currentResident ? (
-                <MyAssignmentView resident={currentResident} accessCode={residentAccessCode} />
+                <MyAssignmentView resident={currentResident} accessCode={residentAccessCode} hasAuthenticatedSession={!!currentDoctor} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )
