@@ -34,14 +34,21 @@ export interface OrganisationMembership {
   claimed_at: string | null;
 }
 
+// Field names here are claim_-prefixed, matching migration 77's own
+// RETURNS TABLE shape exactly -- found live, not assumed: a plain
+// tenant_id/workforce_id/etc. OUT-parameter name collides with real
+// organisation_memberships columns inside that PL/pgSQL function body
+// (an "ambiguous column reference" error, caught only by live execution
+// during this slice's deploy verification), so the RPC's return shape
+// itself uses these prefixed names instead of the bare column names.
 export interface ClaimWorkforceMemberResult {
   membership_id: string;
-  tenant_id: string;
-  workforce_id: string | null;
-  is_workforce_member: boolean;
-  is_tenant_admin: boolean;
-  status: 'active' | 'suspended' | 'revoked';
-  claimed_at: string | null;
+  claim_tenant_id: string;
+  claim_workforce_id: string | null;
+  claim_is_workforce_member: boolean;
+  claim_is_tenant_admin: boolean;
+  claim_status: 'active' | 'suspended' | 'revoked';
+  claim_claimed_at: string | null;
 }
 
 export const organisationMembershipService = {

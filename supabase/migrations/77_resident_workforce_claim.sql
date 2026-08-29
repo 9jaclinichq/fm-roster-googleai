@@ -93,15 +93,40 @@
 -- current_user_organisation_memberships()) and never returns the resident
 -- code itself (it was only ever a request parameter, never persisted or
 -- echoed back by this or any other RPC in this app).
+-- RETURNS TABLE column names below are deliberately NOT the bare
+-- organisation_memberships column names (tenant_id/workforce_id/
+-- is_workforce_member/is_tenant_admin/status/claimed_at) -- found live,
+-- not by reading this file's own source: RETURNS TABLE(...) implicitly
+-- declares each of those names as a plpgsql OUT-parameter variable for
+-- the whole function body, and a real table column of the SAME name
+-- anywhere inside the body (including, surprisingly, an INSERT's own
+-- target column list -- table aliases do not help there, since that
+-- position cannot be alias-qualified at all) raises "column reference
+-- ... is ambiguous" at the SQL level. Caught only by live execution
+-- during this slice's own deploy verification (a structural SQL-text
+-- check cannot catch this). Prefixed with claim_ instead -- membership_id
+-- needed no change since no column is literally named "membership_id"
+-- (the real PK is just "id").
+--
+-- DROP FUNCTION IF EXISTS is required here (matching migration 64's own
+-- established precedent for this exact situation): Postgres's CREATE OR
+-- REPLACE FUNCTION refuses to change an existing function's RETURNS TABLE
+-- column shape ("cannot change return type of existing function"), which
+-- the OUT-parameter rename above does. This only matters because this
+-- exact function was already live-applied once with the old column names
+-- during this same slice's own deploy verification -- it has never been
+-- exposed to real traffic.
+DROP FUNCTION IF EXISTS claim_workforce_member(uuid, text);
+
 CREATE OR REPLACE FUNCTION claim_workforce_member(p_workforce_id uuid, p_resident_code text)
 RETURNS TABLE (
   membership_id uuid,
-  tenant_id uuid,
-  workforce_id uuid,
-  is_workforce_member boolean,
-  is_tenant_admin boolean,
-  status text,
-  claimed_at timestamptz
+  claim_tenant_id uuid,
+  claim_workforce_id uuid,
+  claim_is_workforce_member boolean,
+  claim_is_tenant_admin boolean,
+  claim_status text,
+  claim_claimed_at timestamptz
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -116,7 +141,7 @@ BEGIN
     RAISE EXCEPTION 'Authentication required' USING ERRCODE = '28000';
   END IF;
 
-  SELECT * INTO v_workforce FROM workforce WHERE id = p_workforce_id;
+  SELECT * INTO v_workforce FROM workforce w WHERE w.id = p_workforce_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Workforce record not found' USING ERRCODE = '22023';
   END IF;
@@ -132,6 +157,22 @@ BEGIN
   -- Tenant is derived from the workforce row -- there is no p_tenant_id
   -- parameter on this function for a caller to supply instead.
   --
+  -- Every table reference below this point is explicitly aliased (w/om) --
+  -- found live, not by reading this file's own source: this function's
+  -- RETURNS TABLE clause implicitly declares plpgsql OUT-parameter
+  -- variables named tenant_id/workforce_id/is_workforce_member/
+  -- is_tenant_admin/status/claimed_at, which COLLIDE by name with real
+  -- organisation_memberships (and workforce.tenant_id) columns. A bare,
+  -- unqualified reference to any of those names inside this function body
+  -- raises "column reference ... is ambiguous" at the SQL level, since
+  -- Postgres cannot tell whether the bare name means the OUT parameter or
+  -- the table column. Caught only by live execution during this slice's
+  -- own deploy verification (structural SQL-text checks cannot catch
+  -- this) -- fixed by aliasing every table (w for workforce, om for
+  -- organisation_memberships) and qualifying every reference, rather than
+  -- renaming the RETURNS TABLE columns (which would be a breaking change
+  -- to this RPC's already-reviewed public return shape).
+  --
   -- Fast, friendly PRE-CHECK for the common (non-concurrent) case: an
   -- already-completed claim for a DIFFERENT workforce_id in this same
   -- tenant is rejected outright here, before attempting any write. This
@@ -139,8 +180,8 @@ BEGIN
   -- exists only to give a clear error without a write attempt in the
   -- ordinary sequential case.
   SELECT * INTO v_existing
-    FROM organisation_memberships
-    WHERE tenant_id = v_workforce.tenant_id AND auth_user_id = auth.uid();
+    FROM organisation_memberships om
+    WHERE om.tenant_id = v_workforce.tenant_id AND om.auth_user_id = auth.uid();
 
   IF FOUND
      AND v_existing.claimed_at IS NOT NULL
@@ -166,7 +207,7 @@ BEGIN
   -- NOT FOUND and turned into the same clear error, never a silent
   -- overwrite, race or not.
   BEGIN
-    INSERT INTO organisation_memberships (
+    INSERT INTO organisation_memberships AS om (
       tenant_id, auth_user_id, workforce_id, is_workforce_member, is_tenant_admin, status, claimed_at, claim_method
     )
     VALUES (
@@ -178,15 +219,15 @@ BEGIN
       -- is_tenant_admin is deliberately absent from this SET list -- an
       -- existing true value is preserved untouched, never overwritten by
       -- a workforce-side claim.
-      claimed_at = COALESCE(organisation_memberships.claimed_at, EXCLUDED.claimed_at),
-      claim_method = COALESCE(organisation_memberships.claim_method, EXCLUDED.claim_method),
+      claimed_at = COALESCE(om.claimed_at, EXCLUDED.claimed_at),
+      claim_method = COALESCE(om.claim_method, EXCLUDED.claim_method),
       updated_at = timezone('utc'::text, now())
       -- legacy_code_disabled_at is absent from this SET list entirely --
       -- never referenced, so a fresh row gets the column's own NULL
       -- default and an existing row's value (whatever it is) is left
       -- completely alone by this statement.
-    WHERE organisation_memberships.workforce_id IS NULL
-       OR organisation_memberships.workforce_id = EXCLUDED.workforce_id
+    WHERE om.workforce_id IS NULL
+       OR om.workforce_id = EXCLUDED.workforce_id
     RETURNING * INTO v_result;
   EXCEPTION WHEN unique_violation THEN
     RAISE EXCEPTION 'This workforce record has already been claimed by another account.' USING ERRCODE = '23505';

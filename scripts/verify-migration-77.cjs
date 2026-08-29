@@ -71,16 +71,16 @@ check('a pre-check rejects claiming a DIFFERENT workforce_id once this (tenant, 
 
 check('the upsert uses ON CONFLICT (tenant_id, auth_user_id) DO UPDATE — native atomicity, not a separate check-then-write statement', /ON CONFLICT \(tenant_id, auth_user_id\) DO UPDATE SET/.test(claimFn));
 
-check('race-safety backstop: the DO UPDATE carries its own WHERE guard (workforce_id IS NULL OR = EXCLUDED.workforce_id) so a genuinely concurrent conflicting claim cannot silently overwrite an already-different workforce_id, independent of the earlier pre-check', /WHERE organisation_memberships\.workforce_id IS NULL\s*\n\s*OR organisation_memberships\.workforce_id = EXCLUDED\.workforce_id/.test(claimFn));
+check('race-safety backstop: the DO UPDATE carries its own WHERE guard (workforce_id IS NULL OR = EXCLUDED.workforce_id) so a genuinely concurrent conflicting claim cannot silently overwrite an already-different workforce_id, independent of the earlier pre-check', /WHERE om\.workforce_id IS NULL\s*\n\s*OR om\.workforce_id = EXCLUDED\.workforce_id/.test(claimFn));
 
 check('a blocked WHERE-guarded conflict (no row returned) is detected via NOT FOUND after the statement and raises the same clear error, never silently succeeding', /RETURNING \* INTO v_result;\s*\n\s*EXCEPTION WHEN unique_violation[\s\S]*?END;\s*\n\s*IF NOT FOUND THEN\s*\n\s*RAISE EXCEPTION/.test(claimFn));
 
-check('a genuine repeat claim (same user, same workforce_id) is idempotent: claimed_at/claim_method are COALESCE-preserved, never overwritten with a new value', /claimed_at = COALESCE\(organisation_memberships\.claimed_at, EXCLUDED\.claimed_at\)/.test(claimFn) && /claim_method = COALESCE\(organisation_memberships\.claim_method, EXCLUDED\.claim_method\)/.test(claimFn));
+check('a genuine repeat claim (same user, same workforce_id) is idempotent: claimed_at/claim_method are COALESCE-preserved, never overwritten with a new value', /claimed_at = COALESCE\(om\.claimed_at, EXCLUDED\.claimed_at\)/.test(claimFn) && /claim_method = COALESCE\(om\.claim_method, EXCLUDED\.claim_method\)/.test(claimFn));
 
 check('a different authenticated user claiming an already active/suspended-linked workforce row is rejected via migration 76\'s own partial unique index (unique_violation handler present, no bypass)', /EXCEPTION WHEN unique_violation THEN\s*\n\s*RAISE EXCEPTION 'This workforce record has already been claimed by another account\.'/.test(claimFn));
 
 check('an existing is_tenant_admin = true flag survives a resident claim — the DO UPDATE SET list never mentions is_tenant_admin at all', (() => {
-  const setBlock = claimFn.slice(claimFn.indexOf('DO UPDATE SET'), claimFn.indexOf('WHERE organisation_memberships.workforce_id'));
+  const setBlock = claimFn.slice(claimFn.indexOf('DO UPDATE SET'), claimFn.indexOf('WHERE om.workforce_id'));
   return !/is_tenant_admin/.test(setBlock);
 })());
 
