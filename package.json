@@ -24,6 +24,7 @@
     "verify:roster-safety-slice": "tsx scripts/verify-roster-safety-slice.ts",
     "verify:resident-home": "node scripts/verify-resident-home.cjs",
     "verify:migration-76": "node scripts/verify-migration-76.cjs",
+    "verify:migration-77": "node scripts/verify-migration-77.cjs",
     "verify:submission-review-status": "node scripts/verify-submission-review-status.cjs",
     "verify:pending-member-contacts": "node scripts/verify-pending-member-contacts.cjs",
     "verify:m19-dormant": "node scripts/verify-m19-dormant.cjs",

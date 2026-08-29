@@ -8,6 +8,7 @@ import { LoadingShell } from './modules/shared/ui/LoadingShell';
 import { OfflineBanner } from './modules/shared/ui/OfflineBanner';
 import { ResidentLoginView } from './modules/auth/components/ResidentLoginView';
 import { PostLoginEmailPrompt } from './modules/auth/components/PostLoginEmailPrompt';
+import { LinkInstitutionalAccessPrompt } from './modules/auth/components/LinkInstitutionalAccessPrompt';
 import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
 import { MyAssignmentView } from './modules/roster-engine/components/MyAssignmentView';
@@ -471,6 +472,26 @@ function MainAppContent() {
           workforceId={currentResident.id}
           accessCode={residentAccessCode}
           onSaved={handleResidentEmailSaved}
+        />
+      )}
+
+      {/* Institutional Identity Slice 2a — "Link institutional access".
+          Shown ONLY when a real Supabase Auth session already exists
+          (currentDoctor !== null — the only way any session currently
+          gets one in this app) AND a resident session is ALSO active —
+          exactly the "authenticated Supabase user is also operating in a
+          resident context" precondition from the reviewed handoff/
+          prompt1.txt, not a new convergence concept. The component itself
+          checks whether this specific workforce_id is already linked
+          (migration 76's resolver) and renders nothing if so. Never
+          blocks any route below it — a banner, not a gate. Does not
+          require or store the resident access code anywhere persistent;
+          does not affect the legacy resident session on success or
+          failure. */}
+      {currentDoctor && currentResident && (
+        <LinkInstitutionalAccessPrompt
+          workforceId={currentResident.id}
+          onLinked={() => {}}
         />
       )}
 
