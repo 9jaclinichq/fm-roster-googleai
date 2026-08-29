@@ -192,8 +192,18 @@ ALTER TABLE organisation_memberships ENABLE ROW LEVEL SECURITY;
 -- belt-and-suspenders: anon has neither a grant NOR a policy; authenticated
 -- has a SELECT grant that RLS then narrows to own-row-only. No role is
 -- ever granted INSERT/UPDATE/DELETE on this table.
+--
+-- REVOKE ALL ... FROM PUBLIC alone is NOT sufficient here -- this Supabase
+-- project's ambient ALTER DEFAULT PRIVILEGES grants ALL table privileges
+-- directly to anon/authenticated/service_role at CREATE TABLE time,
+-- which is a grant held BY THAT ROLE, not by the PUBLIC pseudo-role, so
+-- REVOKE ... FROM PUBLIC does not remove it (confirmed empirically:
+-- authenticated held INSERT/UPDATE/DELETE immediately after this
+-- migration's original apply, despite that REVOKE). anon and
+-- authenticated are therefore each revoked explicitly, by name.
 REVOKE ALL ON organisation_memberships FROM PUBLIC;
 REVOKE ALL ON organisation_memberships FROM anon;
+REVOKE ALL ON organisation_memberships FROM authenticated;
 GRANT SELECT ON organisation_memberships TO authenticated;
 
 CREATE POLICY organisation_memberships_select_own
@@ -288,5 +298,14 @@ $$;
 -- "anon, authenticated") RPC grant in this repo -- every existing RPC is
 -- still code/PIN-based and therefore callable pre-Auth-session, which
 -- this one deliberately is not.
+--
+-- REVOKE ... FROM PUBLIC alone is NOT sufficient here, for the same
+-- reason as the table grants above: this project's ambient ALTER
+-- DEFAULT PRIVILEGES grants EXECUTE directly to anon (and authenticated)
+-- at CREATE FUNCTION time, which REVOKE ... FROM PUBLIC does not touch
+-- (confirmed empirically: anon held EXECUTE immediately after this
+-- migration's original apply, despite that REVOKE). anon is therefore
+-- revoked explicitly, by name.
 REVOKE ALL ON FUNCTION current_user_organisation_memberships() FROM PUBLIC;
+REVOKE ALL ON FUNCTION current_user_organisation_memberships() FROM anon;
 GRANT EXECUTE ON FUNCTION current_user_organisation_memberships() TO authenticated;
