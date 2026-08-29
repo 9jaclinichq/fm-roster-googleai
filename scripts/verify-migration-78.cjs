@@ -64,9 +64,10 @@ check('the helper is NOT SECURITY DEFINER (matches this repo\'s own precedent fo
 
 check('the helper has a fixed search_path', /LANGUAGE sql STABLE SET search_path = public/.test(helperFn));
 
-check('EXECUTE on the helper is explicitly revoked from PUBLIC then explicitly revoked from anon BY NAME (not inferred from the PUBLIC revoke) — no GRANT of any kind to any role', (() => {
+check('EXECUTE on the helper is explicitly revoked from PUBLIC, anon, AND authenticated BY NAME (not inferred from each other) — no GRANT of any kind to any role, since no role has a concrete reason for direct client invocation of an internal-only primitive', (() => {
   return /REVOKE ALL ON FUNCTION public\._resident_authenticated_membership_match\(uuid\) FROM PUBLIC;/.test(sqlNoComments)
     && /REVOKE ALL ON FUNCTION public\._resident_authenticated_membership_match\(uuid\) FROM anon;/.test(sqlNoComments)
+    && /REVOKE ALL ON FUNCTION public\._resident_authenticated_membership_match\(uuid\) FROM authenticated;/.test(sqlNoComments)
     && !/GRANT[^;]*_resident_authenticated_membership_match/i.test(sqlNoComments);
 })());
 

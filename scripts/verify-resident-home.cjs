@@ -75,7 +75,7 @@ check('App.tsx: Navbar\'s dedicated "My Form" callback (onNavigateToResidentForm
 
 check('App.tsx: legacy /resident-form deep-link backward-compat redirect still targets /workspace/form (a direct deep link, correctly NOT redirected to Home)', /location\.pathname === '\/resident-form'\s*\n\s*\? '\/workspace\/form'/.test(appTsx));
 
-check('App.tsx: /workspace/home route element now threads accessCode to IntelligenceHarnessHome (same residentAccessCode already passed to My Assignment/Full Roster)', /<IntelligenceHarnessHome resident=\{currentResident\} accessCode=\{residentAccessCode\}\s*\/>/.test(appTsx));
+check('App.tsx: /workspace/home route element threads accessCode AND hasAuthenticatedSession to IntelligenceHarnessHome (migration 78 — same residentAccessCode already passed to My Assignment/Full Roster, plus the new authenticated-session signal)', /<IntelligenceHarnessHome resident=\{currentResident\} accessCode=\{residentAccessCode\} hasAuthenticatedSession=\{!!currentDoctor\}\s*\/>/.test(appTsx));
 
 // =====================================================================
 // Monthly submission CTA — canonical current-collection resolver fix
@@ -123,16 +123,16 @@ check('IntelligenceHarnessHome.tsx: insights filter gains exactly one additional
 // My Assignment compact card — accessCode-null safety
 // =====================================================================
 
-check('IntelligenceHarnessHome.tsx: the assignment-loading effect returns BEFORE calling myAssignmentService when accessCode is null — never attempts the RPC on a restored session', (() => {
+check('IntelligenceHarnessHome.tsx: the assignment-loading effect returns BEFORE calling myAssignmentService only when BOTH accessCode is null AND hasAuthenticatedSession is false — migration 78\'s approved invariant, superseding the pre-78 "never attempt on restore" rule (which is now intentionally wrong: a restored authenticated session DOES attempt the RPC)', (() => {
   const effectBlock = homeTsx.slice(homeTsx.indexOf('My Assignment compact summary'), homeTsx.indexOf('const quickAccess'));
-  const guardIndex = effectBlock.indexOf('if (!accessCode) {');
+  const guardIndex = effectBlock.indexOf('if (!accessCode && !hasAuthenticatedSession) {');
   const rpcIndex = effectBlock.indexOf('myAssignmentService.getCurrentAssignment');
   return guardIndex !== -1 && rpcIndex !== -1 && guardIndex < rpcIndex;
 })());
 
 check('IntelligenceHarnessHome.tsx: no PIN re-entry form is duplicated on Home — no <input> for a code/PIN anywhere in this file', !/type="password"|inputMode="numeric"/.test(homeTsx));
 
-check('IntelligenceHarnessHome.tsx: the accessCode-null render branch shows a static link-out (Lock affordance), not fabricated assignment data', /!accessCode \? \(/.test(homeTsx) && /<Lock size=\{14\}/.test(homeTsx));
+check('IntelligenceHarnessHome.tsx: the render branch gated on assignmentUnavailable (migration 78 — true only when there is genuinely nothing to attempt with, or a real attempt already failed) shows a static link-out (Lock affordance), not fabricated assignment data', /assignmentUnavailable \? \(/.test(homeTsx) && /<Lock size=\{14\}/.test(homeTsx));
 
 check('IntelligenceHarnessHome.tsx: My Assignment card always links to both /workspace/my-assignment and /workspace/full-roster regardless of accessCode state', (() => {
   const cardBlock = homeTsx.slice(homeTsx.indexOf('My Assignment (compact)'), homeTsx.indexOf('Needs Attention —'));

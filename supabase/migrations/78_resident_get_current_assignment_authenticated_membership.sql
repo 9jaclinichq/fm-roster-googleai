@@ -82,10 +82,12 @@
 -- session's own live testing, migration 77, to resolve to the real calling
 -- client's JWT sub claim regardless of nesting). Unlike those three
 -- siblings, this helper DOES gain an explicit SET search_path = public and
--- explicit REVOKEs — disclosed, not silently copied: none of those three
--- pre-existing siblings has either (checked directly; a real, pre-existing,
--- low-risk gap, not fixed by this migration, since none of them evaluates
--- auth.uid()/authorization state the way this one does).
+-- explicit REVOKEs from PUBLIC, anon, AND authenticated (added during this
+-- migration's own deployment review — no role has a concrete reason for
+-- direct client invocation) — disclosed, not silently copied: none of
+-- those three pre-existing siblings has either (checked directly; a real,
+-- pre-existing, low-risk gap, not fixed by this migration, since none of
+-- them evaluates auth.uid()/authorization state the way this one does).
 -- resident_get_current_assignment() itself keeps its existing GRANT EXECUTE
 -- TO anon, authenticated unchanged — this slice does not change who may
 -- attempt to call it, only what the function does once called.
@@ -127,8 +129,33 @@ $$;
 -- else in this migration) writes legacy_code_disabled_at as a side effect
 -- of status, and no status-changing RPC is introduced.
 
+-- DEPLOYMENT-REVIEW CORRECTION (added during this migration's own live
+-- deployment review, before first live apply -- not a live-testing-surfaced
+-- bug like migrations 76/77's, but the same ambient-default-privilege
+-- lesson applied prospectively on inspection): this helper is an internal
+-- authorization primitive only ever meant to be called from inside
+-- resident_get_current_assignment(). It has no concrete reason for direct
+-- client invocation by ANY role, including authenticated -- unlike
+-- resident_get_current_assignment itself (which legitimately serves both
+-- anon and authenticated callers), this helper only ever answers "does
+-- auth.uid() have a matching active membership for this workforce_id",
+-- and calling it directly (bypassing the outer RPC's own workforce-active
+-- check and structural precedence) would let any authenticated caller
+-- probe membership state for an arbitrary workforce_id with no other
+-- purpose. This project's ambient ALTER DEFAULT PRIVILEGES (the
+-- migration-76 lesson) grants EXECUTE directly to authenticated (not only
+-- anon) at function-creation time -- a PUBLIC-only or PUBLIC+anon revoke
+-- does not remove it. All three revokes below are therefore explicit, by
+-- role name, not inferred from each other. The internal call from
+-- resident_get_current_assignment (SECURITY DEFINER, owned by the
+-- migration-applying role) is unaffected by any of these revokes --
+-- Postgres privilege checks for a call made from inside a SECURITY
+-- DEFINER function's body run as the DEFINER's own role, not the
+-- original client role, so the owning role's own implicit privilege on a
+-- function it owns is what makes the internal call succeed regardless.
 REVOKE ALL ON FUNCTION public._resident_authenticated_membership_match(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public._resident_authenticated_membership_match(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public._resident_authenticated_membership_match(uuid) FROM authenticated;
 
 CREATE OR REPLACE FUNCTION public.resident_get_current_assignment(p_workforce_id uuid, p_code text)
 RETURNS TABLE (
