@@ -3,11 +3,18 @@ import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, X, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic,
   ShieldCheck, FlaskConical, Stethoscope, IdCard, Clock, CheckCircle2, ChevronRight,
+  AlertTriangle, CalendarCheck, Table2, Lock,
 } from 'lucide-react';
 import { supabase, databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
 import { getActiveInsights, dismissInsight, InsightRow, SUBMISSION_CHASER_AGENT_KEY } from '../lib/submissionChaserAgent';
 import { MEETING_ACTION_CHASER_AGENT_KEY } from '../lib/meetingActionAgent';
+import { resolveCurrentCollection } from '../lib/submissionStatus';
 import { useTerminology } from '../terminology';
+import { SubmissionReviewStatus } from '../../../types';
+import { ComplianceNudgesView } from '../../org-admin/components/ComplianceNudgesView';
+import { myAssignmentService, MyAssignmentResult } from '../../roster-engine/lib/myAssignmentService';
+import { rosterSectionPresentationService } from '../../roster-engine/lib/rosterSectionPresentationService';
+import { RosterSectionPresentation, GRID_LABEL_TO_SECTION_KEY, resolveRosterSectionPresentation } from '../../roster-engine/lib/rosterSectionPresentation';
 
 // Resident-facing "Intelligence Harness" home — the mobile-first productive
 // workspace landing screen this app didn't have before: every existing
@@ -35,12 +42,18 @@ import { useTerminology } from '../terminology';
 // work — InsightsStrip only renders on the Chief's dashboard — so this is
 // also a real, new surface for the spine, not a duplicate of an existing one.
 //
-// SCOPE: this component is additive — a new route (see the caller for the
-// exact path) alongside the existing `/workspace/form` landing, not a
-// replacement of it. Redirecting every resident's post-login landing here
-// instead of the monthly form is a real behavior change or its own separate
-// decision, deliberately left unmade in this pass (see the caller's own
-// comment) rather than silently switched.
+// SCOPE: this IS every resident's default post-login landing now (see
+// App.tsx's 7 redirect call sites, all pointed at /workspace/home) — per
+// the reviewed "resident home / needs attention" engineering handoff
+// (WORKSPC, dated 2026-08-28). /workspace/form remains fully reachable
+// (Navbar's "My Form" tab, direct URL, Today's Focus's own CTA below);
+// only the default landing changed. This pass also folds in: a compact
+// My Assignment summary (Section 4 of the handoff), a compact Needs
+// Attention card reusing ComplianceNudgesView with one nudge type
+// suppressed to avoid duplicating Today's Focus (Section 3), an insights
+// filter clause suppressing the same duplication for Submission Chaser
+// insights, two new Quick Access tiles, and a correctness fix to Today's
+// Focus's own "currently open collection" resolution (Section 5).
 
 const AGENT_LABELS: Record<string, string> = {
   [SUBMISSION_CHASER_AGENT_KEY]: 'Submission Chaser',
@@ -56,6 +69,13 @@ interface HarnessResident {
 
 interface IntelligenceHarnessHomeProps {
   resident: HarnessResident;
+  // The in-memory-only access PIN captured at fresh login (App.tsx's
+  // residentAccessCode) — the exact same value already passed to
+  // /workspace/my-assignment and /workspace/full-roster. null on every
+  // session restore (page reload / returning later) — see the My
+  // Assignment card below, which never attempts the RPC or duplicates
+  // the PIN re-entry flow when this is null.
+  accessCode: string | null;
 }
 
 interface QuickAccessTile {
@@ -89,9 +109,14 @@ interface TodaysFocusState {
   deadline: string | null;
   hasSubmitted: boolean;
   pastDeadline: boolean;
+  // Migration-free — reads submissions.review_status (already existing
+  // column, SubmissionReviewStatus = 'submitted' | 'reviewed') for the
+  // resident's own current-collection submission, if any. null whenever
+  // hasSubmitted is false (nothing to review yet).
+  reviewStatus: SubmissionReviewStatus | null;
 }
 
-export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = ({ resident }) => {
+export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = ({ resident, accessCode }) => {
   const navigate = useNavigate();
   const { t } = useTerminology();
   const tenantId = resident.tenant_id ?? DEFAULT_TENANT_ID;
@@ -104,7 +129,11 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
     deadline: null,
     hasSubmitted: false,
     pastDeadline: false,
+    reviewStatus: null,
   });
+  const [assignment, setAssignment] = useState<MyAssignmentResult | null>(null);
+  const [assignmentPresentation, setAssignmentPresentation] = useState<RosterSectionPresentation[]>([]);
+  const [assignmentLoading, setAssignmentLoading] = useState<boolean>(!!accessCode);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,34 +148,54 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
       try {
         const active = await getActiveInsights(supabase, tenantId);
         if (!cancelled) {
-          setInsights(active.filter((i) => i.workforce_id === resident.id || i.workforce_id === null));
+          // Submission Chaser insights are excluded here — Today's Focus
+          // (below) already surfaces this exact same fact directly and
+          // more prominently; showing both would be the duplication this
+          // slice is meant to remove (see Section 3 of the reviewed
+          // handoff). Meeting Action Chaser and any other agent's
+          // insights are unaffected.
+          setInsights(active.filter((i) =>
+            (i.workforce_id === resident.id || i.workforce_id === null)
+            && i.agent_key !== SUBMISSION_CHASER_AGENT_KEY
+          ));
         }
       } catch (err) {
         console.warn('IntelligenceHarnessHome: getActiveInsights failed (non-fatal)', err);
       }
     })();
 
-    // Today's Focus: the tenant's open collection + whether this resident
-    // has already submitted into it — mirrors the same signal
-    // submissionChaserAgent.ts itself reasons over, surfaced here as a
-    // direct, personal status card rather than only an agent-raised insight.
+    // Today's Focus: the tenant's CANONICAL currently-open collection
+    // (settings.current_collection_id, matched via resolveCurrentCollection
+    // — the same locked rule ComplianceNudgesView already uses) + whether
+    // this resident has already submitted into it. Correctness fix: this
+    // previously used an ad-hoc `collections.find(c => c.status === 'open')`
+    // check, which disagreed with the canonical rule whenever an open
+    // collection existed that was NOT the tenant's current_collection_id
+    // pointer — see Section 5 of the reviewed handoff.
     (async () => {
       try {
-        const collections = await databaseService.getCollections(tenantId);
-        const open = collections.find((c) => c.status === 'open') ?? null;
-        if (!open) {
-          if (!cancelled) setFocus({ loading: false, collectionTitle: null, deadline: null, hasSubmitted: false, pastDeadline: false });
+        const [settings, collections] = await Promise.all([
+          databaseService.getSettings(tenantId),
+          databaseService.getCollections(tenantId),
+        ]);
+        const current = resolveCurrentCollection({
+          tenantId,
+          currentCollectionId: settings.current_collection_id,
+          collections,
+        });
+        if (!current) {
+          if (!cancelled) setFocus({ loading: false, collectionTitle: null, deadline: null, hasSubmitted: false, pastDeadline: false, reviewStatus: null });
           return;
         }
-        const submissions = await databaseService.getSubmissions(open.id, tenantId);
-        const hasSubmitted = submissions.some((s) => s.workforce_id === resident.id);
+        const submission = await databaseService.getSubmissionForWorkforceAndCollection(resident.id, current.id);
         if (!cancelled) {
           setFocus({
             loading: false,
-            collectionTitle: open.title,
-            deadline: open.deadline,
-            hasSubmitted,
-            pastDeadline: new Date(open.deadline).getTime() < Date.now(),
+            collectionTitle: current.title,
+            deadline: current.deadline,
+            hasSubmitted: !!submission,
+            pastDeadline: new Date(current.deadline).getTime() < Date.now(),
+            reviewStatus: submission?.review_status ?? null,
           });
         }
       } catch (err) {
@@ -159,6 +208,36 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
       cancelled = true;
     };
   }, [tenantId, resident.id]);
+
+  // My Assignment compact summary. Only ever calls the RPC when accessCode
+  // is present (fresh login) — on a restored session (accessCode === null,
+  // the common case, not the edge case) this never fires, and the render
+  // below shows a static link-out card instead, never a second PIN
+  // re-entry form (that already lives on /workspace/my-assignment).
+  useEffect(() => {
+    let cancelled = false;
+    if (!accessCode) {
+      setAssignmentLoading(false);
+      return;
+    }
+    setAssignmentLoading(true);
+    (async () => {
+      try {
+        const res = await myAssignmentService.getCurrentAssignment(resident.id, accessCode);
+        if (!cancelled) setAssignment(res);
+        rosterSectionPresentationService.getResidentPresentation(resident.id, accessCode)
+          .then((p) => { if (!cancelled) setAssignmentPresentation(p); })
+          .catch((err) => console.warn('IntelligenceHarnessHome: roster section presentation load failed (using fallback labels)', err));
+      } catch (err) {
+        console.warn('IntelligenceHarnessHome: My Assignment summary load failed (non-fatal)', err);
+      } finally {
+        if (!cancelled) setAssignmentLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessCode, resident.id]);
 
   const handleDismiss = async (id: string) => {
     if (!supabase) return;
@@ -188,6 +267,8 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
     { label: 'Viva Simulator', icon: Mic, path: '/workspace/viva-simulator', accent: 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-100' },
     { label: 'Review Workspace', icon: ShieldCheck, path: '/workspace/consultant-review', accent: 'bg-teal-50 text-teal-600 border-teal-100' },
     { label: 'My Record', icon: IdCard, path: '/workspace/my-record', accent: 'bg-slate-100 text-slate-600 border-slate-200' },
+    { label: 'My Assignment', icon: CalendarCheck, path: '/workspace/my-assignment', accent: 'bg-sky-50 text-sky-600 border-sky-100' },
+    { label: 'Full Roster', icon: Table2, path: '/workspace/full-roster', accent: 'bg-lime-50 text-lime-700 border-lime-100' },
   ];
 
   return (
@@ -240,10 +321,22 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
                 Deadline: {new Date(focus.deadline as string).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
               </p>
               {focus.hasSubmitted ? (
-                <div className="flex items-center space-x-1.5 text-emerald-600 text-xs font-semibold">
-                  <CheckCircle2 size={14} />
-                  <span>Submitted</span>
-                </div>
+                focus.reviewStatus === 'reviewed' ? (
+                  // Distinct from plain "Submitted" — real, current data
+                  // (submissions.review_status), not a fabricated combined
+                  // "reviewed and needs attention" state (see Section 5 of
+                  // the reviewed handoff: that combined state does not
+                  // exist today and is not invented here).
+                  <div className="flex items-center space-x-1.5 text-indigo-600 text-xs font-semibold">
+                    <CheckCircle2 size={14} />
+                    <span>Reviewed</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-1.5 text-emerald-600 text-xs font-semibold">
+                    <CheckCircle2 size={14} />
+                    <span>Submitted</span>
+                  </div>
+                )
               ) : (
                 <button
                   type="button"
@@ -292,6 +385,89 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* My Assignment (compact) — reuses myAssignmentService/
+            rosterSectionPresentation directly (no new service). Never
+            duplicates MyAssignmentView's own PIN re-entry form: when
+            accessCode is null (session restore, the common case) this
+            renders a static link-out only, and never attempts the RPC. */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center space-x-2 mb-3">
+            <CalendarCheck size={16} className="text-slate-500" />
+            <h3 className="font-bold text-slate-900 text-sm">My Assignment</h3>
+          </div>
+          {!accessCode ? (
+            <div className="flex items-center space-x-2 text-slate-500 text-xs">
+              <Lock size={14} className="shrink-0" />
+              <span>View your current duty assignment</span>
+            </div>
+          ) : assignmentLoading ? (
+            <p className="text-sm text-slate-400">Loading&hellip;</p>
+          ) : !assignment || assignment.status === 'not_published' ? (
+            <p className="text-sm text-slate-500">Roster not yet published.</p>
+          ) : assignment.status === 'published_no_assignment' ? (
+            <p className="text-sm text-slate-500">No assignment for you this period.</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">This period&apos;s assignment(s)</p>
+              {/* No "today vs. next" split — date_or_day is opaque,
+                  organization-supplied text (sometimes a range, sometimes
+                  null); see Section 4 of the reviewed handoff for why
+                  inventing that logic is explicitly out of scope here. */}
+              {assignment.assignments.slice(0, 2).map((a, i) => (
+                <div key={i} className="border border-slate-100 rounded-xl px-3 py-2">
+                  <div className="flex items-center justify-between mb-0.5">
+                    {a.date_or_day && (
+                      <span className="text-xs font-medium text-slate-500">{a.date_or_day}</span>
+                    )}
+                    <span className="text-[10px] font-medium text-slate-400">
+                      {(() => {
+                        const sectionKey = GRID_LABEL_TO_SECTION_KEY[a.grid_label];
+                        return sectionKey ? resolveRosterSectionPresentation(sectionKey, assignmentPresentation).display_label : a.grid_label;
+                      })()}
+                    </span>
+                  </div>
+                  {a.assignment_detail && (
+                    <p className="text-sm font-semibold text-slate-800">{a.assignment_detail}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-4 mt-3 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => navigate('/workspace/my-assignment')}
+              className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer"
+            >
+              <span>View My Assignment</span>
+              <ChevronRight size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/workspace/full-roster')}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-700 cursor-pointer"
+            >
+              <span>View Full Roster</span>
+              <ChevronRight size={11} />
+            </button>
+          </div>
+        </div>
+
+        {/* Needs Attention — ComplianceNudgesView reused in compact mode,
+            with roster_pending suppressed (Today's Focus above already
+            surfaces that exact fact). Every other nudge type is
+            unaffected — this is presentation-only; deriveNudges() and the
+            compliance_nudges table are completely unchanged. */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center space-x-2 mb-3">
+            <AlertTriangle size={16} className="text-amber-600" />
+            <h3 className="font-bold text-slate-900 text-sm">Needs Attention</h3>
+          </div>
+          <ComplianceNudgesView resident={resident} compact excludeNudgeTypes={['roster_pending']} />
         </div>
       </div>
     </div>

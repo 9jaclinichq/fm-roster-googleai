@@ -290,7 +290,7 @@ function MainAppContent() {
         // Only redirect on an actual fresh login, never on a page-reload
         // restore (which would otherwise clobber a deep-linked resident route).
         if (event === 'SIGNED_IN') {
-          navigate(linkedWorkforce ? '/workspace/form' : '/doctor/home');
+          navigate(linkedWorkforce ? '/workspace/home' : '/doctor/home');
         }
       } catch (err) {
         console.warn('Failed to resolve doctor session:', err);
@@ -353,7 +353,7 @@ function MainAppContent() {
     // In-memory only — see residentAccessCode's own declaration comment.
     // Not included in the object persisted to localStorage above.
     setResidentAccessCode(accessCode);
-    navigate('/workspace/form');
+    navigate('/workspace/home');
     // Clear preset
     setPresetResident(null);
     refreshSubadminRoles(session);
@@ -492,7 +492,7 @@ function MainAppContent() {
             path="/"
             element={
               currentResident ? (
-                <Navigate to="/workspace/form" replace />
+                <Navigate to="/workspace/home" replace />
               ) : currentDoctor ? (
                 <Navigate to="/doctor/home" replace />
               ) : (
@@ -506,7 +506,7 @@ function MainAppContent() {
             path="/login"
             element={
               currentResident ? (
-                <Navigate to="/workspace/form" replace />
+                <Navigate to="/workspace/home" replace />
               ) : currentDoctor ? (
                 <Navigate to="/doctor/home" replace />
               ) : (
@@ -533,7 +533,7 @@ function MainAppContent() {
             element={
               currentDoctor ? (
                 currentResident ? (
-                  <Navigate to="/workspace/form" replace />
+                  <Navigate to="/workspace/home" replace />
                 ) : (
                   <DoctorHomeView doctor={currentDoctor} onLogout={handleDoctorLogout} />
                 )
@@ -552,7 +552,7 @@ function MainAppContent() {
           <Route
             path="/workspace/select-org"
             element={
-              currentResident ? <Navigate to="/workspace/form" replace /> : <TenantSelectorView />
+              currentResident ? <Navigate to="/workspace/home" replace /> : <TenantSelectorView />
             }
           />
 
@@ -561,7 +561,7 @@ function MainAppContent() {
             path="/workspace/login"
             element={
               currentResident ? (
-                <Navigate to="/workspace/form" replace />
+                <Navigate to="/workspace/home" replace />
               ) : (
                 <ResidentLoginView
                   onLoginSuccess={handleResidentLogin}
@@ -589,16 +589,23 @@ function MainAppContent() {
 
           {/* Intelligence Harness Home — mobile-first resident dashboard
               landing (see IntelligenceHarnessHome.tsx's own header for the
-              full rationale). Additive alongside /workspace/form, not a
-              replacement of the post-login redirect in handleResidentLogin
-              above — switching the default landing to this screen is a real
-              behavior change for every existing session and is deliberately
-              left as a follow-up decision, not made silently here. */}
+              full rationale). This is now every resident's default landing
+              (all 7 post-login/redirect call sites above point here) —
+              /workspace/form remains fully reachable via Navbar's "My Form"
+              tab, direct URL, and Home's own Today's Focus CTA; only the
+              default landing changed, per the reviewed "resident home /
+              needs attention" engineering handoff (WORKSPC, dated
+              2026-08-28). accessCode is the same in-memory-only PIN
+              already threaded to /workspace/my-assignment and
+              /workspace/full-roster below — null on a restored session,
+              which IntelligenceHarnessHome's own assignment card handles
+              without attempting the RPC or duplicating the PIN re-entry
+              flow. */}
           <Route
             path="/workspace/home"
             element={
               currentResident ? (
-                <IntelligenceHarnessHome resident={currentResident} />
+                <IntelligenceHarnessHome resident={currentResident} accessCode={residentAccessCode} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )

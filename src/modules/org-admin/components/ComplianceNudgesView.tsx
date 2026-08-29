@@ -15,6 +15,18 @@ interface ComplianceNudgesViewProps {
   // Compact mode renders a short summary (top 3, no page chrome) for
   // embedding on the Resident Home Workspace. Full mode shows everything.
   compact?: boolean;
+  // Additive, presentation-only filter applied over the already-computed/
+  // synced nudge list — never touches deriveNudges()'s own logic or data
+  // sources. Defaults to [] so the existing ResidentFormView embedding
+  // (which never passes this) is provably unaffected. Used by
+  // IntelligenceHarnessHome's compact Needs Attention card to suppress
+  // `roster_pending` there, since Today's Focus already surfaces that
+  // exact same fact more prominently (see the reviewed handoff's Section 3
+  // — a presentation rule, not a data-model merge). `nudge_type` has no
+  // dedicated union type in types.ts today (ComplianceNudge/DerivedNudge
+  // both type it as plain `string`), so this stays `string[]` rather than
+  // inventing one.
+  excludeNudgeTypes?: string[];
 }
 
 const SEVERITY_ORDER: Record<NudgeSeverity, number> = { high: 0, medium: 1, info: 2 };
@@ -149,7 +161,7 @@ async function deriveNudges(workforceId: string, tenantId: string | undefined): 
   return nudges;
 }
 
-export const ComplianceNudgesView: React.FC<ComplianceNudgesViewProps> = ({ resident, compact = false }) => {
+export const ComplianceNudgesView: React.FC<ComplianceNudgesViewProps> = ({ resident, compact = false, excludeNudgeTypes = [] }) => {
   const navigate = useNavigate();
   const [nudges, setNudges] = useState<ComplianceNudge[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -183,6 +195,7 @@ export const ComplianceNudgesView: React.FC<ComplianceNudgesViewProps> = ({ resi
 
   const unresolved = nudges
     .filter(n => !n.resolved)
+    .filter(n => !excludeNudgeTypes.includes(n.nudge_type))
     .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
   const visible = compact ? unresolved.slice(0, 3) : unresolved;
 

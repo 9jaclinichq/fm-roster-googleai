@@ -5,6 +5,7 @@ import { getUnifiedDoctorRecord, UnifiedDoctorRecord, UdrInstanceType, UdrEntryT
 import { runRubricComplianceChaserForDoctor } from '../lib/rubricComplianceAgent';
 import {
   RefreshCw, IdCard, Building2, FolderKanban, History, GraduationCap, CreditCard, Sparkles, ChevronRight,
+  CalendarDays,
 } from 'lucide-react';
 
 // First real face for the L3 Spine's Unified Doctor Record read-composition
@@ -214,6 +215,61 @@ export const UnifiedRecordView: React.FC<UnifiedRecordViewProps> = ({ owner }) =
                 <span className="text-[10px] text-slate-400 shrink-0">
                   {new Date(entry.createdAt).toLocaleDateString()}
                 </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Meetings — renders record.meetings, already fetched/typed by the
+          UDR layer (src/modules/shared/lib/udr.ts's fetchMeetings(),
+          scoped to meetings this person owes an action on). No new
+          meeting data model, no write path, no editing — strictly
+          rendering an already-typed field this page's existing data call
+          already returns. Live meeting_actions has 0 rows today (see
+          udr.ts's own header note), so the empty state below is expected,
+          not a bug to chase in this slice. */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+        <div className="flex items-center space-x-2">
+          <CalendarDays size={16} className="text-slate-500" />
+          <h3 className="font-bold text-slate-900 text-sm">Meetings</h3>
+        </div>
+        {record.meetings.length === 0 ? (
+          <p className="text-sm text-slate-500">No meetings yet.</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {record.meetings.map((meeting) => (
+              <div key={meeting.id} className="py-3 space-y-2">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">{meeting.title}</p>
+                    {meeting.status && (
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mt-0.5">
+                        {meeting.status.replace(/_/g, ' ')}
+                      </p>
+                    )}
+                  </div>
+                  {meeting.scheduledAt && (
+                    <span className="text-[10px] text-slate-400 shrink-0">
+                      {new Date(meeting.scheduledAt).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+                {meeting.actionsOwed.length > 0 && (
+                  <ul className="pl-3 border-l-2 border-slate-100 space-y-1">
+                    {meeting.actionsOwed.map((action) => (
+                      <li key={action.id} className="text-xs text-slate-600">
+                        {action.description}
+                        {action.dueDate && (
+                          <span className="text-slate-400"> &bull; due {new Date(action.dueDate).toLocaleDateString()}</span>
+                        )}
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                          {' '}&bull; {action.status.replace(/_/g, ' ')}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             ))}
           </div>
