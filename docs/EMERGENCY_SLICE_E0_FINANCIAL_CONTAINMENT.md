@@ -119,3 +119,35 @@ own containment decision already rejected.
 
 No secret values are recorded in this document. No exploit or attack
 walkthrough is recorded in this document.
+
+## Addendum — containment-scope correction (2026-08-30)
+
+`scripts/verify-e0-containment.cjs`'s static tripwire originally included a
+"no other Edge Function changed" check scoped to the entire
+`supabase/functions/` tree — failing if *any* file changed anywhere under
+it besides these two functions' own `index.ts`. Re-reading this record in
+full during a separate governance task found no basis in the actual E0
+decision above for that breadth: the "Requirement for re-enablement"
+section is explicit that it is these two functions, not Edge Functions as a
+category, that may not be restored/changed without formal review. The
+directory-wide form meant a genuinely unrelated new Edge Function (e.g. a
+roster-management feature with no connection to payments) could never pass
+this check for the life of the deployment freeze, which was never this
+record's intent.
+
+The check now derives its protected paths from
+`.workspc-engineering/protected-surfaces.json`'s `e0-financial-containment`
+entry (`supabase/functions/payment-checkout/**` and
+`supabase/functions/platform-operator-subaccount/**`) and fails only on a
+change matching one of those two paths — modified, deleted, or a new file
+introduced inside either directory. It still passes/fails independently of,
+and in addition to, the two per-file fail-closed-ordering checks this
+script has always performed. The deployment freeze
+(`.workspc-engineering/freeze.json`) and push guardrail (`.githooks/pre-push`)
+are unrelated, separate concerns and were not touched by this correction —
+see `scripts/verify-e0-containment.cjs`'s own header and
+`scripts/verify-e0-containment-scope.cjs` for the deterministic tests
+proving both the narrowed scope and that nothing else here was weakened.
+
+Nothing in this addendum changes the "Requirement for re-enablement" above,
+the affected-functions list, or the containment decision itself.

@@ -25,6 +25,12 @@
       "glob": ["supabase/migrations/66_rubric_instances_assessor_not_both_check.sql", "docs/RUBRIC_ASSESSOR_OWNERSHIP_SPEC.md"],
       "reason": "assessor identity-integrity constraint locked (at-most-one-of); migration 66 exists locally and is unapplied",
       "active": true
+    },
+    {
+      "id": "e0-financial-containment",
+      "glob": ["supabase/functions/payment-checkout/**", "supabase/functions/platform-operator-subaccount/**"],
+      "reason": "Emergency Slice E0 fail-closed financial containment (docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md) -- neither function may be restored to its prior behavior until real, server-verifiable authorization exists; any change here requires the formal re-enablement review that document defines, not an ordinary edit. Also consumed by scripts/verify-e0-containment.cjs as the authoritative protected-path source for its containment-scope check.",
+      "active": true
     }
   ]
 }
