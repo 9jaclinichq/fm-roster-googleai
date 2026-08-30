@@ -1199,6 +1199,89 @@ function isDominatedBySingleCharacter(candidate, thresholdRatio) {
   return maxCount / candidate.length >= thresholdRatio;
 }
 
+// ---------------------------------------------------------------------
+// generic-high-entropy-token false-positive fix #2 (2026-08-30): ordinary
+// multi-word source identifiers (camelCase or snake_case function/RPC
+// names, e.g. fetchTenantAdaptationPromptOverride,
+// check_and_increment_tenant_ai_quota) legitimately exceed 32 characters
+// and were previously indistinguishable from a real token by length alone.
+// This scanner has no AST/parser — it only ever sees raw diff text — so
+// this is a narrow, deterministic, line-text-only rule, not semantic
+// analysis. It does NOT broadly exempt every camelCase/snake_case-shaped
+// string (a config/env assignment or a bare KEY=value line is still
+// checked in full): it exempts a match only when BOTH of the following
+// hold:
+//   1. SHAPE: the token itself reads as a multi-segment English-word-like
+//      identifier (looksLikeMultiWordIdentifier below) — real generated
+//      secrets/tokens essentially never land on this exact character
+//      distribution (mixed-case-at-word-boundaries-only, or all-lowercase
+//      alphabetic segments joined by underscores with no digit-adjacent
+//      runs).
+//   2. POSITION: the match sits in one of exactly two source-code
+//      positions real identifiers occupy and secrets structurally cannot
+//      (isKnownCodeSymbolUsage below) — a bare (unquoted) name referenced
+//      in an import list / call / property-access position, or the exact
+//      first quoted string-literal argument of a Supabase `.rpc(...)`
+//      call (an RPC name, this project's own established pattern, e.g.
+//      admin.rpc('check_and_increment_tenant_ai_quota', ...) in
+//      roster-parser and every other AI Edge Function).
+// A line containing any credential-like keyword (api_key/token/secret/
+// password/authorization/bearer/credential) is NEVER exempted by this
+// rule regardless of shape or position — defense in depth against a
+// disguised assignment. See scripts/harness.cjs's self-tests for the
+// required negative cases (real secrets, including snake_case-shaped
+// fake ones, must still block) and positive cases (these two identifiers,
+// and the class in general, must not).
+// ---------------------------------------------------------------------
+
+const CREDENTIAL_KEYWORD_RE = /api[_-]?key|secret|password|passwd|authoriz|bearer|credential|token/i;
+
+function looksLikeMultiWordIdentifier(token) {
+  if (/^[a-z][a-zA-Z]*$/.test(token)) {
+    // camelCase: require at least 2 internal capital-led segments of 2+
+    // lowercase letters -- rules out a single accidental capital and rules
+    // out random per-character case switching, which is not how real
+    // camelCase capitalization is structured.
+    const segments = token.match(/[A-Z][a-z]{2,}/g) || [];
+    return segments.length >= 2;
+  }
+  if (/^[a-z][a-z0-9_]*$/.test(token)) {
+    // snake_case: every underscore-delimited segment must be alphabetic
+    // only (no digits) and at least 2 letters -- rejects "random
+    // lowercase+digit soup with underscores" shapes, which a hex/base32-ish
+    // generated secret could otherwise coincidentally satisfy.
+    const segments = token.split('_').filter(Boolean);
+    return segments.length >= 3 && segments.every((s) => /^[a-z]{2,}$/.test(s));
+  }
+  return false;
+}
+
+function precedingNonSpaceChar(before) {
+  let i = before.length - 1;
+  while (i >= 0 && /\s/.test(before[i])) i--;
+  return i >= 0 ? before[i] : '';
+}
+
+function isKnownCodeSymbolUsage(content, matchStart, matchEnd, token) {
+  if (!looksLikeMultiWordIdentifier(token)) return false;
+  if (CREDENTIAL_KEYWORD_RE.test(content)) return false;
+
+  const before = content.slice(0, matchStart);
+  const after = content.slice(matchEnd);
+  const prevChar = precedingNonSpaceChar(before);
+  const nextNonSpace = after.replace(/^\s+/, '')[0] || '';
+  const adjacentToQuote = prevChar === "'" || prevChar === '"' || nextNonSpace === "'" || nextNonSpace === '"';
+
+  // (a) bare (unquoted) identifier reference -- import list / call
+  //     argument / property access / call expression. A real secret value
+  //     never sits bare in exactly these syntactic positions.
+  if (!adjacentToQuote && (['{', ',', '(', '.'].includes(prevChar) || nextNonSpace === '(')) return true;
+
+  // (b) the first quoted string-literal argument of a `.rpc(` call.
+  const isRpcCallArgument = /\.rpc\(\s*['"]$/.test(before) && (after[0] === "'" || after[0] === '"');
+  return isRpcCallArgument;
+}
+
 // Reports {line, class} only — matched text is deliberately discarded, and
 // is never assembled into the returned findings, never logged, and never
 // written to task state. This is a best-effort heuristic tripwire, not
@@ -1225,6 +1308,7 @@ function scanDiffTextForSecrets(diffText) {
       if (!m) continue;
       if (cls === 'generic-high-entropy-token' && /^[0-9a-f]+$/i.test(m[0])) continue; // looks like a plain git hash
       if (cls === 'generic-high-entropy-token' && isDominatedBySingleCharacter(m[0], GENERIC_TOKEN_DOMINANCE_THRESHOLD)) continue; // divider/repetition artifact, not secret-shaped
+      if (cls === 'generic-high-entropy-token' && isKnownCodeSymbolUsage(content, m.index, m.index + m[0].length, m[0])) continue; // ordinary multi-word source identifier in an identifier position, not a secret
       findings.push({ line: newLineNo, class: cls });
       break;
     }
@@ -2664,6 +2748,59 @@ function cmdSelfTest() {
     check('the long underscore-joined filename/string-literal false positive remains intentionally unresolved in this slice', () => {
       const findings = scanDiffTextForSecrets(addedLine("const MIGRATION_PATH = 'supabase/migrations/67_resident_get_current_assignment.sql';"));
       return findings.some((f) => f.class === 'generic-high-entropy-token') ? true : 'expected this still-known, deliberately-unfixed case to still flag';
+    });
+  }
+
+  // --- generic-high-entropy-token identifier false-positive fix
+  //     (isKnownCodeSymbolUsage) — ordinary multi-word source identifiers
+  //     in a real identifier position, not a broad camelCase/snake_case
+  //     exemption. Fixture identifiers are the two real Roster AI cases
+  //     this fix was written for. ---
+  {
+    const addedLine = (text) => `@@ -0,0 +1 @@\n+${text}\n`;
+
+    check('a long camelCase identifier in an import list is not flagged', () => {
+      const findings = scanDiffTextForSecrets(addedLine("import { fetchTenantAdaptationPromptOverride, appendTenantAdaptationOverride } from '../_shared/tenantAdaptation.ts';"));
+      return findings.length === 0 ? true : JSON.stringify(findings);
+    });
+    check('the same identifier used as a call expression is not flagged', () => {
+      const findings = scanDiffTextForSecrets(addedLine("const extraInstructions = await fetchTenantAdaptationPromptOverride(supabaseUrl, serviceRoleKey, tenantId, 'roster_patch_proposal');"));
+      return findings.length === 0 ? true : JSON.stringify(findings);
+    });
+    check('a long snake_case RPC name as the first quoted argument of a .rpc( call is not flagged', () => {
+      const findings = scanDiffTextForSecrets(addedLine("const { data, error } = await admin.rpc('check_and_increment_tenant_ai_quota', { p_tenant_id: tenantId });"));
+      return findings.length === 0 ? true : JSON.stringify(findings);
+    });
+    check('the identical RPC name used as a bare (non-.rpc) config value is still flagged — the exemption is positional, not name-based', () => {
+      const findings = scanDiffTextForSecrets(addedLine('RPC_NAME=check_and_increment_tenant_ai_quota'));
+      return findings.some((f) => f.class === 'generic-high-entropy-token') ? true : JSON.stringify(findings);
+    });
+    check('a credential-keyword-adjacent identifier-shaped bare token is still flagged (keyword veto, defense in depth)', () => {
+      const findings = scanDiffTextForSecrets(addedLine("import { some_api_secret_configuration_value } from './x';"));
+      return findings.some((f) => f.class === 'generic-high-entropy-token') ? true : JSON.stringify(findings);
+    });
+    check('a real 32+ char secret quoted and assigned still blocks even when it happens to sit right after an opening brace on the same line', () => {
+      const findings = scanDiffTextForSecrets(addedLine('const cfg = { token: "aB3xY9pQ2wZ7mN4vC8tR1sK6hL0fD5gJ2eU7iO3" };'));
+      return findings.some((f) => f.class === 'generic-high-entropy-token') ? true : JSON.stringify(findings);
+    });
+    check('a plausible but random-looking (non-word-segmented) snake_case-shaped 32+ char string still blocks', () => {
+      const findings = scanDiffTextForSecrets(addedLine("import { zq_xk9_flrp_bzzt_mvcq_wobl_9k2j_extra } from './x';"));
+      return findings.some((f) => f.class === 'generic-high-entropy-token') ? true : JSON.stringify(findings);
+    });
+    check('this fix does not weaken explicit secret-pattern detectors even inside an import-list-shaped line', () => {
+      const findings = scanDiffTextForSecrets(addedLine("import { sk_live_thisIsAFixtureNotARealKey000000 } from './x';"));
+      return findings.some((f) => f.class === 'paystack-live-key') ? true : JSON.stringify(findings);
+    });
+    check('looksLikeMultiWordIdentifier requires 2+ real camelCase segments, not a single trailing capital', () => {
+      return looksLikeMultiWordIdentifier('fetchTenantAdaptationPromptOverride') === true // real multi-segment camelCase (the actual production case)
+        && looksLikeMultiWordIdentifier('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxA') === false // one lone trailing capital is not a real word boundary
+        ? true : 'shape gate too permissive or too strict';
+    });
+    check('no feature-specific hardcoded allowlist was introduced -- the fix is general (shape + position), not a literal check for these exact identifier strings', () => {
+      const fullSrc = fs.readFileSync(__filename, 'utf8');
+      const fn = fullSrc.slice(fullSrc.indexOf('const CREDENTIAL_KEYWORD_RE'), fullSrc.indexOf('function scanDiffTextForSecrets'));
+      return !/fetchTenantAdaptationPromptOverride|check_and_increment_tenant_ai_quota|roster-patch-proposal|roster_patch_proposal/.test(fn)
+        ? true : 'a specific identifier/feature name leaked into the general exemption logic';
     });
   }
 
