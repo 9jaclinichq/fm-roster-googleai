@@ -21,6 +21,7 @@
     "verify:roster-section-config": "node scripts/verify-roster-section-config.cjs",
     "verify:roster-revisions": "node scripts/verify-roster-revisions.cjs",
     "verify:roster-patch": "tsx scripts/verify-roster-patch.ts",
+    "verify:roster-patch-proposal": "tsx scripts/verify-roster-patch-proposal.ts",
     "verify:roster-safety-slice": "tsx scripts/verify-roster-safety-slice.ts",
     "verify:resident-home": "node scripts/verify-resident-home.cjs",
     "verify:migration-76": "node scripts/verify-migration-76.cjs",

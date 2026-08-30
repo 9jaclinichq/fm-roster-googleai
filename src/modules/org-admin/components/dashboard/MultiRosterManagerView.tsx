@@ -24,10 +24,20 @@ import {
   fieldLabelFor,
   rowsForSection,
   rowLabelFor,
+  workforceNameMap,
+  isSupervisionScalarField,
 } from '../../../roster-engine/lib/rosterPatch';
 import { computeNetRosterDiff, computeNetReconciliationIssues } from '../../../roster-engine/lib/rosterNetDiff';
 import { buildRebasePreview, RebasePreview } from '../../../roster-engine/lib/rosterRebase';
 import { compileSwapToOperations } from '../../../roster-engine/lib/rosterSwap';
+import {
+  generateRosterPatchProposal,
+  ProposedRosterPatch,
+  SymbolicOperation,
+  RosterProposalContextRow,
+  RosterProposalWorkforceEntry,
+} from '../../../roster-engine/lib/rosterPatchProposalService';
+import { compileProposalOperations, CompiledProposalOperation } from '../../../roster-engine/lib/rosterPatchProposalCompiler';
 import {
   WorkforceMember,
   Collection,
@@ -162,6 +172,39 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
   const [swapBField, setSwapBField] = useState<RosterPatchField>('residents');
   const [swapBWorkforceId, setSwapBWorkforceId] = useState<string>('');
   const [swapReason, setSwapReason] = useState<string>('');
+
+  // Roster AI V1 -- Prompt-to-Patch Proposal Layer. LOCAL ONLY, per
+  // WORKSPC_ROSTER_AI_V1_PROMPT_TO_PATCH_DISCOVER_AND_PLAN_2026-08-30.md /
+  // WORKSPC_ROSTER_AI_V1_FINAL_PREIMPLEMENTATION_REVIEW_2026-08-30.md. The
+  // AI panel proposes; it never calls save/publish, never touches
+  // pendingOperations except through the SAME accept step a Chief takes
+  // manually. aiProposalBase* captures the revision (id/updated_at/grids)
+  // the proposal was generated against, checked once at accept-time
+  // (below) -- if activeRevision has since moved (only possible via this
+  // Chief's own save/publish/discard/rebase within this session, since
+  // nothing else in this single-tab app changes activeRevision), the
+  // existing rebase machinery is reused rather than silently
+  // regenerating/applying anything.
+  const [aiInstruction, setAiInstruction] = useState('');
+  const [isGeneratingAiProposal, setIsGeneratingAiProposal] = useState(false);
+  const [aiProposal, setAiProposal] = useState<ProposedRosterPatch | null>(null);
+  const [aiCompiledOperations, setAiCompiledOperations] = useState<CompiledProposalOperation[]>([]);
+  const [aiAcceptedIndices, setAiAcceptedIndices] = useState<Set<number>>(new Set());
+  const [aiProposalError, setAiProposalError] = useState<string>('');
+  const [aiProposalBaseRevisionId, setAiProposalBaseRevisionId] = useState<string | null>(null);
+  const [aiProposalBaseUpdatedAt, setAiProposalBaseUpdatedAt] = useState<string | null>(null);
+  const [aiProposalBaseGrids, setAiProposalBaseGrids] = useState<RosterGrids | null>(null);
+  // Revision-level source/source_reference provenance is explicitly
+  // deferred (per the human decision recorded in prompt1.txt -- a mixed
+  // manual+AI revision would be inaccurately labeled at revision
+  // granularity). This is the one, proposal-level, client-only concession:
+  // signatures of operations that reached pendingOperations via an
+  // accepted AI proposal, consulted ONLY by saveDraft() below to compose an
+  // optional, human-readable change_reason -- never a database column,
+  // never authoritative, never overwriting a Chief-entered reason (none
+  // exists to overwrite in the current saveDraft() call, confirmed by
+  // reading it below).
+  const [aiAssistedOperationSignatures, setAiAssistedOperationSignatures] = useState<Set<string>>(new Set());
 
   // Workforce Option A (read-only reconciliation) — see
   // docs/WORKFORCE_V1_RECOVERY_SPEC.md. submissions/rotations are read
@@ -443,7 +486,15 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
         // here. startRevision() is idempotent (reopens an existing
         // in-progress revision rather than re-snapshotting over it).
         const revision = activeRevision ?? await rosterRevisionService.startRevision(adminCode);
-        const saved = await rosterRevisionService.saveRevision(adminCode, revision.id, revision.updated_at, currentGridsSnapshot());
+        // Proposal-level AI provenance concession (see this file's own
+        // aiAssistedOperationSignatures comment above) -- purely additive:
+        // saveDraft() never passes a change_reason today, so there is
+        // nothing this could ever overwrite.
+        const aiAssistedCount = lastAppliedOperations.filter((op) => aiAssistedOperationSignatures.has(JSON.stringify(op))).length;
+        const changeReason = aiAssistedCount > 0
+          ? `Includes ${aiAssistedCount} AI-assisted operation(s) accepted by the Chief.`
+          : undefined;
+        const saved = await rosterRevisionService.saveRevision(adminCode, revision.id, revision.updated_at, currentGridsSnapshot(), changeReason);
         setActiveRevision(saved);
         setLastAppliedOperations([]);
         setStatusMessage(`Saved to Revision #${saved.revision_number} — not yet published. Residents still see the current published roster.`);
@@ -478,7 +529,11 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
         // Ensure the revision reflects the CURRENT in-memory grid state
         // before promoting it — Publish must never bypass Save.
         const revision = activeRevision ?? await rosterRevisionService.startRevision(adminCode);
-        const saved = await rosterRevisionService.saveRevision(adminCode, revision.id, revision.updated_at, currentGridsSnapshot());
+        const aiAssistedCount = lastAppliedOperations.filter((op) => aiAssistedOperationSignatures.has(JSON.stringify(op))).length;
+        const changeReason = aiAssistedCount > 0
+          ? `Includes ${aiAssistedCount} AI-assisted operation(s) accepted by the Chief.`
+          : undefined;
+        const saved = await rosterRevisionService.saveRevision(adminCode, revision.id, revision.updated_at, currentGridsSnapshot(), changeReason);
         await rosterRevisionService.publishRevision(adminCode, saved.id, saved.updated_at);
         // Single atomic UPDATE already happened server-side — reload to
         // pick up the new live combined_master_rosters content (and its
@@ -754,6 +809,175 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     setSwapBWorkforceId('');
     setSwapReason('');
     setStatusMessage('Swap queued as 2 replace operations — review in Pending Changes below.');
+    setTimeout(() => setStatusMessage(''), 4000);
+  };
+
+  // ------------------------------------------------------------------
+  // Roster AI V1 -- Prompt-to-Patch Proposal Layer. LOCAL ONLY. Minimal
+  // context sent to the model: current roster rows (by section/row_index/
+  // field/current occupant DISPLAY NAMES, never workforce_id) and active
+  // workforce (display_name/category only) -- never admin_access_code (it
+  // authenticates the Edge Function request but is never put in the
+  // prompt), resident_code, email, auth user ids, or any other tenant's
+  // data. See rosterPatchProposalService.ts / roster-patch-proposal Edge
+  // Function for the request/response contract this builds.
+  // ------------------------------------------------------------------
+  const buildRosterProposalContext = (): RosterProposalContextRow[] => {
+    const grids = currentGridsSnapshot();
+    const nameById = workforceNameMap(workforce);
+    const context: RosterProposalContextRow[] = [];
+    (['gop', 'emergency', 'supervision', 'satellite'] as RosterSection[]).forEach((section) => {
+      const rows = rowsForSection(grids, section) as Array<Record<string, unknown>>;
+      const fields = fieldsForSection(section);
+      rows.forEach((row, row_index) => {
+        const current: Partial<Record<RosterPatchField, string[] | null>> = {};
+        fields.forEach((field) => {
+          if (isSupervisionScalarField(section, field)) {
+            const val = (row[field] as string | null) ?? null;
+            current[field] = val ? [val] : null;
+          } else {
+            const ids = (row[field] as string[] | undefined) || [];
+            current[field] = ids.map((id) => nameById.get(id) ?? id);
+          }
+        });
+        context.push({
+          section,
+          row_index,
+          date_or_day: (row.date_or_day as string | null) ?? null,
+          label: section === 'gop' ? (row.clinic_type as string) : section === 'emergency' ? (row.shift as string) : section === 'satellite' ? (row.facility as string) : null,
+          current,
+        });
+      });
+    });
+    return context;
+  };
+
+  const buildWorkforceProposalContext = (): RosterProposalWorkforceEntry[] =>
+    workforce.map((w) => ({ display_name: w.full_name, category: w.category }));
+
+  // Small display helpers -- 'swap' carries target_a/target_b instead of a
+  // single section/field, so these narrow the union once for the render
+  // below rather than repeating the op==='swap' check inline per label.
+  const sectionKeyForSymbolicOperation = (op: SymbolicOperation): RosterSection => (op.op === 'swap' ? op.target_a.section : op.section);
+  const fieldForSymbolicOperation = (op: SymbolicOperation): RosterPatchField | null => (op.op === 'swap' ? null : op.field);
+
+  const generateAiProposal = async () => {
+    if (!aiInstruction.trim() || !activeRevision) return;
+    setIsGeneratingAiProposal(true);
+    setAiProposalError('');
+    try {
+      const result = await generateRosterPatchProposal({
+        admin_access_code: adminCode,
+        instruction: aiInstruction.trim(),
+        roster_context: buildRosterProposalContext(),
+        workforce_context: buildWorkforceProposalContext(),
+      });
+      if (result.status === 'ok') {
+        const compiled = compileProposalOperations(result.proposal.operations, currentGridsSnapshot(), workforce);
+        setAiProposal(result.proposal);
+        setAiCompiledOperations(compiled);
+        setAiAcceptedIndices(new Set(compiled.map((c, i) => (c.status === 'resolved' ? i : -1)).filter((i) => i >= 0)));
+        setAiProposalBaseRevisionId(activeRevision.id);
+        setAiProposalBaseUpdatedAt(activeRevision.updated_at);
+        setAiProposalBaseGrids(revisionGridsOrEmpty(activeRevision));
+      } else if (result.status === 'quota_exceeded') {
+        setAiProposalError(result.message);
+      } else if (result.status === 'invalid_admin_code') {
+        setAiProposalError('Could not verify Chief admin access for the AI proposal request.');
+      } else if (result.status === 'invalid_request') {
+        setAiProposalError(result.message);
+      } else if (result.status === 'schema_invalid') {
+        setAiProposalError('The AI response did not match the expected format — try rephrasing the instruction, or use the manual form below.');
+      } else {
+        setAiProposalError('Could not generate a proposal right now — try again, or continue editing manually.');
+      }
+    } finally {
+      setIsGeneratingAiProposal(false);
+    }
+  };
+
+  const toggleAiAcceptedIndex = (i: number) => {
+    setAiAcceptedIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+  };
+
+  const rejectAiProposal = () => {
+    setAiProposal(null);
+    setAiCompiledOperations([]);
+    setAiAcceptedIndices(new Set());
+    setAiProposalError('');
+    setAiProposalBaseRevisionId(null);
+    setAiProposalBaseUpdatedAt(null);
+    setAiProposalBaseGrids(null);
+  };
+
+  // Every checked, RESOLVED compiled operation, flattened (a resolved swap
+  // carries 2 real operations; everything else carries 1). Ambiguous/
+  // unresolved/swap_rejected entries can never be checked in the first
+  // place (Section 7 below renders no checkbox for them) -- this array can
+  // never silently include one.
+  const aiCheckedFlatOperations: RosterPatchOperation[] = aiCompiledOperations
+    .filter((c, i) => c.status === 'resolved' && aiAcceptedIndices.has(i))
+    .flatMap((c) => (c as Extract<CompiledProposalOperation, { status: 'resolved' }>).operations);
+
+  // Existing deterministic validation/reconciliation/net-diff, reused
+  // UNCHANGED, run against the currently-checked AI operations BEFORE the
+  // Chief commits to queueing them -- exactly the same functions the
+  // Structured Edit panel's own patchPreview/patchReconciliationIssues/
+  // netDiffEntries already use for pendingOperations, just given a
+  // different (not-yet-queued) operation set as input.
+  const aiPatchPreview = (activeRevision && aiCheckedFlatOperations.length > 0)
+    ? applyRosterPatch(currentGridsSnapshot(), aiCheckedFlatOperations, workforce)
+    : null;
+  const aiReconciliationIssues = (aiPatchPreview && masterRoster)
+    ? computeReconciliationIssues(submissions, workforce, rotations, { ...masterRoster, ...aiPatchPreview.grids })
+    : [];
+  const aiNetDiffEntries = (aiPatchPreview && netDiffBaseGrids)
+    ? computeNetRosterDiff(netDiffBaseGrids, aiPatchPreview.grids, workforce)
+    : [];
+
+  // Appends into the EXISTING pendingOperations queue -- the same setter
+  // addPendingOperation()/addSwapToPending() already use. If the revision
+  // has moved since this proposal was generated (only possible via this
+  // Chief's own save/publish/discard/rebase within this session -- see
+  // this file's aiProposalBase* comment above), route through the
+  // EXISTING rebase-review machinery (buildRebasePreview + the same
+  // rebasePreview/pendingLatestRevision state and Confirm Rebase button
+  // already rendered above) instead of silently regenerating or applying.
+  const acceptAiOperations = () => {
+    if (!activeRevision || aiCheckedFlatOperations.length === 0) return;
+    const isStale = !aiProposalBaseRevisionId
+      || activeRevision.id !== aiProposalBaseRevisionId
+      || activeRevision.updated_at !== aiProposalBaseUpdatedAt;
+
+    if (isStale && aiProposalBaseGrids) {
+      const preview = buildRebasePreview(aiProposalBaseGrids, revisionGridsOrEmpty(activeRevision), aiCheckedFlatOperations, workforce);
+      setRebasePreview(preview);
+      setPendingLatestRevision(activeRevision);
+      setAiAssistedOperationSignatures((prev) => {
+        const next = new Set(prev);
+        aiCheckedFlatOperations.forEach((op) => next.add(JSON.stringify(op)));
+        return next;
+      });
+      rejectAiProposal();
+      setAiInstruction('');
+      setStatusMessage('This revision changed since the proposal was generated — review the accepted AI change(s) below before continuing.');
+      setTimeout(() => setStatusMessage(''), 6000);
+      return;
+    }
+
+    setPendingOperations((prev) => [...prev, ...aiCheckedFlatOperations]);
+    setAiAssistedOperationSignatures((prev) => {
+      const next = new Set(prev);
+      aiCheckedFlatOperations.forEach((op) => next.add(JSON.stringify(op)));
+      return next;
+    });
+    rejectAiProposal();
+    setAiInstruction('');
+    setStatusMessage(`${aiCheckedFlatOperations.length} AI-proposed change(s) queued — review in Pending Changes below.`);
     setTimeout(() => setStatusMessage(''), 4000);
   };
 
@@ -1175,6 +1399,183 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
           </div>
         );
       })()}
+
+      {/* Roster AI V1 -- Prompt-to-Patch Proposal Layer. LOCAL ONLY. Not a
+          chatbot: one instruction -> one proposal -> explicit Chief review
+          -> explicit accept. The AI never calls Save/Publish and never
+          writes pendingOperations except through the SAME "Add to Pending
+          Batch" step below, mirroring the manual/swap panels above. If
+          this panel fails entirely, the manual Structured Edit / Swap
+          panels above remain fully usable, unaffected by anything here. */}
+      {activeRevision && (
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-4">
+          <div className="flex items-center space-x-2">
+            <Sparkles className="text-violet-500" size={16} />
+            <h3 className="font-bold text-slate-800 text-sm">AI Proposal — Chief-reviewed only</h3>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            Describe an edit in plain language. The AI proposes symbolic changes only — nothing is saved, published, or applied until you explicitly accept each one below.
+          </p>
+
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Instruction</label>
+              <input
+                value={aiInstruction}
+                onChange={(e) => setAiInstruction(e.target.value)}
+                placeholder="e.g. Put a senior registrar in A&E on Friday"
+                className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+              />
+            </div>
+            <button
+              onClick={generateAiProposal}
+              disabled={isGeneratingAiProposal || !aiInstruction.trim()}
+              className="flex items-center gap-1 text-xs font-bold bg-violet-600 hover:bg-violet-700 disabled:bg-slate-300 text-white px-3 py-2 rounded-lg cursor-pointer shrink-0"
+            >
+              <Sparkles size={14} /> {isGeneratingAiProposal ? 'Generating...' : 'Generate Proposal'}
+            </button>
+          </div>
+
+          {aiProposalError && (
+            <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-lg px-3 py-2 text-xs">
+              {aiProposalError}
+            </div>
+          )}
+
+          {aiProposal && (
+            <div className="border-t border-slate-100 pt-3 space-y-3">
+              <div>
+                <span className={`text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
+                  aiProposal.outcome === 'valid' ? 'bg-emerald-100 text-emerald-800' :
+                  aiProposal.outcome === 'ambiguous_identity' ? 'bg-amber-100 text-amber-800' :
+                  'bg-slate-200 text-slate-700'
+                }`}>
+                  {aiProposal.outcome.replace('_', ' ')}
+                </span>
+                <p className="text-xs text-slate-700 mt-1">{aiProposal.interpreted_instruction}</p>
+                {aiProposal.rationale && <p className="text-[11px] text-slate-500 mt-0.5 italic">{aiProposal.rationale}</p>}
+              </div>
+
+              {aiProposal.assumptions.length > 0 && (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-[11px] text-slate-600 space-y-0.5">
+                  <p className="font-bold text-slate-500 uppercase text-[9px]">Assumptions</p>
+                  {aiProposal.assumptions.map((a, i) => <p key={i}>{a}</p>)}
+                </div>
+              )}
+
+              {aiProposal.unsupported_requests.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[11px] text-amber-800 space-y-0.5">
+                  <p className="font-bold uppercase text-[9px]">Not supported in this version</p>
+                  {aiProposal.unsupported_requests.map((u, i) => <p key={i}>{u}</p>)}
+                </div>
+              )}
+
+              {aiProposal.unresolved_ambiguity.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[11px] text-amber-800 space-y-0.5">
+                  <p className="font-bold uppercase text-[9px]">Flagged by the AI as unclear</p>
+                  {aiProposal.unresolved_ambiguity.map((u, i) => <p key={i}>{u}</p>)}
+                </div>
+              )}
+
+              {aiCompiledOperations.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Proposed operations ({aiCompiledOperations.length})</p>
+                  {aiCompiledOperations.map((c, i) => {
+                    if (c.status === 'resolved') {
+                      const sectionLabel = PATCH_SECTION_LABELS.find(([k]) => k === sectionKeyForSymbolicOperation(c.symbolic))?.[1];
+                      const field = fieldForSymbolicOperation(c.symbolic);
+                      const desc = c.symbolic.op === 'assign' ? `Assign ${c.symbolic.subject_name}`
+                        : c.symbolic.op === 'unassign' ? `Unassign ${c.symbolic.subject_name}`
+                        : c.symbolic.op === 'replace' ? `Replace ${c.symbolic.from_subject_name} with ${c.symbolic.to_subject_name}`
+                        : `Swap ${c.symbolic.subject_a_name} and ${c.symbolic.subject_b_name}`;
+                      return (
+                        <label key={i} className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-xs cursor-pointer">
+                          <input type="checkbox" checked={aiAcceptedIndices.has(i)} onChange={() => toggleAiAcceptedIndex(i)} className="mt-0.5" />
+                          <span>
+                            <span className="font-semibold text-slate-700">{sectionLabel ?? c.symbolic.op} — {field ? fieldLabelFor(field) : 'Swap'}</span>
+                            <span className="block text-slate-600 mt-0.5">{desc}</span>
+                            {c.symbolic.reason && <span className="block text-slate-400 mt-0.5 italic">"{c.symbolic.reason}"</span>}
+                          </span>
+                        </label>
+                      );
+                    }
+                    if (c.status === 'unresolvable') {
+                      return (
+                        <div key={i} className="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-xs text-rose-700">
+                          {c.details.map((d, di) => (
+                            <p key={di}>
+                              {d.status === 'ambiguous'
+                                ? `Ambiguous: "${d.name}" could be ${d.candidateNames?.join(', ')} — use the manual form below if you know who is meant.`
+                                : `No matching workforce member found for "${d.name}" — use the manual form below if you know who is meant.`}
+                            </p>
+                          ))}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={i} className="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-xs text-rose-700">
+                        Swap could not be compiled: {c.reason}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {aiPatchPreview && aiPatchPreview.errors.length > 0 && (
+                <div className="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-xs text-rose-700 space-y-1">
+                  <p className="font-bold uppercase text-[9px]">Checked operation(s) failed deterministic validation</p>
+                  {aiPatchPreview.errors.map((e, i) => <p key={i}>{e.message}</p>)}
+                </div>
+              )}
+
+              {aiReconciliationIssues.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs space-y-1">
+                  <p className="font-bold text-amber-800 uppercase text-[9px]">Reconciliation warnings if checked operations are queued (non-blocking)</p>
+                  {aiReconciliationIssues.map((issue, i) => (
+                    <p key={i} className="text-amber-700">
+                      {issue.message}
+                      <span className="text-amber-500 ml-1">
+                        ({issue.type === 'missing_expected_coverage' || issue.type === 'ineligible_assignment' ? 'FM-specific check' : 'generic check'})
+                      </span>
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {aiCheckedFlatOperations.length > 0 && (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs space-y-1">
+                  <p className="font-bold text-slate-500 uppercase text-[9px]">Net effect of checked operation(s) vs. current revision</p>
+                  {aiNetDiffEntries.length === 0 ? (
+                    <p className="text-slate-400">No net change — checked operation(s) cancel out to the current state.</p>
+                  ) : (
+                    aiNetDiffEntries.map((entry, i) => (
+                      <p key={i} className="text-slate-600">
+                        {PATCH_SECTION_LABELS.find(([k]) => k === entry.section)?.[1]} — {entry.dateOrDay ?? `Row ${entry.row_index}`} — {entry.fieldLabel}:{' '}
+                        {entry.removedNames.length > 0 && <span>removes {entry.removedNames.join(', ')}</span>}
+                        {entry.removedNames.length > 0 && entry.addedNames.length > 0 && <span>, </span>}
+                        {entry.addedNames.length > 0 && <span>adds {entry.addedNames.join(', ')}</span>}
+                      </p>
+                    ))
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={acceptAiOperations}
+                  disabled={aiCheckedFlatOperations.length === 0}
+                  className="flex items-center gap-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white px-3 py-2 rounded-lg cursor-pointer"
+                >
+                  <CheckCircle2 size={14} /> Add {aiCheckedFlatOperations.length > 0 ? `${aiCheckedFlatOperations.length} ` : ''}Checked to Pending Batch
+                </button>
+                <button onClick={rejectAiProposal} className="px-3 py-2 border border-slate-200 hover:bg-slate-50 font-bold rounded-lg text-xs transition cursor-pointer">
+                  Discard Proposal
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Workforce Option A — read-only reconciliation checklist. Not a
           new page/tab; positioned immediately before the existing Floor
