@@ -866,6 +866,15 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     setIsGeneratingAiProposal(true);
     setAiProposalError('');
     try {
+      // Captured ONCE, synchronously, before the async provider round-trip
+      // -- this is EXACTLY the roster state buildRosterProposalContext()
+      // (called synchronously right below, same tick, no await in
+      // between) describes to the model, and is therefore the only
+      // correct deterministic baseline for the working-state staleness
+      // check in acceptAiOperations() below. Re-reading currentGridsSnapshot()
+      // fresh after the await would already reflect any edit the Chief
+      // made during the round-trip, silently defeating that check.
+      const generationGrids = currentGridsSnapshot();
       const result = await generateRosterPatchProposal({
         admin_access_code: adminCode,
         instruction: aiInstruction.trim(),
@@ -873,13 +882,23 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
         workforce_context: buildWorkforceProposalContext(),
       });
       if (result.status === 'ok') {
-        const compiled = compileProposalOperations(result.proposal.operations, currentGridsSnapshot(), workforce);
+        // Compiled against the SAME generationGrids the model saw (not a
+        // fresh currentGridsSnapshot() call here either) -- swap
+        // pre-validation in compileSwapToOperations must check occupancy
+        // against the exact state the model reasoned about, not whatever
+        // state happens to exist at the moment the response arrived.
+        const compiled = compileProposalOperations(result.proposal.operations, generationGrids, workforce);
         setAiProposal(result.proposal);
         setAiCompiledOperations(compiled);
         setAiAcceptedIndices(new Set(compiled.map((c, i) => (c.status === 'resolved' ? i : -1)).filter((i) => i >= 0)));
+        // Revision id/updated_at are kept only as identity/context (e.g. a
+        // future "generated against Revision #N" label) -- the actual
+        // working-state invariant is enforced entirely via
+        // aiProposalBaseGrids below, compared against currentGridsSnapshot()
+        // at accept time, in acceptAiOperations().
         setAiProposalBaseRevisionId(activeRevision.id);
         setAiProposalBaseUpdatedAt(activeRevision.updated_at);
-        setAiProposalBaseGrids(revisionGridsOrEmpty(activeRevision));
+        setAiProposalBaseGrids(generationGrids);
       } else if (result.status === 'quota_exceeded') {
         setAiProposalError(result.message);
       } else if (result.status === 'invalid_admin_code') {
@@ -949,14 +968,35 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
   // already rendered above) instead of silently regenerating or applying.
   const acceptAiOperations = () => {
     if (!activeRevision || aiCheckedFlatOperations.length === 0) return;
-    const isStale = !aiProposalBaseRevisionId
-      || activeRevision.id !== aiProposalBaseRevisionId
-      || activeRevision.updated_at !== aiProposalBaseUpdatedAt;
+
+    // Working-state staleness: compares the EXACT grids the model saw
+    // (aiProposalBaseGrids, captured in generateAiProposal() from the same
+    // currentGridsSnapshot() call used to build the model's context)
+    // against the CURRENT effective local grids -- not revision id/
+    // updated_at, which only ever changes on a save/publish/discard/rebase
+    // round-trip and would miss a purely local edit (manual, drag-and-drop,
+    // or another already-applied AI proposal) made between generation and
+    // this accept click. Revision metadata
+    // (aiProposalBaseRevisionId/aiProposalBaseUpdatedAt) is retained only
+    // as identity/context, never as a substitute for this comparison.
+    const currentGrids = currentGridsSnapshot();
+    const isStale = !aiProposalBaseGrids || JSON.stringify(currentGrids) !== JSON.stringify(aiProposalBaseGrids);
 
     if (isStale && aiProposalBaseGrids) {
-      const preview = buildRebasePreview(aiProposalBaseGrids, revisionGridsOrEmpty(activeRevision), aiCheckedFlatOperations, workforce);
+      // Reuses the EXISTING rebase machinery (buildRebasePreview,
+      // rosterRebase.ts, UNCHANGED) comparing proposal baseline -> CURRENT
+      // local grids -- a conflict with the Chief's own concurrent local
+      // edit is classified CONFLICT, never misreported as REPLAYABLE
+      // merely because the server-side revision happens to be unchanged.
+      // pendingLatestRevision carries the CURRENT local grid content (so
+      // confirmRebase(), also UNCHANGED, replays the accepted AI
+      // operations onto the Chief's actual current working state rather
+      // than reverting to the last-saved server content) with every other
+      // field taken from activeRevision unchanged -- revision identity is
+      // preserved as context, never as the staleness signal itself.
+      const preview = buildRebasePreview(aiProposalBaseGrids, currentGrids, aiCheckedFlatOperations, workforce);
       setRebasePreview(preview);
-      setPendingLatestRevision(activeRevision);
+      setPendingLatestRevision({ ...activeRevision, ...currentGrids });
       setAiAssistedOperationSignatures((prev) => {
         const next = new Set(prev);
         aiCheckedFlatOperations.forEach((op) => next.add(JSON.stringify(op)));
@@ -964,7 +1004,7 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
       });
       rejectAiProposal();
       setAiInstruction('');
-      setStatusMessage('This revision changed since the proposal was generated — review the accepted AI change(s) below before continuing.');
+      setStatusMessage('The working roster changed since this proposal was generated — review the accepted AI change(s) below before continuing.');
       setTimeout(() => setStatusMessage(''), 6000);
       return;
     }

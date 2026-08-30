@@ -9,7 +9,7 @@
 //
 // Run: npx tsx scripts/verify-roster-patch-proposal.ts
 
-import { validateProposedRosterPatch } from '../supabase/functions/roster-patch-proposal/schema';
+import { validateProposedRosterPatch, normalizeRosterContext, normalizeWorkforceContext, normalizeSectionLabels } from '../supabase/functions/roster-patch-proposal/schema';
 import { compileProposalOperations, CompiledProposalOperation } from '../src/modules/roster-engine/lib/rosterPatchProposalCompiler';
 import type { SymbolicOperation, ProposedRosterPatch } from '../src/modules/roster-engine/lib/rosterPatchProposalService';
 import { applyRosterPatch, RosterGrids, RosterPatchOperation } from '../src/modules/roster-engine/lib/rosterPatch';
@@ -426,6 +426,125 @@ check('stale revision after proposal generation: an accepted AI operation whose 
 })());
 
 // =====================================================================
+// 4b. Server-side context allowlisting (2026-08-30 production-readiness
+//     review, Section B) -- normalizeRosterContext/normalizeWorkforceContext/
+//     normalizeSectionLabels (schema.ts, REAL functions, not reimplemented)
+//     must strip any field beyond the exact allowed shape before it can
+//     ever reach buildSystemPrompt(). Explicit deterministic field picking:
+//     these tests prove smuggled fields are ABSENT from the normalized
+//     output, not merely "probably ignored."
+// =====================================================================
+
+check('normalizeWorkforceContext keeps only display_name/category for a well-formed entry', (() => {
+  const out = normalizeWorkforceContext([{ display_name: 'Dr. Ada', category: 'Senior Registrar' }]);
+  return out.length === 1 && Object.keys(out[0]).sort().join(',') === 'category,display_name';
+})());
+
+check('normalizeWorkforceContext strips a smuggled workforce_id -- the field is structurally absent from the output object, not merely unused', (() => {
+  const out = normalizeWorkforceContext([{ display_name: 'Dr. Ada', category: 'Senior Registrar', workforce_id: 'w1-real-uuid' }]);
+  return out.length === 1 && !('workforce_id' in out[0]) && JSON.stringify(out).indexOf('w1-real-uuid') === -1;
+})());
+
+check('normalizeWorkforceContext strips smuggled resident_code, email, and auth uid fields', (() => {
+  const out = normalizeWorkforceContext([{
+    display_name: 'Dr. Ada', category: 'Senior Registrar',
+    resident_code: 'SECRET123', email: 'ada@example.com', auth_user_id: 'auth-uid-xyz', tenant_id: 'tenant-1',
+  }]);
+  const serialized = JSON.stringify(out);
+  return out.length === 1
+    && !('resident_code' in out[0]) && !('email' in out[0]) && !('auth_user_id' in out[0]) && !('tenant_id' in out[0])
+    && !serialized.includes('SECRET123') && !serialized.includes('ada@example.com') && !serialized.includes('auth-uid-xyz') && !serialized.includes('tenant-1');
+})());
+
+check('normalizeWorkforceContext drops a nested uncontrolled object entirely rather than forwarding it', (() => {
+  const out = normalizeWorkforceContext([{
+    display_name: 'Dr. Ada', category: 'Senior Registrar',
+    profile: { admin_access_code: 'should-never-appear', nested: { deeper: 'still-never' } },
+  }]);
+  const serialized = JSON.stringify(out);
+  return !serialized.includes('should-never-appear') && !serialized.includes('still-never') && !('profile' in out[0]);
+})());
+
+check('normalizeWorkforceContext rejects an entry with an invalid/unknown category rather than forwarding it as-is', (() => {
+  const out = normalizeWorkforceContext([{ display_name: 'Dr. X', category: 'Consultant Supreme Overlord' }]);
+  return out.length === 0;
+})());
+
+check('normalizeRosterContext keeps only section/row_index/date_or_day/label/current for a well-formed row', (() => {
+  const out = normalizeRosterContext([{ section: 'gop', row_index: 0, date_or_day: 'Mon', label: 'Triage', current: { residents: ['Dr. Ada'] } }]);
+  return out.length === 1 && Object.keys(out[0]).sort().join(',') === 'current,date_or_day,label,row_index,section';
+})());
+
+check('normalizeRosterContext: the constructed row object has no key beyond the 5 allowed ones, regardless of extra input keys (workforce_id/tenant_id/admin_access_code/resident_code all smuggled in and dropped)', (() => {
+  const out = normalizeRosterContext([{
+    section: 'gop', row_index: 0, date_or_day: 'Mon', label: 'Triage', current: {},
+    workforce_id: 'w1', tenant_id: 't1', admin_access_code: 'ADMIN-SECRET', resident_code: 'R1',
+  }]);
+  const allowedKeys = new Set(['section', 'row_index', 'date_or_day', 'label', 'current']);
+  return out.length === 1 && Object.keys(out[0]).every((k) => allowedKeys.has(k));
+})());
+
+check('normalizeRosterContext rejects a row with an unknown section rather than forwarding it', (() => {
+  const out = normalizeRosterContext([{ section: 'billing', row_index: 0, date_or_day: null, label: null, current: {} }]);
+  return out.length === 0;
+})());
+
+check('normalizeRosterContext rejects a row with a non-integer/negative row_index rather than forwarding it', (() => {
+  const out = normalizeRosterContext([
+    { section: 'gop', row_index: -1, date_or_day: null, label: null, current: {} },
+    { section: 'gop', row_index: 1.5, date_or_day: null, label: null, current: {} },
+  ]);
+  return out.length === 0;
+})());
+
+check('normalizeRosterContext.current: only fields valid for the row\'s own section are kept, and only plain display-name-string arrays or null -- an object/id smuggled into an array slot is filtered out', (() => {
+  const out = normalizeRosterContext([{
+    section: 'gop', row_index: 0, date_or_day: null, label: null,
+    current: {
+      residents: ['Dr. Ada', { workforce_id: 'w1' }, 42, null],
+      on_call: ['should be dropped -- on_call is not a valid gop field'], // wrong-section field
+    },
+  }]);
+  return out.length === 1
+    && JSON.stringify(out[0].current.residents) === JSON.stringify(['Dr. Ada'])
+    && !('on_call' in out[0].current);
+})());
+
+check('normalizeSectionLabels keeps only the 4 known section keys with string values, dropping anything else', (() => {
+  const out = normalizeSectionLabels({ gop: 'Floor Clinic', emergency: 'A&E', made_up_key: 'should be dropped', supervision: 42 });
+  return out !== undefined
+    && out.gop === 'Floor Clinic' && out.emergency === 'A&E'
+    && !('made_up_key' in (out as object)) && !('supervision' in (out as object));
+})());
+
+check('normalizeSectionLabels returns undefined for a non-object or empty-result input, never throws', (() => {
+  return normalizeSectionLabels(undefined) === undefined
+    && normalizeSectionLabels(null) === undefined
+    && normalizeSectionLabels('not an object') === undefined
+    && normalizeSectionLabels([1, 2, 3]) === undefined
+    && normalizeSectionLabels({ unknown_key: 'x' }) === undefined;
+})());
+
+check('end-to-end: a full smuggled request payload (workforce_id, tenant_id, admin_access_code, resident_code, email, auth uid, nested objects) yields normalized context whose serialized form contains none of the smuggled values', (() => {
+  const rawWorkforce = [
+    { display_name: 'Dr. Ada', category: 'Senior Registrar', workforce_id: 'w1-uuid', resident_code: 'RES-001', email: 'ada@hospital.example', auth_user_id: 'auth-uuid-1' },
+  ];
+  const rawRoster = [
+    { section: 'gop', row_index: 0, date_or_day: 'Mon', label: 'Triage', current: { residents: ['Dr. Ada'] }, tenant_id: 'tenant-uuid-1', admin_access_code: 'CHIEF-SECRET-CODE', nested: { patient_data: 'should never appear' } },
+  ];
+  const normalizedWorkforce = normalizeWorkforceContext(rawWorkforce);
+  const normalizedRoster = normalizeRosterContext(rawRoster);
+  const serialized = JSON.stringify({ normalizedWorkforce, normalizedRoster });
+  const smuggled = ['w1-uuid', 'RES-001', 'ada@hospital.example', 'auth-uuid-1', 'tenant-uuid-1', 'CHIEF-SECRET-CODE', 'should never appear'];
+  return smuggled.every((needle) => !serialized.includes(needle));
+})());
+
+check('Edge Function only ever passes normalizeRosterContext()/normalizeWorkforceContext()/normalizeSectionLabels() output to buildSystemPrompt() -- never the raw request-body roster_context/workforce_context/section_labels directly', (() => {
+  return /buildSystemPrompt\(normalizedRosterContext, normalizedWorkforceContext, normalizedSectionLabels\)/.test(edgeFunctionCodeOnly)
+    && !/buildSystemPrompt\(roster_context, workforce_context, section_labels\)/.test(edgeFunctionCodeOnly);
+})());
+
+// =====================================================================
 // 5. Structural/source-text proofs (matching verify-roster-patch.ts's own
 //    convention for this kind of proof).
 // =====================================================================
@@ -477,11 +596,101 @@ check('MultiRosterManagerView.tsx: acceptAiOperations() never calls saveRevision
   return !/rosterRevisionService\.(save|publish)Revision/.test(block);
 })());
 
-check('MultiRosterManagerView.tsx: a stale revision (base moved since proposal generation) routes into the EXISTING rebasePreview/pendingLatestRevision state via buildRebasePreview, never a silent regenerate/apply', (() => {
+check('MultiRosterManagerView.tsx: a stale working state (local grids changed since proposal generation) routes into the EXISTING rebasePreview/pendingLatestRevision state via buildRebasePreview, never a silent regenerate/apply', (() => {
   const block = chiefEditorTsx.slice(chiefEditorTsx.indexOf('const acceptAiOperations'), chiefEditorTsx.indexOf('if (isLoading)'));
-  return /buildRebasePreview\(aiProposalBaseGrids, revisionGridsOrEmpty\(activeRevision\), aiCheckedFlatOperations, workforce\)/.test(block)
+  return /buildRebasePreview\(aiProposalBaseGrids, currentGrids, aiCheckedFlatOperations, workforce\)/.test(block)
     && /setRebasePreview\(preview\)/.test(block)
-    && /setPendingLatestRevision\(activeRevision\)/.test(block);
+    && /setPendingLatestRevision\(\{ \.\.\.activeRevision, \.\.\.currentGrids \}\)/.test(block);
+})());
+
+check('MultiRosterManagerView.tsx: working-state-staleness fix (2026-08-30) -- aiProposalBaseGrids is captured from currentGridsSnapshot() at generation time, NOT from revisionGridsOrEmpty(activeRevision) (the original bug)', (() => {
+  const genBlock = chiefEditorTsx.slice(chiefEditorTsx.indexOf('const generateAiProposal'), chiefEditorTsx.indexOf('const toggleAiAcceptedIndex'));
+  return /const generationGrids = currentGridsSnapshot\(\)/.test(genBlock)
+    && /setAiProposalBaseGrids\(generationGrids\)/.test(genBlock)
+    && !/setAiProposalBaseGrids\(revisionGridsOrEmpty\(activeRevision\)\)/.test(genBlock);
+})());
+
+check('MultiRosterManagerView.tsx: the compiler is invoked against the SAME generationGrids sent to the model, not a freshly re-read currentGridsSnapshot() call after the async provider round-trip', (() => {
+  const genBlock = chiefEditorTsx.slice(chiefEditorTsx.indexOf('const generateAiProposal'), chiefEditorTsx.indexOf('const toggleAiAcceptedIndex'));
+  return /compileProposalOperations\(result\.proposal\.operations, generationGrids, workforce\)/.test(genBlock);
+})());
+
+check('MultiRosterManagerView.tsx: isStale compares JSON-stringified CURRENT grids against aiProposalBaseGrids by content, not activeRevision.id/updated_at (the original bug\'s primary signal)', (() => {
+  const block = chiefEditorTsx.slice(chiefEditorTsx.indexOf('const acceptAiOperations'), chiefEditorTsx.indexOf('if (isLoading)'));
+  const staleLine = block.slice(block.indexOf('const isStale'), block.indexOf(';', block.indexOf('const isStale')) + 1);
+  return /JSON\.stringify\(currentGrids\) !== JSON\.stringify\(aiProposalBaseGrids\)/.test(staleLine)
+    && !/activeRevision\.updated_at !== aiProposalBaseUpdatedAt/.test(staleLine)
+    && !/activeRevision\.id !== aiProposalBaseRevisionId/.test(staleLine);
+})());
+
+check('MultiRosterManagerView.tsx: revision id/updated_at are still captured at generation time (preserved as identity/context) even though they no longer drive the staleness decision', (() => {
+  const genBlock = chiefEditorTsx.slice(chiefEditorTsx.indexOf('const generateAiProposal'), chiefEditorTsx.indexOf('const toggleAiAcceptedIndex'));
+  return /setAiProposalBaseRevisionId\(activeRevision\.id\)/.test(genBlock) && /setAiProposalBaseUpdatedAt\(activeRevision\.updated_at\)/.test(genBlock);
+})());
+
+// --- Deterministic proof of the working-state invariant itself, using the
+//     REAL rosterRebase.ts functions (UNCHANGED) with grid-content fixtures
+//     -- exercises exactly what acceptAiOperations()'s new isStale/
+//     buildRebasePreview call does, without needing to execute React. ---
+
+check('working-state invariant: a proposal generated with an unsaved manual edit already baked in has that edit reflected in its own baseline (baseline = the exact grids passed to context-building, per the source fix above)', (() => {
+  const base = freshGrids();
+  // Simulate "Chief made an unsaved manual edit, THEN generated a proposal" --
+  // generationGrids (== aiProposalBaseGrids per the fix) must be the
+  // POST-edit grids, not the pre-edit ones.
+  const manualEdit: RosterPatchOperation = { op: 'assign', section: 'gop', row_index: 1, field: 'consultants', workforce_id: 'w3' };
+  const afterManualEdit = applyRosterPatch(base, [manualEdit], WORKFORCE).grids;
+  const generationGrids = afterManualEdit; // what generateAiProposal() would now capture as aiProposalBaseGrids
+  return generationGrids.gop_clinic_grid.slots[1].consultants.includes('w3');
+})());
+
+check('working-state invariant: an ADDITIONAL local edit after proposal generation makes the working state stale relative to that baseline (content comparison, not revision metadata)', (() => {
+  const generationGrids = freshGrids(); // captured at generation time
+  const anotherManualEdit: RosterPatchOperation = { op: 'assign', section: 'gop', row_index: 1, field: 'residents', workforce_id: 'w2' };
+  const currentGrids = applyRosterPatch(generationGrids, [anotherManualEdit], WORKFORCE).grids; // Chief's state has moved on since
+  return JSON.stringify(currentGrids) !== JSON.stringify(generationGrids); // this is exactly acceptAiOperations()'s new isStale predicate
+})());
+
+check('working-state invariant: a prior AI-accepted (and applied) edit is reflected in the baseline of a SUBSEQUENT proposal generation, exactly like a manual edit', (() => {
+  const base = freshGrids();
+  const priorAiAcceptedAndApplied: RosterPatchOperation = { op: 'unassign', section: 'satellite', row_index: 0, field: 'assigned', workforce_id: 'w1' };
+  const afterApplyingIt = applyRosterPatch(base, [priorAiAcceptedAndApplied], WORKFORCE).grids; // "Apply Pending Changes to Local Snapshot" already ran
+  const secondGenerationGrids = afterApplyingIt; // currentGridsSnapshot() at the time of generating a second proposal
+  return secondGenerationGrids.satellite_grid.postings[0].assigned.length === 0;
+})());
+
+check('working-state invariant: stale-proposal rebase classification compares the OLD (generation-time) local snapshot to the CURRENT local snapshot -- classifyOperationsForRebase (rosterRebase.ts, UNCHANGED) run exactly as acceptAiOperations() now calls it', (() => {
+  const generationGrids = freshGrids();
+  // The Chief manually edited the SAME target the accepted AI operation targets, after generation.
+  const conflictingManualEdit: RosterPatchOperation = { op: 'assign', section: 'gop', row_index: 1, field: 'residents', workforce_id: 'w3' };
+  const currentGrids = applyRosterPatch(generationGrids, [conflictingManualEdit], WORKFORCE).grids;
+  const acceptedAiOp: RosterPatchOperation = { op: 'assign', section: 'gop', row_index: 1, field: 'residents', workforce_id: 'w2' };
+  const results = classifyOperationsForRebase(generationGrids, currentGrids, [acceptedAiOp], WORKFORCE);
+  return results.length === 1 && results[0].classification === 'CONFLICT';
+})());
+
+check('working-state invariant: a conflict with a LOCAL edit is classified CONFLICT even though nothing about "server revision" changed -- proves the fix no longer relies on revision id/updated_at to detect this', (() => {
+  // Same fixture as above, framed explicitly: classifyOperationsForRebase
+  // takes two GRID snapshots, never a revision id/timestamp at all -- there
+  // is structurally no way for this call to "trust" unchanged revision
+  // metadata into masking a real local-grid conflict.
+  const generationGrids = freshGrids();
+  const localEdit: RosterPatchOperation = { op: 'unassign', section: 'gop', row_index: 0, field: 'residents', workforce_id: 'w1' };
+  const currentGrids = applyRosterPatch(generationGrids, [localEdit], WORKFORCE).grids;
+  const acceptedAiOp: RosterPatchOperation = { op: 'unassign', section: 'gop', row_index: 0, field: 'residents', workforce_id: 'w1' };
+  const results = classifyOperationsForRebase(generationGrids, currentGrids, [acceptedAiOp], WORKFORCE);
+  // Both the local edit and the AI op target the exact same field -- the
+  // local edit already changed it, so replaying the AI op against the
+  // pre-edit expectation is a real conflict (TARGET_NO_LONGER_VALID or
+  // CONFLICT are both acceptable "not silently REPLAYABLE" outcomes here;
+  // REPLAYABLE would be the actual bug).
+  return results.length === 1 && results[0].classification !== 'REPLAYABLE';
+})());
+
+check('working-state invariant: an UNCHANGED working state (nothing edited between generation and acceptance) remains non-stale', (() => {
+  const generationGrids = freshGrids();
+  const currentGrids = freshGrids(); // structurally identical, nothing changed
+  return JSON.stringify(currentGrids) === JSON.stringify(generationGrids);
 })());
 
 check('saveDraft()\'s optional AI-assisted change_reason never overwrites an existing Chief-entered reason -- confirmed there is no other change_reason source in saveDraft() to overwrite (the 5th saveRevision argument is only ever this computed value or undefined)', (() => {

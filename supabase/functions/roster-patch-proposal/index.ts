@@ -45,26 +45,21 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { fetchTenantAdaptationPromptOverride, appendTenantAdaptationOverride } from '../_shared/tenantAdaptation.ts';
-import { validateProposedRosterPatch, RosterSection, RosterPatchField } from './schema.ts';
+import {
+  validateProposedRosterPatch,
+  normalizeRosterContext,
+  normalizeWorkforceContext,
+  normalizeSectionLabels,
+  RosterSection,
+  RosterContextRow,
+  WorkforceContextEntry,
+} from './schema.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-
-interface RosterContextRow {
-  section: RosterSection;
-  row_index: number;
-  date_or_day: string | null;
-  label: string | null;
-  current: Partial<Record<RosterPatchField, string[] | null>>;
-}
-
-interface WorkforceContextEntry {
-  display_name: string;
-  category: 'Registrar' | 'Senior Registrar' | 'Medical Officer';
-}
 
 interface RequestBody {
   admin_access_code: string;
@@ -299,7 +294,15 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  let systemPrompt = buildSystemPrompt(roster_context, workforce_context, section_labels);
+  // Server-side allowlisting -- the ONLY values ever passed to
+  // buildSystemPrompt() below are these normalized ones, never the raw
+  // request-body arrays. See the normalize* functions' own header for why
+  // this is enforced here rather than trusted from the client.
+  const normalizedRosterContext = normalizeRosterContext(roster_context);
+  const normalizedWorkforceContext = normalizeWorkforceContext(workforce_context);
+  const normalizedSectionLabels = normalizeSectionLabels(section_labels);
+
+  let systemPrompt = buildSystemPrompt(normalizedRosterContext, normalizedWorkforceContext, normalizedSectionLabels);
   // AI-rigor tuning (tenant_ai_adaptation_rules, migration 11), reused
   // unchanged under a new feature_key -- semantically appropriate here for
   // the same reason it already is for roster-parser: a tenant operator may

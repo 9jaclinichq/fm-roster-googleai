@@ -27,7 +27,10 @@
 export type RosterSection = 'gop' | 'emergency' | 'supervision' | 'satellite';
 export type RosterPatchField = 'consultants' | 'residents' | 'on_call' | 'assigned' | 'first_on_duty' | 'second_on_duty';
 
-const VALID_FIELDS_BY_SECTION: Record<RosterSection, RosterPatchField[]> = {
+// Exported so index.ts's request-context normalizer (Section B, 2026-08-30
+// working-state/context-allowlisting fix) can validate roster_context field
+// names against this exact same table instead of a third duplicate copy.
+export const VALID_FIELDS_BY_SECTION: Record<RosterSection, RosterPatchField[]> = {
   gop: ['consultants', 'residents'],
   emergency: ['on_call'],
   satellite: ['assigned'],
@@ -187,4 +190,109 @@ export function validateProposedRosterPatch(raw: unknown): SchemaValidationResul
       outcome: raw.outcome as ProposalOutcome,
     },
   };
+}
+
+// ---------------------------------------------------------------------
+// Server-side request-context allowlisting (2026-08-30 production-
+// readiness review, Section B). Privacy of what reaches the model must be
+// enforced HERE, not merely by the browser client's own (correct, but
+// unenforceable-server-side) convention of only sending display_name/
+// category. Explicit deterministic field picking, never generic recursive
+// sanitization: every function below reads ONLY the exact named fields it
+// expects off an `unknown` input and builds a brand-new, exactly-shaped
+// object -- an unexpected/extra key on the caller's payload (resident_code,
+// email, an auth uid, a raw workforce_id/tenant_id/admin_access_code
+// echoed back, a nested object, a function, anything) is never copied
+// forward because nothing here ever spreads or forwards the input object
+// itself. A value that fails its own type/shape check is simply omitted
+// (an invalid roster_context row) or the whole entry is dropped (an
+// invalid workforce_context entry), never coerced or passed through.
+//
+// Lives here (not index.ts) for the same zero-Deno-dependency reason the
+// rest of this file does -- so scripts/verify-roster-patch-proposal.ts can
+// import and test these exact functions directly under Node/tsx.
+// ---------------------------------------------------------------------
+
+export interface RosterContextRow {
+  section: RosterSection;
+  row_index: number;
+  date_or_day: string | null;
+  label: string | null;
+  current: Partial<Record<RosterPatchField, string[] | null>>;
+}
+
+export interface WorkforceContextEntry {
+  display_name: string;
+  category: 'Registrar' | 'Senior Registrar' | 'Medical Officer';
+}
+
+const VALID_SECTIONS: RosterSection[] = ['gop', 'emergency', 'supervision', 'satellite'];
+const VALID_CATEGORIES = ['Registrar', 'Senior Registrar', 'Medical Officer'] as const;
+
+export function normalizeWorkforceContext(raw: unknown): WorkforceContextEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: WorkforceContextEntry[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.display_name !== 'string' || !e.display_name.trim()) continue;
+    if (typeof e.category !== 'string' || !(VALID_CATEGORIES as readonly string[]).includes(e.category)) continue;
+    // Exactly these 2 fields, nothing else off `e` is ever read or copied --
+    // any other key present on the caller's object (workforce_id,
+    // resident_code, email, active, on_floor, category_id, anything) is
+    // structurally impossible to smuggle through this object literal.
+    out.push({ display_name: e.display_name.slice(0, 200), category: e.category as WorkforceContextEntry['category'] });
+  }
+  return out;
+}
+
+export function normalizeRosterContextRow(raw: unknown): RosterContextRow | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.section !== 'string' || !(VALID_SECTIONS as string[]).includes(r.section)) return null;
+  const section = r.section as RosterSection;
+  if (!Number.isInteger(r.row_index) || (r.row_index as number) < 0) return null;
+  const date_or_day = typeof r.date_or_day === 'string' ? r.date_or_day.slice(0, 100) : null;
+  const label = typeof r.label === 'string' ? r.label.slice(0, 100) : null;
+
+  const validFields = VALID_FIELDS_BY_SECTION[section];
+  const rawCurrent = (typeof r.current === 'object' && r.current !== null && !Array.isArray(r.current)) ? r.current as Record<string, unknown> : {};
+  const current: Partial<Record<RosterPatchField, string[] | null>> = {};
+  for (const field of validFields) {
+    const value = rawCurrent[field];
+    if (value === null) {
+      current[field] = null;
+    } else if (Array.isArray(value)) {
+      // Plain display-name strings only -- an object/id/nested structure in
+      // this array position is dropped, never forwarded.
+      current[field] = value.filter((v): v is string => typeof v === 'string').map((v) => v.slice(0, 200));
+    }
+    // Any other shape (a bare string, a number, an object) for this field
+    // is simply omitted from `current` -- never coerced, never forwarded.
+  }
+
+  // Exactly these 5 fields are ever constructed here, regardless of what
+  // other keys `raw` actually carried.
+  return { section, row_index: r.row_index as number, date_or_day, label, current };
+}
+
+export function normalizeRosterContext(raw: unknown): RosterContextRow[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RosterContextRow[] = [];
+  for (const entry of raw) {
+    const normalized = normalizeRosterContextRow(entry);
+    if (normalized) out.push(normalized);
+  }
+  return out;
+}
+
+export function normalizeSectionLabels(raw: unknown): Partial<Record<RosterSection, string>> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: Partial<Record<RosterSection, string>> = {};
+  for (const section of VALID_SECTIONS) {
+    const value = r[section];
+    if (typeof value === 'string' && value.trim()) out[section] = value.slice(0, 100);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
