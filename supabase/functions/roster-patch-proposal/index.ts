@@ -10,11 +10,13 @@
 // roster-parser/index.ts) -- too loose a pattern for an AI surface whose
 // output feeds a real patch-application/queueing flow. Here, the Chief's
 // admin_access_code is the only credential accepted; tenant_id is derived
-// from it server-side via a service-role read of `settings`, the exact same
-// lookup every chief_* Postgres RPC already performs inline (see
-// chief_start_roster_revision, migration 75) -- done here in the Edge
-// Function's own runtime rather than inside a SECURITY DEFINER RPC, since
-// this function makes no database write at all.
+// from it server-side via verify_chief_admin_code(text) (migration 80), a
+// SECURITY DEFINER RPC returning only tenant_id -- a POST-body/RPC-
+// parameter call, never a URL query string. This function makes no
+// database write of any kind (see verify_chief_admin_code's own migration
+// header for why the raw admin code previously travelling in a URL was a
+// real exposure surface, and why an RPC rather than a raw service-role
+// table read is the correction).
 //
 // NO DATABASE WRITE OF ANY KIND. No revision RPC call. No roster save/
 // publish call. This function's only output is a symbolic, schema-validated
@@ -86,22 +88,27 @@ interface QuotaResult {
   resets_at: string | null;
 }
 
-// Mirrors chief_start_roster_revision's own inline lookup
-// (`SELECT tenant_id FROM settings WHERE admin_access_code = p_admin_code`,
-// migration 75) but performed here via a service-role REST read, the exact
-// same technique _shared/tenantAdaptation.ts already uses for its own
-// service-role table read -- no new RPC is added for this. The
-// anon/authenticated column-level REVOKE on settings.admin_access_code
-// (migration 1) does not apply to the service_role key used here.
+// Calls verify_chief_admin_code(text) (migration 80) -- a POST to
+// /rest/v1/rpc/verify_chief_admin_code with { p_admin_code } in the
+// request BODY, never a URL query string. This replaced an earlier
+// version of this function that queried /rest/v1/settings?admin_access_code=eq.<code>
+// directly, embedding the raw admin code in a URL -- a real exposure
+// surface (URL/access-log capture by intermediate infrastructure) beyond
+// how every other chief_* RPC in this schema already verifies the
+// identical credential. The RPC itself does the exact same
+// `SELECT tenant_id FROM settings WHERE admin_access_code = p_admin_code`
+// lookup chief_start_roster_revision already performs inline (migration
+// 75); it returns ONLY tenant_id (or NULL), no other settings content,
+// no hash/comparison logic exposed to the client.
 async function verifyAdminCodeAndDeriveTenant(supabaseUrl: string, serviceRoleKey: string, adminCode: string): Promise<string | null> {
   try {
-    const res = await fetch(
-      `${supabaseUrl}/rest/v1/settings?admin_access_code=eq.${encodeURIComponent(adminCode)}&select=tenant_id&limit=1`,
-      { headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` } }
-    );
-    if (!res.ok) return null;
-    const rows = await res.json();
-    return rows?.[0]?.tenant_id ?? null;
+    const admin = createClient(supabaseUrl, serviceRoleKey);
+    const { data, error } = await admin.rpc('verify_chief_admin_code', { p_admin_code: adminCode });
+    if (error) {
+      console.error('Admin code verification RPC failed:', error.message);
+      return null;
+    }
+    return (data as string | null) ?? null;
   } catch (err) {
     console.error('Admin code verification threw:', err);
     return null;

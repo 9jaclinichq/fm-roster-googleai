@@ -570,6 +570,29 @@ check('Edge Function rejects a schema-invalid model response as a safe failure (
   return /if \(validated\.status === 'error'\)/.test(edgeFunctionSrc) && /status: 'schema_invalid'/.test(edgeFunctionSrc);
 })());
 
+// --- Migration 80 fix (2026-08-30): admin code verification moved from a
+//     raw GET-with-query-string REST read to an RPC call (POST body). ---
+
+check('verifyAdminCodeAndDeriveTenant() calls the verify_chief_admin_code RPC via admin.rpc(...), never a raw fetch() to /rest/v1/settings', (() => {
+  const fnSrc = edgeFunctionSrc.slice(edgeFunctionSrc.indexOf('async function verifyAdminCodeAndDeriveTenant'), edgeFunctionSrc.indexOf('async function checkTenantAiQuota'));
+  return /admin\.rpc\('verify_chief_admin_code', \{ p_admin_code: adminCode \}\)/.test(fnSrc);
+})());
+
+check('the raw admin code never appears in a URL/query-string construction anywhere in the Edge Function\'s actual code -- no fetch() call embeds admin_access_code or adminCode in its URL argument (a comment documenting the OLD, replaced approach for context is fine; only real code matters)', (() => {
+  return !/\/rest\/v1\/settings\?admin_access_code/.test(edgeFunctionCodeOnly)
+    && !/encodeURIComponent\(adminCode\)/.test(edgeFunctionCodeOnly)
+    && !/encodeURIComponent\(admin_access_code\)/.test(edgeFunctionCodeOnly);
+})());
+
+check('verifyAdminCodeAndDeriveTenant() still returns only a tenant_id (or null), never the settings row itself -- the RPC result is used directly as the tenant id, no other field is read off it', (() => {
+  const fnSrc = edgeFunctionSrc.slice(edgeFunctionSrc.indexOf('async function verifyAdminCodeAndDeriveTenant'), edgeFunctionSrc.indexOf('async function checkTenantAiQuota'));
+  return /return \(data as string \| null\) \?\? null;/.test(fnSrc);
+})());
+
+check('the Edge Function still derives tenant ONLY from the verified admin code, never from client-supplied input -- unchanged call site', (() => {
+  return /const tenantId = await verifyAdminCodeAndDeriveTenant\(supabaseUrl, serviceRoleKey, admin_access_code\);/.test(edgeFunctionSrc);
+})());
+
 check('Client service (rosterPatchProposalService.ts) makes NO database write of any kind and calls NO RPC -- only supabase.functions.invoke', (() => {
   return /supabase\.functions\.invoke\('roster-patch-proposal'/.test(serviceSrc)
     && !/\.rpc\(/.test(serviceSrc)
@@ -699,11 +722,16 @@ check('saveDraft()\'s optional AI-assisted change_reason never overwrites an exi
     && (saveDraftBlock.match(/changeReason/g) || []).length >= 2;
 })());
 
-check('No migration/schema change exists anywhere in this slice -- migration 79 remains the highest migration on disk (matches migration ceiling 79 in prompt1.txt\'s human decision)', (() => {
+check('the Roster AI feature itself (this file\'s own scope) added zero migrations -- migration 80, when present, is exclusively the separate, later, explicitly-authorized admin-code-transport SECURITY_HARDENING fix (verify_chief_admin_code), never a Roster AI feature-schema change; the ceiling is 79 or 80, never higher, and 80 (if present) is exactly that one function', (() => {
   const migrationsDir = path.join(__dirname, '..', 'supabase', 'migrations');
   const files = fs.readdirSync(migrationsDir).filter((f) => /^\d+_/.test(f));
   const numbers = files.map((f) => parseInt(f.split('_')[0], 10));
-  return Math.max(...numbers) === 79;
+  const ceiling = Math.max(...numbers);
+  if (ceiling === 79) return true;
+  if (ceiling !== 80) return false;
+  const m80 = fs.readFileSync(path.join(migrationsDir, '80_verify_chief_admin_code.sql'), 'utf8');
+  const m80CodeOnly = m80.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+  return /CREATE OR REPLACE FUNCTION public\.verify_chief_admin_code/.test(m80CodeOnly) && !/roster_revisions|combined_master_rosters/.test(m80CodeOnly);
 })());
 
 check('roster_revisions.source / source_reference and chief_save_roster_revision are untouched -- confirmed no file in this slice references chief_save_roster_revision\'s SQL definition or attempts to alter it', (() => {
