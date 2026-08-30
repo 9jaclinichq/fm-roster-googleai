@@ -668,14 +668,18 @@ function MainAppContent() {
 
           {/* Full Roster — member-facing read-only projection of the ENTIRE
               currently published roster (migration 73's
-              resident_get_current_full_roster() RPC), a sibling
-              projection of the same published source as My Assignment
-              above. Same residentAccessCode threading, same rationale. */}
+              resident_get_current_full_roster() RPC, migrated by
+              migration 79 to try authenticated institutional membership
+              before falling back to the legacy code, same pattern as My
+              Assignment). Same residentAccessCode threading, same
+              rationale. hasAuthenticatedSession lets it attempt the RPC
+              with no code at all on a restored, previously-claimed
+              session. */}
           <Route
             path="/workspace/full-roster"
             element={
               currentResident ? (
-                <FullRosterView resident={currentResident} accessCode={residentAccessCode} />
+                <FullRosterView resident={currentResident} accessCode={residentAccessCode} hasAuthenticatedSession={!!currentDoctor} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )

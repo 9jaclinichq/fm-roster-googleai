@@ -244,15 +244,13 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
       try {
         const res = await myAssignmentService.getCurrentAssignment(resident.id, accessCode);
         if (!cancelled) setAssignment(res);
-        // roster-section presentation (migration 74) is out of scope for
-        // migration 78 and still requires a real code — skipped here when
-        // accessCode is null (an authenticated-membership-only load keeps
-        // today's existing fallback display labels instead).
-        if (accessCode) {
-          rosterSectionPresentationService.getResidentPresentation(resident.id, accessCode)
-            .then((p) => { if (!cancelled) setAssignmentPresentation(p); })
-            .catch((err) => console.warn('IntelligenceHarnessHome: roster section presentation load failed (using fallback labels)', err));
-        }
+        // Migration 79: roster-section presentation is now migrated too,
+        // so this is attempted regardless of whether accessCode is null —
+        // its own authenticated-membership-first check handles a null
+        // code the same way the getCurrentAssignment call above just did.
+        rosterSectionPresentationService.getResidentPresentation(resident.id, accessCode)
+          .then((p) => { if (!cancelled) setAssignmentPresentation(p); })
+          .catch((err) => console.warn('IntelligenceHarnessHome: roster section presentation load failed (using fallback labels)', err));
       } catch (err) {
         console.warn('IntelligenceHarnessHome: My Assignment summary load failed (non-fatal)', err);
         if (!cancelled) setAssignmentUnavailable(true);

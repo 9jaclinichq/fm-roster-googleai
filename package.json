@@ -26,6 +26,7 @@
     "verify:migration-76": "node scripts/verify-migration-76.cjs",
     "verify:migration-77": "node scripts/verify-migration-77.cjs",
     "verify:migration-78": "node scripts/verify-migration-78.cjs",
+    "verify:migration-79": "node scripts/verify-migration-79.cjs",
     "verify:submission-review-status": "node scripts/verify-submission-review-status.cjs",
     "verify:pending-member-contacts": "node scripts/verify-pending-member-contacts.cjs",
     "verify:m19-dormant": "node scripts/verify-m19-dormant.cjs",

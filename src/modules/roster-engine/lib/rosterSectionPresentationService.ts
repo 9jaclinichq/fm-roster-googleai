@@ -14,7 +14,11 @@ import { RosterSectionPresentation } from './rosterSectionPresentation';
 // workforce row.
 
 export const rosterSectionPresentationService = {
-  async getResidentPresentation(workforceId: string, code: string): Promise<RosterSectionPresentation[]> {
+  // Migration 79: code is now string | null — same authenticated-
+  // membership-first coexistence as myAssignmentService.getCurrentAssignment
+  // and fullRosterService.getCurrentFullRoster. A null code only fails if
+  // the caller also has no matching active membership for this workforce.
+  async getResidentPresentation(workforceId: string, code: string | null): Promise<RosterSectionPresentation[]> {
     const { data, error } = await supabase!.rpc('resident_get_roster_section_presentation', {
       p_workforce_id: workforceId,
       p_code: code,

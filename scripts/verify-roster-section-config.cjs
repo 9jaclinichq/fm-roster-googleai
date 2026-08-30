@@ -286,9 +286,9 @@ check('rosterSectionPresentationService.ts never references roster_section_confi
   return !/\.from\(\s*['"]roster_section_config['"]/.test(stripLineComments(residentServiceTs));
 })());
 
-check('rosterSectionPresentationService.ts calls the RPC by name with only (workforceId, code)', (() => {
+check('rosterSectionPresentationService.ts calls the RPC by name with only (workforceId, code) — code widened to string | null by migration 79 for authenticated-membership coexistence, same shape otherwise', (() => {
   return /rpc\(\s*'resident_get_roster_section_presentation'/.test(residentServiceTs)
-    && /getResidentPresentation\(workforceId: string, code: string\)/.test(residentServiceTs);
+    && /getResidentPresentation\(workforceId: string, code: string \| null\)/.test(residentServiceTs);
 })());
 
 check('tenantService.ts exposes chiefGetRosterSectionConfig/chiefUpsertRosterSectionConfig calling the admin-code-verified RPCs (not a direct table write)', (() => {

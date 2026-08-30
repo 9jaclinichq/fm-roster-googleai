@@ -43,7 +43,14 @@ const EMPTY_SUPERVISION: SupervisionGrid = { duties: [], unparsed_notes: [] };
 const EMPTY_SATELLITE: SatelliteGrid = { postings: [], unparsed_notes: [] };
 
 export const fullRosterService = {
-  async getCurrentFullRoster(workforceId: string, code: string): Promise<FullRosterResult> {
+  // Migration 79: code is now string | null — a restored session with no
+  // PIN in memory (an authenticated, previously-claimed resident) passes
+  // null. The RPC's own authenticated-membership-first check runs before
+  // it ever inspects p_code, so a null/absent code is only ever a problem
+  // if that check also doesn't match (an unclaimed or legacy-only
+  // caller), in which case the RPC raises its existing 'Invalid access
+  // code' error exactly as it already does for a wrong code today.
+  async getCurrentFullRoster(workforceId: string, code: string | null): Promise<FullRosterResult> {
     const { data, error } = await supabase!.rpc('resident_get_current_full_roster', {
       p_workforce_id: workforceId,
       p_code: code,

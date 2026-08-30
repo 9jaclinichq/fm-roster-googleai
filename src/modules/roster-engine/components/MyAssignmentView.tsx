@@ -60,15 +60,13 @@ export const MyAssignmentView: React.FC<MyAssignmentViewProps> = ({ resident, ac
     try {
       const res = await myAssignmentService.getCurrentAssignment(resident.id, code);
       setResult(res);
-      // roster-section presentation (migration 74) is explicitly out of
-      // scope for migration 78 and still requires a real code — only
-      // called here when one exists; a successful auth-first (code=null)
-      // load simply keeps today's existing fallback display labels.
-      if (code) {
-        rosterSectionPresentationService.getResidentPresentation(resident.id, code)
-          .then(setPresentation)
-          .catch((err) => console.warn('Failed to load roster section presentation (using fallback labels):', err));
-      }
+      // Migration 79: roster-section presentation is now migrated too, so
+      // this is attempted regardless of whether code is null — its own
+      // authenticated-membership-first check handles a null code the same
+      // way the getCurrentAssignment call above just did.
+      rosterSectionPresentationService.getResidentPresentation(resident.id, code)
+        .then(setPresentation)
+        .catch((err) => console.warn('Failed to load roster section presentation (using fallback labels):', err));
     } catch (err) {
       console.warn('Failed to load current assignment:', err);
       setResult(null);

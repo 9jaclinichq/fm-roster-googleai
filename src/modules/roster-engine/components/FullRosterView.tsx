@@ -16,10 +16,13 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: 
 interface FullRosterViewProps {
   resident: { id: string; name: string; category: string };
   // Same in-memory-only access PIN as MyAssignmentView — see that file's
-  // own comment on why this is never persisted and why (workforce_id,
-  // code) is required on every call under the current transitional
-  // resident login model.
+  // own comment on why this is never persisted.
   accessCode: string | null;
+  // Migration 79: true when a real Supabase Auth session exists (App.tsx's
+  // `!!currentDoctor`) — see MyAssignmentView's own identical prop for the
+  // full rationale. Lets this view attempt resident_get_current_full_roster()
+  // with no code at all on a restored, previously-claimed session.
+  hasAuthenticatedSession: boolean;
 }
 
 const MONTH_NAMES = [
@@ -130,12 +133,16 @@ function buildSections(result: FullRosterResult, presentation: RosterSectionPres
     .map(({ _order, ...section }) => section);
 }
 
-export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, accessCode }) => {
+export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, accessCode, hasAuthenticatedSession }) => {
   const [enteredCode, setEnteredCode] = useState<string>('');
-  const [activeCode, setActiveCode] = useState<string | null>(accessCode);
   const [result, setResult] = useState<FullRosterResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // Migration 79: tracks whether at least one load attempt has completed
+  // (silent auth-first, accessCode-based, or manual) — used only to
+  // decide whether the PIN-entry form should render yet. See
+  // MyAssignmentView.tsx's own identical state for the full rationale.
+  const [hasAttempted, setHasAttempted] = useState<boolean>(false);
   // Migration 74: tenant-configured section presentation. Loaded
   // best-effort alongside the roster itself — a failed load simply leaves
   // this empty, and resolveRosterSectionPresentation still renders
@@ -143,31 +150,46 @@ export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, access
   // failure never blocks or breaks the actual roster view.
   const [presentation, setPresentation] = useState<RosterSectionPresentation[]>([]);
 
-  const load = useCallback(async (code: string) => {
+  const load = useCallback(async (code: string | null, options?: { silent?: boolean }) => {
     setIsLoading(true);
-    setError(null);
+    if (!options?.silent) setError(null);
     try {
       const res = await fullRosterService.getCurrentFullRoster(resident.id, code);
       setResult(res);
-      setActiveCode(code);
+      // Migration 79: roster-section presentation is now migrated too, so
+      // this is attempted regardless of whether code is null — the RPC's
+      // own authenticated-membership-first check handles a null code the
+      // same way resident_get_current_full_roster's own call above just did.
       rosterSectionPresentationService.getResidentPresentation(resident.id, code)
         .then(setPresentation)
         .catch((err) => console.warn('Failed to load roster section presentation (using fallback labels):', err));
     } catch (err) {
       console.warn('Failed to load current full roster:', err);
       setResult(null);
-      setError('That access PIN was not accepted. Please check it and try again.');
+      // A silent auth-first attempt failing is the expected legacy/
+      // unclaimed-resident case, not a user mistake — it falls through to
+      // the ordinary PIN-entry form below with no error shown. Only a
+      // manual PIN submission failure surfaces this message.
+      if (!options?.silent) {
+        setError('That access PIN was not accepted. Please check it and try again.');
+      }
     } finally {
       setIsLoading(false);
+      setHasAttempted(true);
     }
   }, [resident.id]);
 
   useEffect(() => {
     if (accessCode) {
       load(accessCode);
+    } else if (hasAuthenticatedSession) {
+      // Restored session, no PIN in memory, but a real Supabase Auth
+      // session exists — try authenticated-membership-first (migration 79)
+      // silently, exactly like MyAssignmentView.tsx.
+      load(null, { silent: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessCode]);
+  }, [accessCode, hasAuthenticatedSession]);
 
   const handleConfirmCode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,7 +197,11 @@ export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, access
     await load(enteredCode.trim());
   };
 
-  if (!activeCode && !isLoading) {
+  // Nothing has resolved yet (no result), no load is in flight, and at
+  // least one attempt has already run its course (or there was never a
+  // session to attempt with) — ask for the PIN once, here, rather than
+  // silently failing or inventing a persistent credential store.
+  if (!result && !isLoading && (hasAttempted || !hasAuthenticatedSession)) {
     return (
       <div className="max-w-md mx-auto my-8 px-4">
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm text-center">
@@ -229,17 +255,6 @@ export const FullRosterView: React.FC<FullRosterViewProps> = ({ resident, access
         <div className="text-center py-12 bg-white border border-slate-200 rounded-2xl">
           <RefreshCw size={26} className="text-slate-400 animate-spin mx-auto mb-2" />
           <p className="text-sm text-slate-500">Loading the full roster...</p>
-        </div>
-      ) : error ? (
-        <div className="text-center py-10 bg-white border border-slate-200 rounded-2xl px-4">
-          <AlertCircle size={26} className="text-rose-400 mx-auto mb-2" />
-          <p className="text-sm text-rose-600 font-medium mb-3">{error}</p>
-          <button
-            onClick={() => { setActiveCode(null); setEnteredCode(''); setError(null); }}
-            className="px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md text-xs font-semibold cursor-pointer"
-          >
-            Try Again
-          </button>
         </div>
       ) : result?.status === 'not_published' ? (
         <div className="text-center py-12 bg-white border border-slate-200 rounded-2xl text-slate-400">
