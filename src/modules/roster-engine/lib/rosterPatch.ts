@@ -123,6 +123,32 @@ export function rowLabelFor(section: RosterSection, row: unknown): string {
   }
 }
 
+// The bare semantic "service point" label component alone (clinic_type /
+// shift / facility), never combined with date_or_day like rowLabelFor()
+// above -- this is the SAME field name/semantics the Roster AI context
+// builder (buildRosterProposalContext in MultiRosterManagerView.tsx) and
+// the deterministic location resolver (resolveSymbolicRosterTarget in
+// rosterPatchProposalCompiler.ts) both use as one half of a roster row's
+// location identity (the other half being date_or_day). Sharing this one
+// function between "what we tell the model" and "how we resolve what it
+// says back" is load-bearing: if those two ever computed the label
+// differently, semantic location matching would silently never match
+// anything (or, worse, match the wrong row) -- see
+// resolveSymbolicRosterTarget()'s own header for the full invariant this
+// protects (2026-09-01, WRONG_ROSTER_ROW_TARGETING WITH_VALID_PROPOSAL).
+// null for 'supervision' -- date_or_day alone is already a unique row key
+// for that section (confirmed: SupervisionDuty carries no other
+// row-distinguishing field, src/types.ts).
+export function rowSemanticLabelFor(section: RosterSection, row: unknown): string | null {
+  const r = row as Record<string, unknown>;
+  switch (section) {
+    case 'gop': return (r.clinic_type as string | undefined) ?? null;
+    case 'emergency': return (r.shift as string | undefined) ?? null;
+    case 'satellite': return (r.facility as string | undefined) ?? null;
+    case 'supervision': return null;
+  }
+}
+
 export function fieldsForSection(section: RosterSection): RosterPatchField[] {
   return ARRAY_FIELDS_BY_SECTION[section];
 }

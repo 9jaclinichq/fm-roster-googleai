@@ -23,16 +23,25 @@ import type { RosterSection, RosterPatchField } from './rosterPatch';
 
 export type ProposalOutcome = 'valid' | 'ambiguous_identity' | 'unsupported_instruction' | 'needs_clarification';
 
+// section + date_or_day + label + field is the sole location identity --
+// mirrors supabase/functions/roster-patch-proposal/schema.ts's own
+// LOAD-BEARING INVARIANT note exactly (2026-09-01,
+// WRONG_ROSTER_ROW_TARGETING WITH_VALID_PROPOSAL containment/fix): the
+// provider is never authoritative for row identity. There is
+// deliberately no row_index here -- rosterPatchProposalCompiler.ts's
+// resolveSymbolicRosterTarget() is the only place a row_index is ever
+// derived, by deterministic matching against the current grid.
 export interface SymbolicTarget {
   section: RosterSection;
-  row_index: number;
+  date_or_day: string | null;
+  label: string | null;
   field: RosterPatchField;
 }
 
 export type SymbolicOperation =
-  | { op: 'assign'; section: RosterSection; row_index: number; field: RosterPatchField; subject_name: string; reason?: string }
-  | { op: 'unassign'; section: RosterSection; row_index: number; field: RosterPatchField; subject_name: string; reason?: string }
-  | { op: 'replace'; section: RosterSection; row_index: number; field: RosterPatchField; from_subject_name: string; to_subject_name: string; reason?: string }
+  | { op: 'assign'; section: RosterSection; date_or_day: string | null; label: string | null; field: RosterPatchField; subject_name: string; reason?: string }
+  | { op: 'unassign'; section: RosterSection; date_or_day: string | null; label: string | null; field: RosterPatchField; subject_name: string; reason?: string }
+  | { op: 'replace'; section: RosterSection; date_or_day: string | null; label: string | null; field: RosterPatchField; from_subject_name: string; to_subject_name: string; reason?: string }
   | {
       op: 'swap';
       target_a: SymbolicTarget;

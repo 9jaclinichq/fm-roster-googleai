@@ -24,6 +24,7 @@ import {
   fieldLabelFor,
   rowsForSection,
   rowLabelFor,
+  rowSemanticLabelFor,
   workforceNameMap,
   isSupervisionScalarField,
 } from '../../../roster-engine/lib/rosterPatch';
@@ -867,7 +868,13 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
           section,
           row_index,
           date_or_day: (row.date_or_day as string | null) ?? null,
-          label: section === 'gop' ? (row.clinic_type as string) : section === 'emergency' ? (row.shift as string) : section === 'satellite' ? (row.facility as string) : null,
+          // Same helper the deterministic location resolver uses to
+          // re-derive a row's label when matching a symbolic operation
+          // back to the current grid (rowSemanticLabelFor, rosterPatch.ts)
+          // -- a single source of truth so "what we tell the model" and
+          // "how we resolve what it says back" can never silently drift
+          // apart. See resolveSymbolicRosterTarget()'s own header.
+          label: rowSemanticLabelFor(section, row),
           current,
         });
       });
@@ -1577,6 +1584,20 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
                                 : `No matching workforce member found for "${d.name}" — use the manual form below if you know who is meant.`}
                             </p>
                           ))}
+                        </div>
+                      );
+                    }
+                    // Deterministic location resolution failed (0 or >1
+                    // matching roster rows for the AI's stated section/
+                    // date/label/field) -- a distinct failure class from
+                    // unresolvable identity, never checkable/acceptable.
+                    // See rosterPatchProposalCompiler.ts's
+                    // resolveSymbolicRosterTarget() for why this can never
+                    // be the wrong-row-silently-accepted case anymore.
+                    if (c.status === 'location_unresolvable') {
+                      return (
+                        <div key={i} className="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-xs text-rose-700">
+                          {c.message}
                         </div>
                       );
                     }

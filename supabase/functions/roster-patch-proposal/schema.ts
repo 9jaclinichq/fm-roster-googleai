@@ -27,6 +27,24 @@
 export type RosterSection = 'gop' | 'emergency' | 'supervision' | 'satellite';
 export type RosterPatchField = 'consultants' | 'residents' | 'on_call' | 'assigned' | 'first_on_duty' | 'second_on_duty';
 
+// LOAD-BEARING INVARIANT (2026-09-01, WRONG_ROSTER_ROW_TARGETING WITH_VALID_PROPOSAL
+// containment/fix): the provider is NEVER authoritative for roster row
+// identity. A symbolic operation locates its target using ONLY the
+// semantic attributes already present in the roster_context sent to the
+// model -- section, date_or_day, label (clinic_type/shift/facility,
+// null for supervision), and field -- never a raw array index. There is
+// deliberately no row_index anywhere in this file's operation/target
+// shapes: src/modules/roster-engine/lib/rosterPatchProposalCompiler.ts's
+// resolveSymbolicRosterTarget() is the ONLY place a row_index is ever
+// derived, by deterministically matching these exact semantic fields
+// against the CURRENT authoritative grid -- requiring exactly one match,
+// never guessing/nearest-matching. See that function's own header for
+// why (the bug this closes: the model correctly stated "Tue 01/09" in
+// its own interpreted_instruction text while a since-removed row_index
+// field silently pointed at a different date entirely -- nothing
+// downstream could catch this because row_index carried no semantic
+// meaning to cross-check against).
+
 // Exported so index.ts's request-context normalizer (Section B, 2026-08-30
 // working-state/context-allowlisting fix) can validate roster_context field
 // names against this exact same table instead of a third duplicate copy.
@@ -40,16 +58,24 @@ export const VALID_FIELDS_BY_SECTION: Record<RosterSection, RosterPatchField[]> 
 export type ProposalOutcome = 'valid' | 'ambiguous_identity' | 'unsupported_instruction' | 'needs_clarification';
 const VALID_OUTCOMES: ProposalOutcome[] = ['valid', 'ambiguous_identity', 'unsupported_instruction', 'needs_clarification'];
 
+// section + date_or_day + label + field is the sole location identity --
+// see the LOAD-BEARING INVARIANT note above. date_or_day/label are
+// nullable to match RosterContextRow's own shape exactly (label is
+// always null for 'supervision', date_or_day can be null for a
+// non-day-specific 'satellite' posting) -- the model is instructed to
+// copy these two fields verbatim from the context row it means, never
+// compute or invent a value.
 export interface SymbolicTarget {
   section: RosterSection;
-  row_index: number;
+  date_or_day: string | null;
+  label: string | null;
   field: RosterPatchField;
 }
 
 export type SymbolicOperation =
-  | { op: 'assign'; section: RosterSection; row_index: number; field: RosterPatchField; subject_name: string; reason?: string }
-  | { op: 'unassign'; section: RosterSection; row_index: number; field: RosterPatchField; subject_name: string; reason?: string }
-  | { op: 'replace'; section: RosterSection; row_index: number; field: RosterPatchField; from_subject_name: string; to_subject_name: string; reason?: string }
+  | { op: 'assign'; section: RosterSection; date_or_day: string | null; label: string | null; field: RosterPatchField; subject_name: string; reason?: string }
+  | { op: 'unassign'; section: RosterSection; date_or_day: string | null; label: string | null; field: RosterPatchField; subject_name: string; reason?: string }
+  | { op: 'replace'; section: RosterSection; date_or_day: string | null; label: string | null; field: RosterPatchField; from_subject_name: string; to_subject_name: string; reason?: string }
   | {
       op: 'swap';
       target_a: SymbolicTarget;
@@ -83,10 +109,10 @@ const TOP_LEVEL_KEYS = new Set([
   'interpreted_instruction', 'operations', 'referenced_names', 'unresolved_ambiguity',
   'unsupported_requests', 'assumptions', 'rationale', 'outcome',
 ]);
-const ASSIGN_UNASSIGN_KEYS = new Set(['op', 'section', 'row_index', 'field', 'subject_name', 'reason']);
-const REPLACE_KEYS = new Set(['op', 'section', 'row_index', 'field', 'from_subject_name', 'to_subject_name', 'reason']);
+const ASSIGN_UNASSIGN_KEYS = new Set(['op', 'section', 'date_or_day', 'label', 'field', 'subject_name', 'reason']);
+const REPLACE_KEYS = new Set(['op', 'section', 'date_or_day', 'label', 'field', 'from_subject_name', 'to_subject_name', 'reason']);
 const SWAP_KEYS = new Set(['op', 'target_a', 'target_b', 'subject_a_name', 'subject_b_name', 'reason']);
-const TARGET_KEYS = new Set(['section', 'row_index', 'field']);
+const TARGET_KEYS = new Set(['section', 'date_or_day', 'label', 'field']);
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -103,8 +129,12 @@ function hasOnlyKeys(obj: Record<string, unknown>, allowed: Set<string>): boolea
 function isValidSection(v: unknown): v is RosterSection {
   return typeof v === 'string' && Object.prototype.hasOwnProperty.call(VALID_FIELDS_BY_SECTION, v);
 }
-function isValidRowIndex(v: unknown): v is number {
-  return typeof v === 'number' && Number.isInteger(v) && v >= 0;
+// date_or_day/label: either exactly null, or a non-empty string -- never
+// an empty string, never a number/object. Shared by both target fields
+// since both are nullable-string location attributes with identical
+// validity rules.
+function isValidNullableString(v: unknown): v is string | null {
+  return v === null || isNonEmptyString(v);
 }
 function isValidFieldForSection(section: RosterSection, field: unknown): field is RosterPatchField {
   return typeof field === 'string' && VALID_FIELDS_BY_SECTION[section].includes(field as RosterPatchField);
@@ -114,7 +144,8 @@ function validateTarget(v: unknown): string | null {
   if (!isPlainObject(v)) return 'must be an object';
   if (!hasOnlyKeys(v, TARGET_KEYS)) return 'has an unexpected key';
   if (!isValidSection(v.section)) return `unknown section "${String(v.section)}"`;
-  if (!isValidRowIndex(v.row_index)) return 'invalid row_index';
+  if (!isValidNullableString(v.date_or_day)) return 'invalid date_or_day';
+  if (!isValidNullableString(v.label)) return 'invalid label';
   if (!isValidFieldForSection(v.section, v.field)) return `field "${String(v.field)}" is not valid for section "${v.section}"`;
   return null;
 }
@@ -126,7 +157,8 @@ function validateOperation(v: unknown, index: number): string | null {
   if (op === 'assign' || op === 'unassign') {
     if (!hasOnlyKeys(v, ASSIGN_UNASSIGN_KEYS)) return `operation ${index} (${op}) has an unexpected key`;
     if (!isValidSection(v.section)) return `operation ${index}: unknown section "${String(v.section)}"`;
-    if (!isValidRowIndex(v.row_index)) return `operation ${index}: invalid row_index`;
+    if (!isValidNullableString(v.date_or_day)) return `operation ${index}: invalid date_or_day`;
+    if (!isValidNullableString(v.label)) return `operation ${index}: invalid label`;
     if (!isValidFieldForSection(v.section, v.field)) return `operation ${index}: field "${String(v.field)}" is not valid for section "${v.section}"`;
     if (!isNonEmptyString(v.subject_name)) return `operation ${index}: subject_name must be a non-empty string`;
     if (v.reason !== undefined && typeof v.reason !== 'string') return `operation ${index}: reason must be a string if present`;
@@ -136,7 +168,8 @@ function validateOperation(v: unknown, index: number): string | null {
   if (op === 'replace') {
     if (!hasOnlyKeys(v, REPLACE_KEYS)) return `operation ${index} (replace) has an unexpected key`;
     if (!isValidSection(v.section)) return `operation ${index}: unknown section "${String(v.section)}"`;
-    if (!isValidRowIndex(v.row_index)) return `operation ${index}: invalid row_index`;
+    if (!isValidNullableString(v.date_or_day)) return `operation ${index}: invalid date_or_day`;
+    if (!isValidNullableString(v.label)) return `operation ${index}: invalid label`;
     if (!isValidFieldForSection(v.section, v.field)) return `operation ${index}: field "${String(v.field)}" is not valid for section "${v.section}"`;
     if (!isNonEmptyString(v.from_subject_name)) return `operation ${index}: from_subject_name must be a non-empty string`;
     if (!isNonEmptyString(v.to_subject_name)) return `operation ${index}: to_subject_name must be a non-empty string`;

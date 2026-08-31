@@ -10,7 +10,7 @@
 // Run: npx tsx scripts/verify-roster-patch-proposal.ts
 
 import { validateProposedRosterPatch, normalizeRosterContext, normalizeWorkforceContext, normalizeSectionLabels } from '../supabase/functions/roster-patch-proposal/schema';
-import { compileProposalOperations, CompiledProposalOperation } from '../src/modules/roster-engine/lib/rosterPatchProposalCompiler';
+import { compileProposalOperations, CompiledProposalOperation, resolveSymbolicRosterTarget } from '../src/modules/roster-engine/lib/rosterPatchProposalCompiler';
 import type { SymbolicOperation, ProposedRosterPatch } from '../src/modules/roster-engine/lib/rosterPatchProposalService';
 import { applyRosterPatch, RosterGrids, RosterPatchOperation } from '../src/modules/roster-engine/lib/rosterPatch';
 import { computeReconciliationIssues } from '../src/modules/roster-engine/lib/rosterReconciliation';
@@ -40,6 +40,11 @@ const WORKFORCE: WorkforceMember[] = [
   // Two people sharing a display name -- the deliberate ambiguity fixture.
   { id: 'w4a', full_name: 'Dr. Emeka', category: 'Medical Officer', active: true } as WorkforceMember,
   { id: 'w4b', full_name: 'Dr. Emeka', category: 'Medical Officer', active: true } as WorkforceMember,
+  // WRONG_ROSTER_ROW_TARGETING WITH_VALID_PROPOSAL reproduction fixture
+  // (2026-09-01) -- Dr. Ikor is deliberately assigned on two different
+  // dates under the SAME clinic_type label below (see ikorReproGrids()).
+  { id: 'w5', full_name: 'Dr. Ikor', category: 'Senior Registrar', active: true } as WorkforceMember,
+  { id: 'w6', full_name: 'Dr. Ulasi', category: 'Senior Registrar', active: true } as WorkforceMember,
 ];
 
 function freshGrids(): RosterGrids {
@@ -64,6 +69,22 @@ function freshGrids(): RosterGrids {
       unparsed_notes: [],
     },
   };
+}
+
+// WRONG_ROSTER_ROW_TARGETING WITH_VALID_PROPOSAL exact reproduction fixture
+// (2026-09-01): Dr. Ikor ('w5') is the sole consultant on TWO different gop
+// rows that share the exact same clinic_type label ("Managed Care") -- the
+// real production shape that let a provider-supplied row_index silently
+// point at the wrong date while the model's own interpreted_instruction
+// text correctly named the right one. Kept separate from freshGrids() so
+// every other test's fixture stays exactly as it was.
+function ikorReproGrids(): RosterGrids {
+  const grids = freshGrids();
+  grids.gop_clinic_grid.slots = [
+    { date_or_day: 'Tue 01/09', clinic_type: 'Managed Care', consultants: ['w5'], residents: [] },
+    { date_or_day: 'Thu 03/09', clinic_type: 'Managed Care', consultants: ['w5'], residents: [] },
+  ];
+  return grids;
 }
 
 const validProposalBase = {
@@ -96,7 +117,7 @@ const compilerCodeOnly = codeOnly(compilerSrc);
 check('schema: accepts a minimal valid assign proposal', (() => {
   const r = validateProposedRosterPatch({
     ...validProposalBase,
-    operations: [{ op: 'assign', section: 'gop', row_index: 1, field: 'residents', subject_name: 'Dr. Bola' }],
+    operations: [{ op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'residents', subject_name: 'Dr. Bola' }],
   });
   return r.status === 'ok';
 })());
@@ -104,7 +125,7 @@ check('schema: accepts a minimal valid assign proposal', (() => {
 check('schema: accepts a minimal valid replace proposal', (() => {
   const r = validateProposedRosterPatch({
     ...validProposalBase,
-    operations: [{ op: 'replace', section: 'gop', row_index: 0, field: 'residents', from_subject_name: 'Dr. Ada', to_subject_name: 'Dr. Bola' }],
+    operations: [{ op: 'replace', section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', from_subject_name: 'Dr. Ada', to_subject_name: 'Dr. Bola' }],
   });
   return r.status === 'ok';
 })());
@@ -112,7 +133,7 @@ check('schema: accepts a minimal valid replace proposal', (() => {
 check('schema: accepts a minimal valid unassign proposal', (() => {
   const r = validateProposedRosterPatch({
     ...validProposalBase,
-    operations: [{ op: 'unassign', section: 'gop', row_index: 0, field: 'residents', subject_name: 'Dr. Ada' }],
+    operations: [{ op: 'unassign', section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', subject_name: 'Dr. Ada' }],
   });
   return r.status === 'ok';
 })());
@@ -122,8 +143,8 @@ check('schema: accepts a minimal valid swap proposal', (() => {
     ...validProposalBase,
     operations: [{
       op: 'swap',
-      target_a: { section: 'gop', row_index: 0, field: 'residents' },
-      target_b: { section: 'emergency', row_index: 0, field: 'on_call' },
+      target_a: { section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents' },
+      target_b: { section: 'emergency', date_or_day: 'Fri 05/09', label: '4pm-10pm', field: 'on_call' },
       subject_a_name: 'Dr. Ada',
       subject_b_name: 'Dr. Bola',
     }],
@@ -133,38 +154,51 @@ check('schema: accepts a minimal valid swap proposal', (() => {
 
 check('schema: accepts each of the 4 sections\' valid fields', (() => {
   const cases: SymbolicOperation[] = [
-    { op: 'assign', section: 'gop', row_index: 0, field: 'consultants', subject_name: 'Dr. Ada' },
-    { op: 'assign', section: 'emergency', row_index: 0, field: 'on_call', subject_name: 'Dr. Ada' },
-    { op: 'assign', section: 'satellite', row_index: 0, field: 'assigned', subject_name: 'Dr. Ada' },
-    { op: 'assign', section: 'supervision', row_index: 0, field: 'first_on_duty', subject_name: 'Dr. Ada' },
-    { op: 'assign', section: 'supervision', row_index: 0, field: 'second_on_duty', subject_name: 'Dr. Ada' },
+    { op: 'assign', section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'consultants', subject_name: 'Dr. Ada' },
+    { op: 'assign', section: 'emergency', date_or_day: 'Fri 05/09', label: '4pm-10pm', field: 'on_call', subject_name: 'Dr. Ada' },
+    { op: 'assign', section: 'satellite', date_or_day: null, label: 'Agbeke Mercy', field: 'assigned', subject_name: 'Dr. Ada' },
+    { op: 'assign', section: 'supervision', date_or_day: 'Mon 01/09', label: null, field: 'first_on_duty', subject_name: 'Dr. Ada' },
+    { op: 'assign', section: 'supervision', date_or_day: 'Mon 01/09', label: null, field: 'second_on_duty', subject_name: 'Dr. Ada' },
   ];
   return cases.every((op) => validateProposedRosterPatch({ ...validProposalBase, operations: [op] }).status === 'ok');
 })());
 
 check('schema: rejects unknown op', (() => {
-  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'delete', section: 'gop', row_index: 0, field: 'residents', subject_name: 'x' }] });
+  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'delete', section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', subject_name: 'x' }] });
   return r.status === 'error' && /unknown op/.test(r.message);
 })());
 
 check('schema: rejects unknown section', (() => {
-  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'assign', section: 'clinic', row_index: 0, field: 'residents', subject_name: 'x' }] });
+  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'assign', section: 'clinic', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', subject_name: 'x' }] });
   return r.status === 'error' && /unknown section/.test(r.message);
 })());
 
 check('schema: rejects unknown field for a given section', (() => {
-  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'assign', section: 'emergency', row_index: 0, field: 'residents', subject_name: 'x' }] });
+  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'assign', section: 'emergency', date_or_day: 'Fri 05/09', label: '4pm-10pm', field: 'residents', subject_name: 'x' }] });
   return r.status === 'error' && /not valid for section/.test(r.message);
 })());
 
-check('schema: rejects malformed row_index (negative)', (() => {
-  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'assign', section: 'gop', row_index: -1, field: 'residents', subject_name: 'x' }] });
-  return r.status === 'error' && /invalid row_index/.test(r.message);
+check('schema: rejects malformed date_or_day (wrong type -- not a string and not null)', (() => {
+  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'assign', section: 'gop', date_or_day: 42, label: 'Triage', field: 'residents', subject_name: 'x' }] });
+  return r.status === 'error' && /invalid date_or_day/.test(r.message);
 })());
 
-check('schema: rejects malformed row_index (non-integer)', (() => {
-  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'assign', section: 'gop', row_index: 1.5, field: 'residents', subject_name: 'x' }] });
-  return r.status === 'error' && /invalid row_index/.test(r.message);
+check('schema: rejects malformed label (empty string is not a valid label -- only null or a non-empty string)', (() => {
+  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'assign', section: 'gop', date_or_day: 'Mon 01/09', label: '', field: 'residents', subject_name: 'x' }] });
+  return r.status === 'error' && /invalid label/.test(r.message);
+})());
+
+check('schema: rejects an operation missing date_or_day entirely (no fallback to an implicit/absent location)', (() => {
+  const r = validateProposedRosterPatch({ ...validProposalBase, operations: [{ op: 'assign', section: 'gop', label: 'Triage', field: 'residents', subject_name: 'x' }] });
+  return r.status === 'error' && /invalid date_or_day/.test(r.message);
+})());
+
+check('schema: no longer recognizes row_index as a valid operation key at all -- a symbolic operation carrying row_index (even a well-formed integer) is rejected as an unexpected key, proving the provider-supplied-row_index attack surface this fix closes is structurally gone from the contract', (() => {
+  const r = validateProposedRosterPatch({
+    ...validProposalBase,
+    operations: [{ op: 'assign', section: 'gop', row_index: 0, date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', subject_name: 'x' }],
+  });
+  return r.status === 'error' && /unexpected key/.test(r.message);
 })());
 
 check('schema: rejects an unexpected top-level key', (() => {
@@ -180,7 +214,7 @@ check('schema: rejects an unknown outcome value', (() => {
 check('schema: rejects a model attempting to smuggle a workforce_id in an operation', (() => {
   const r = validateProposedRosterPatch({
     ...validProposalBase,
-    operations: [{ op: 'assign', section: 'gop', row_index: 0, field: 'residents', subject_name: 'x', workforce_id: 'w1' }],
+    operations: [{ op: 'assign', section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', subject_name: 'x', workforce_id: 'w1' }],
   });
   return r.status === 'error' && /unexpected key/.test(r.message);
 })());
@@ -188,7 +222,7 @@ check('schema: rejects a model attempting to smuggle a workforce_id in an operat
 check('schema: rejects a model attempting to smuggle a tenant_id in an operation', (() => {
   const r = validateProposedRosterPatch({
     ...validProposalBase,
-    operations: [{ op: 'assign', section: 'gop', row_index: 0, field: 'residents', subject_name: 'x', tenant_id: 't1' }],
+    operations: [{ op: 'assign', section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', subject_name: 'x', tenant_id: 't1' }],
   });
   return r.status === 'error' && /unexpected key/.test(r.message);
 })());
@@ -201,7 +235,12 @@ check('schema: rejects an arbitrary roster JSON snapshot standing in for operati
 check('schema: rejects a malformed swap specification (bad target_a)', (() => {
   const r = validateProposedRosterPatch({
     ...validProposalBase,
-    operations: [{ op: 'swap', target_a: { section: 'made_up', row_index: 0, field: 'residents' }, target_b: { section: 'gop', row_index: 0, field: 'residents' }, subject_a_name: 'x', subject_b_name: 'y' }],
+    operations: [{
+      op: 'swap',
+      target_a: { section: 'made_up', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents' },
+      target_b: { section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents' },
+      subject_a_name: 'x', subject_b_name: 'y',
+    }],
   });
   return r.status === 'error' && /target_a/.test(r.message);
 })());
@@ -222,41 +261,42 @@ check('schema: rejects an authority-bearing field the contract does not define (
 // =====================================================================
 
 check('compiler: exact/unique identity resolves to a real RosterPatchOperationAssign', (() => {
-  const ops: SymbolicOperation[] = [{ op: 'assign', section: 'gop', row_index: 1, field: 'residents', subject_name: 'Dr. Bola' }];
+  const ops: SymbolicOperation[] = [{ op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'residents', subject_name: 'Dr. Bola' }];
   const compiled = compileProposalOperations(ops, freshGrids(), WORKFORCE);
   return compiled.length === 1 && compiled[0].status === 'resolved'
     && (compiled[0] as Extract<CompiledProposalOperation, { status: 'resolved' }>).operations[0].op === 'assign'
-    && (compiled[0] as Extract<CompiledProposalOperation, { status: 'resolved' }>).operations[0].section === 'gop';
+    && (compiled[0] as Extract<CompiledProposalOperation, { status: 'resolved' }>).operations[0].section === 'gop'
+    && (compiled[0] as Extract<CompiledProposalOperation, { status: 'resolved' }>).operations[0].row_index === 1;
 })());
 
 check('compiler: replace resolves both from/to names', (() => {
-  const ops: SymbolicOperation[] = [{ op: 'replace', section: 'gop', row_index: 0, field: 'residents', from_subject_name: 'Dr. Ada', to_subject_name: 'Dr. Bola' }];
+  const ops: SymbolicOperation[] = [{ op: 'replace', section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', from_subject_name: 'Dr. Ada', to_subject_name: 'Dr. Bola' }];
   const compiled = compileProposalOperations(ops, freshGrids(), WORKFORCE);
   const resolved = compiled[0] as Extract<CompiledProposalOperation, { status: 'resolved' }>;
   return compiled[0].status === 'resolved' && resolved.operations[0].op === 'replace';
 })());
 
 check('compiler: unassign resolves', (() => {
-  const ops: SymbolicOperation[] = [{ op: 'unassign', section: 'gop', row_index: 0, field: 'residents', subject_name: 'Dr. Ada' }];
+  const ops: SymbolicOperation[] = [{ op: 'unassign', section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', subject_name: 'Dr. Ada' }];
   const compiled = compileProposalOperations(ops, freshGrids(), WORKFORCE);
   return compiled[0].status === 'resolved';
 })());
 
 check('compiler: ambiguous name (2 workforce members share a display name) is excluded, never guessed, and surfaces both candidates', (() => {
-  const ops: SymbolicOperation[] = [{ op: 'assign', section: 'gop', row_index: 1, field: 'residents', subject_name: 'Dr. Emeka' }];
+  const ops: SymbolicOperation[] = [{ op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'residents', subject_name: 'Dr. Emeka' }];
   const compiled = compileProposalOperations(ops, freshGrids(), WORKFORCE);
   const entry = compiled[0];
   return entry.status === 'unresolvable' && entry.details[0].status === 'ambiguous' && entry.details[0].candidateNames?.length === 2;
 })());
 
 check('compiler: unknown name is excluded as unresolved, never guessed', (() => {
-  const ops: SymbolicOperation[] = [{ op: 'assign', section: 'gop', row_index: 1, field: 'residents', subject_name: 'Dr. Nobody' }];
+  const ops: SymbolicOperation[] = [{ op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'residents', subject_name: 'Dr. Nobody' }];
   const compiled = compileProposalOperations(ops, freshGrids(), WORKFORCE);
   return compiled[0].status === 'unresolvable' && compiled[0].details[0].status === 'unresolved';
 })());
 
 check('compiler: replace with one resolvable and one unresolvable name excludes the WHOLE operation (never half-applies)', (() => {
-  const ops: SymbolicOperation[] = [{ op: 'replace', section: 'gop', row_index: 0, field: 'residents', from_subject_name: 'Dr. Ada', to_subject_name: 'Dr. Nobody' }];
+  const ops: SymbolicOperation[] = [{ op: 'replace', section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents', from_subject_name: 'Dr. Ada', to_subject_name: 'Dr. Nobody' }];
   const compiled = compileProposalOperations(ops, freshGrids(), WORKFORCE);
   return compiled[0].status === 'unresolvable' && compiled[0].details.length === 1 && compiled[0].details[0].name === 'Dr. Nobody';
 })());
@@ -269,8 +309,8 @@ check('compiler: swap with both names resolved compiles through the EXISTING com
   // target available in the fixture.
   const ops: SymbolicOperation[] = [{
     op: 'swap',
-    target_a: { section: 'supervision', row_index: 0, field: 'first_on_duty' },
-    target_b: { section: 'supervision', row_index: 0, field: 'second_on_duty' },
+    target_a: { section: 'supervision', date_or_day: 'Mon 01/09', label: null, field: 'first_on_duty' },
+    target_b: { section: 'supervision', date_or_day: 'Mon 01/09', label: null, field: 'second_on_duty' },
     subject_a_name: 'Dr. Ada',
     subject_b_name: 'Dr. Bola',
   }];
@@ -282,8 +322,8 @@ check('compiler: swap with both names resolved compiles through the EXISTING com
 check('compiler: swap rejected by compileSwapToOperations (occupant not actually present) surfaces the rejection reason, not a fabricated operation', (() => {
   const ops: SymbolicOperation[] = [{
     op: 'swap',
-    target_a: { section: 'gop', row_index: 0, field: 'residents' },
-    target_b: { section: 'emergency', row_index: 0, field: 'on_call' },
+    target_a: { section: 'gop', date_or_day: 'Mon 01/09', label: 'Triage', field: 'residents' },
+    target_b: { section: 'emergency', date_or_day: 'Fri 05/09', label: '4pm-10pm', field: 'on_call' },
     // Dr. Bola is not actually assigned to gop row 0 residents in freshGrids() -- w1 (Dr. Ada) is.
     subject_a_name: 'Dr. Bola',
     subject_b_name: 'Dr. Ada',
@@ -304,6 +344,106 @@ check('compiler never modifies identityResolver.ts, rosterSwap.ts, or rosterPatc
 })());
 
 // =====================================================================
+// 2b. Deterministic location resolver (resolveSymbolicRosterTarget) --
+//     closes WRONG_ROSTER_ROW_TARGETING WITH_VALID_PROPOSAL (2026-09-01).
+//     Exact production reproduction plus adversarial fixtures per
+//     prompt1.txt's own required list: duplicate assignee across dates,
+//     duplicate semantic composite, nonexistent semantic row, invalid
+//     field, one-resolvable/one-ambiguous swap endpoint, both-exact swap.
+// =====================================================================
+
+check('resolver: exact reproduction of WRONG_ROSTER_ROW_TARGETING WITH_VALID_PROPOSAL -- Dr Ikor appears under the SAME clinic_type ("Managed Care") on TWO different dates; targeting the exact date resolves to that row and no other', (() => {
+  const grids = ikorReproGrids();
+  const location = resolveSymbolicRosterTarget(grids, { section: 'gop', date_or_day: 'Tue 01/09', label: 'Managed Care', field: 'consultants' });
+  return location.status === 'resolved' && location.row_index === 0;
+})());
+
+check('resolver: same reproduction targeting the OTHER date resolves to the OTHER row -- proves the resolver is genuinely date-discriminating, not accidentally always landing on row 0', (() => {
+  const grids = ikorReproGrids();
+  const location = resolveSymbolicRosterTarget(grids, { section: 'gop', date_or_day: 'Thu 03/09', label: 'Managed Care', field: 'consultants' });
+  return location.status === 'resolved' && location.row_index === 1;
+})());
+
+check('compiler: exact reproduction end-to-end -- "replace Dr Ikor with Dr Ulasi on Tue 01/09 Managed Care" compiles a replace targeting row 0 ONLY. The historical bug: a provider-supplied row_index pointed at row 1 (Thu 03/09) despite the instruction naming Tue 01/09; row_index no longer exists in the symbolic contract at all', (() => {
+  const grids = ikorReproGrids();
+  const ops: SymbolicOperation[] = [{ op: 'replace', section: 'gop', date_or_day: 'Tue 01/09', label: 'Managed Care', field: 'consultants', from_subject_name: 'Dr. Ikor', to_subject_name: 'Dr. Ulasi' }];
+  const compiled = compileProposalOperations(ops, grids, WORKFORCE);
+  const resolved = compiled[0] as Extract<CompiledProposalOperation, { status: 'resolved' }>;
+  return compiled[0].status === 'resolved' && resolved.operations[0].row_index === 0;
+})());
+
+check('resolver: a nonexistent semantic location (a date/label combination absent from the grid) fails closed as no_matching_row -- never guesses the nearest row', (() => {
+  const grids = ikorReproGrids();
+  const location = resolveSymbolicRosterTarget(grids, { section: 'gop', date_or_day: 'Sat 06/09', label: 'Managed Care', field: 'consultants' });
+  return location.status === 'unresolved' && location.reason === 'no_matching_row';
+})());
+
+check('resolver: a duplicate semantic composite (two rows sharing the exact same date_or_day + label) fails closed as ambiguous_row -- never silently picks the first match', (() => {
+  const grids = ikorReproGrids();
+  grids.gop_clinic_grid.slots.push({ date_or_day: 'Tue 01/09', clinic_type: 'Managed Care', consultants: ['w6'], residents: [] });
+  const location = resolveSymbolicRosterTarget(grids, { section: 'gop', date_or_day: 'Tue 01/09', label: 'Managed Care', field: 'consultants' });
+  return location.status === 'unresolved' && location.reason === 'ambiguous_row';
+})());
+
+check('resolver: an invalid field for the given section fails closed as invalid_field, before any row is even scanned', (() => {
+  const grids = ikorReproGrids();
+  const location = resolveSymbolicRosterTarget(grids, { section: 'gop', date_or_day: 'Tue 01/09', label: 'Managed Care', field: 'on_call' });
+  return location.status === 'unresolved' && location.reason === 'invalid_field';
+})());
+
+check('compiler: an unresolvable location surfaces status "location_unresolvable" with a non-empty Chief-facing message -- deliberately distinct from "unresolvable" (an identity failure)', (() => {
+  const grids = ikorReproGrids();
+  const ops: SymbolicOperation[] = [{ op: 'assign', section: 'gop', date_or_day: 'Sat 06/09', label: 'Managed Care', field: 'consultants', subject_name: 'Dr. Ikor' }];
+  const compiled = compileProposalOperations(ops, grids, WORKFORCE);
+  const entry = compiled[0];
+  return entry.status === 'location_unresolvable' && typeof entry.message === 'string' && entry.message.length > 0;
+})());
+
+check('compiler: swap with target A resolvable and target B ambiguous rejects the WHOLE swap as location_unresolvable naming "Target B" -- target A is never resolved/applied alone', (() => {
+  const grids = ikorReproGrids();
+  grids.gop_clinic_grid.slots.push({ date_or_day: 'Tue 01/09', clinic_type: 'Managed Care', consultants: ['w6'], residents: [] }); // makes target_b ambiguous
+  const ops: SymbolicOperation[] = [{
+    op: 'swap',
+    target_a: { section: 'emergency', date_or_day: 'Fri 05/09', label: '4pm-10pm', field: 'on_call' },
+    target_b: { section: 'gop', date_or_day: 'Tue 01/09', label: 'Managed Care', field: 'consultants' },
+    subject_a_name: 'Dr. Ada',
+    subject_b_name: 'Dr. Ikor',
+  }];
+  const compiled = compileProposalOperations(ops, grids, WORKFORCE);
+  const entry = compiled[0];
+  return entry.status === 'location_unresolvable' && /Target B/.test(entry.message);
+})());
+
+check('compiler: both swap targets resolving to exact, unique, distinct rows compiles atomically through the unchanged compileSwapToOperations', (() => {
+  const ops: SymbolicOperation[] = [{
+    op: 'swap',
+    target_a: { section: 'supervision', date_or_day: 'Mon 01/09', label: null, field: 'first_on_duty' },
+    target_b: { section: 'supervision', date_or_day: 'Mon 01/09', label: null, field: 'second_on_duty' },
+    subject_a_name: 'Dr. Ada',
+    subject_b_name: 'Dr. Bola',
+  }];
+  const compiled = compileProposalOperations(ops, freshGrids(), WORKFORCE);
+  const resolved = compiled[0] as Extract<CompiledProposalOperation, { status: 'resolved' }>;
+  return compiled[0].status === 'resolved' && resolved.operations.length === 2;
+})());
+
+check('SymbolicOperation contract structurally has no row_index anywhere -- confirmed by source inspection of both the client (rosterPatchProposalService.ts) and server (schema.ts) definitions, proving the original attack/failure vector (an untrustworthy provider-supplied row_index) cannot be silently reintroduced', (() => {
+  const schemaSrc = fs.readFileSync(path.join(__dirname, '..', 'supabase/functions/roster-patch-proposal/schema.ts'), 'utf8');
+  const symbolicOpBlock = serviceSrc.slice(serviceSrc.indexOf('export type SymbolicOperation'), serviceSrc.indexOf('export interface ProposedRosterPatch'));
+  const schemaOpBlock = schemaSrc.slice(schemaSrc.indexOf('export type SymbolicOperation'), schemaSrc.indexOf('export interface ProposedRosterPatch'));
+  return symbolicOpBlock.length > 0 && schemaOpBlock.length > 0 && !/row_index/.test(symbolicOpBlock) && !/row_index/.test(schemaOpBlock);
+})());
+
+check('the Edge Function system prompt no longer describes row_index in the SymbolicOperation contract text sent to the model, and instructs the model to copy date_or_day/label verbatim from the roster context instead of computing them', (() => {
+  const promptFnStart = edgeFunctionSrc.indexOf('function buildSystemPrompt');
+  const promptFnBlock = edgeFunctionSrc.slice(promptFnStart, promptFnStart + 4000);
+  return !/"row_index":integer/.test(promptFnBlock)
+    && /"date_or_day":string\|null/.test(promptFnBlock)
+    && /"label":string\|null/.test(promptFnBlock)
+    && /verbatim/i.test(promptFnBlock);
+})());
+
+// =====================================================================
 // 3. End-to-end fixture: symbolic proposal -> compiled operations ->
 //    applyRosterPatch -> reconciliation -> net diff, ALL UNCHANGED.
 // =====================================================================
@@ -320,8 +460,8 @@ check('end-to-end: full proposal fixture compiles -> applies -> reconciles -> ne
   const proposal: ProposedRosterPatch = {
     ...validProposalBase,
     operations: [
-      { op: 'assign', section: 'gop', row_index: 1, field: 'residents', subject_name: 'Dr. Bola' },
-      { op: 'unassign', section: 'satellite', row_index: 0, field: 'assigned', subject_name: 'Dr. Ada' },
+      { op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'residents', subject_name: 'Dr. Bola' },
+      { op: 'unassign', section: 'satellite', date_or_day: null, label: 'Agbeke Mercy', field: 'assigned', subject_name: 'Dr. Ada' },
     ],
   };
   const validated = validateProposedRosterPatch(proposal);
@@ -354,8 +494,8 @@ check('Chief accepts ALL resolved operations: every resolved compiled operation 
   const base = freshGrids();
   const compiled = compileProposalOperations(
     [
-      { op: 'assign', section: 'gop', row_index: 1, field: 'residents', subject_name: 'Dr. Bola' },
-      { op: 'assign', section: 'gop', row_index: 1, field: 'consultants', subject_name: 'Dr. Chidi' },
+      { op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'residents', subject_name: 'Dr. Bola' },
+      { op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'consultants', subject_name: 'Dr. Chidi' },
     ],
     base,
     WORKFORCE
@@ -370,8 +510,8 @@ check('Chief accepts a SUBSET: only checked indices convert, unchecked resolved 
   const base = freshGrids();
   const compiled = compileProposalOperations(
     [
-      { op: 'assign', section: 'gop', row_index: 1, field: 'residents', subject_name: 'Dr. Bola' },
-      { op: 'assign', section: 'gop', row_index: 1, field: 'consultants', subject_name: 'Dr. Chidi' },
+      { op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'residents', subject_name: 'Dr. Bola' },
+      { op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'consultants', subject_name: 'Dr. Chidi' },
     ],
     base,
     WORKFORCE
@@ -383,7 +523,7 @@ check('Chief accepts a SUBSET: only checked indices convert, unchecked resolved 
 })());
 
 check('Chief rejects everything: zero operations ever reach applyRosterPatch/pendingOperations', (() => {
-  const compiled = compileProposalOperations([{ op: 'assign', section: 'gop', row_index: 1, field: 'residents', subject_name: 'Dr. Bola' }], freshGrids(), WORKFORCE);
+  const compiled = compileProposalOperations([{ op: 'assign', section: 'gop', date_or_day: 'Tue 02/09', label: 'Floor Clinic', field: 'residents', subject_name: 'Dr. Bola' }], freshGrids(), WORKFORCE);
   const acceptedIndices = new Set<number>();
   const flat = compiled.filter((c, i) => c.status === 'resolved' && acceptedIndices.has(i));
   return flat.length === 0;
@@ -391,7 +531,7 @@ check('Chief rejects everything: zero operations ever reach applyRosterPatch/pen
 
 check('proposal introducing a reconciliation issue surfaces it via the UNCHANGED computeReconciliationIssues, not a special AI-aware code path', (() => {
   const base = freshGrids();
-  const compiled = compileProposalOperations([{ op: 'unassign', section: 'supervision', row_index: 0, field: 'first_on_duty', subject_name: 'Dr. Ada' }], base, WORKFORCE);
+  const compiled = compileProposalOperations([{ op: 'unassign', section: 'supervision', date_or_day: 'Mon 01/09', label: null, field: 'first_on_duty', subject_name: 'Dr. Ada' }], base, WORKFORCE);
   const flat = (compiled[0] as Extract<CompiledProposalOperation, { status: 'resolved' }>).operations;
   const applied = applyRosterPatch(base, flat, WORKFORCE);
   const issues = computeReconciliationIssues(SUBMISSIONS, WORKFORCE, ROTATIONS, hypotheticalRoster(applied.grids));

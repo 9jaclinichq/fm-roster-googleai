@@ -153,17 +153,30 @@ function buildSystemPrompt(
     'Valid fields per section -- gop: consultants, residents. emergency: on_call. satellite: assigned. supervision: first_on_duty, second_on_duty.',
     'You may propose only 4 kinds of operation: assign, unassign, replace, swap. There is no operation for adding/removing/reordering a roster row, changing a date, creating a new section, editing leave records, editing workforce records, or editing tenant rules -- if the instruction needs one of those, do not invent an operation for it.',
     'Refer to people ONLY by the exact display name text shown in the roster/workforce context below, as subject_name / from_subject_name / to_subject_name / subject_a_name / subject_b_name. NEVER emit a database id, workforce id, tenant id, or any identifier that is not a plain display name string. NEVER return a raw roster snapshot -- only the operations describing the requested change.',
-    HITL_INSTRUCTION,
+    // LOAD-BEARING (2026-09-01, WRONG_ROSTER_ROW_TARGETING
+    // WITH_VALID_PROPOSAL containment/fix): you are never asked to calculate or
+    // report a numeric row position, and any row_index visible in the
+    // roster context below is informational only -- ignore it when
+    // constructing your response. Every roster context row already
+    // carries date_or_day and label; copy those two fields VERBATIM
+    // (byte-for-byte, exactly as they appear in that row) into the
+    // matching operation/target -- never paraphrase, reformat, abbreviate,
+    // or infer a value for either field. The server deterministically
+    // re-matches date_or_day + label against the live roster before
+    // applying anything; a copied value that does not exactly match a
+    // real row is safely rejected, so accuracy here matters more than a
+    // best-effort guess.
+    'Every operation and every swap target must include the exact date_or_day and label copied verbatim from the roster context row you mean -- never invent, paraphrase, or reformat either value, and never emit a row_index or any other numeric row position.',
     sectionLabelNote,
-    `Roster context -- current state, addressed by section/row_index/field/current occupant display names: ${JSON.stringify(rosterContext)}`,
+    `Roster context -- current state, addressed by section/date_or_day/label/field/current occupant display names: ${JSON.stringify(rosterContext)}`,
     `Workforce available for assignment -- display_name and category/cadre: ${JSON.stringify(workforceContext)}`,
     'Respond ONLY with JSON of this exact shape, no other keys: {"interpreted_instruction": string, "operations": SymbolicOperation[], "referenced_names": string[], "unresolved_ambiguity": string[], "unsupported_requests": string[], "assumptions": string[], "rationale": string, "outcome": "valid" | "ambiguous_identity" | "unsupported_instruction" | "needs_clarification"}. ' +
       'SymbolicOperation is exactly one of: ' +
-      '{"op":"assign","section":string,"row_index":integer,"field":string,"subject_name":string,"reason"?:string} | ' +
-      '{"op":"unassign","section":string,"row_index":integer,"field":string,"subject_name":string,"reason"?:string} | ' +
-      '{"op":"replace","section":string,"row_index":integer,"field":string,"from_subject_name":string,"to_subject_name":string,"reason"?:string} | ' +
-      '{"op":"swap","target_a":{"section":string,"row_index":integer,"field":string},"target_b":{"section":string,"row_index":integer,"field":string},"subject_a_name":string,"subject_b_name":string,"reason"?:string}. ' +
-      'Do not include any key beyond exactly these.',
+      '{"op":"assign","section":string,"date_or_day":string|null,"label":string|null,"field":string,"subject_name":string,"reason"?:string} | ' +
+      '{"op":"unassign","section":string,"date_or_day":string|null,"label":string|null,"field":string,"subject_name":string,"reason"?:string} | ' +
+      '{"op":"replace","section":string,"date_or_day":string|null,"label":string|null,"field":string,"from_subject_name":string,"to_subject_name":string,"reason"?:string} | ' +
+      '{"op":"swap","target_a":{"section":string,"date_or_day":string|null,"label":string|null,"field":string},"target_b":{"section":string,"date_or_day":string|null,"label":string|null,"field":string},"subject_a_name":string,"subject_b_name":string,"reason"?:string}. ' +
+      'date_or_day and label must always be copied exactly from the roster context row you mean (label is always null for "supervision" -- that section has no separate label). Do not include any key beyond exactly these, and never include row_index.',
   ].filter(Boolean).join('\n\n');
 }
 
