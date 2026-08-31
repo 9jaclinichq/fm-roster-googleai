@@ -622,10 +622,57 @@ check('Compiler (rosterPatchProposalCompiler.ts) makes NO database write, calls 
   return !/\.rpc\(|\.from\(|saveRevision|publishRevision|supabase\./.test(compilerSrc);
 })());
 
-check('MultiRosterManagerView.tsx: the AI Proposal panel is gated on an active revision, same as the Structured Edit / Swap panels', (() => {
+check('MultiRosterManagerView.tsx: the AI Proposal panel is gated on BOTH an active revision AND the tenant exposure flag (2026-08-31 containment slice) -- no active revision hides it regardless of the flag, since the flag only appears as the SECOND operand of this same &&', (() => {
   const panelStart = chiefEditorTsx.indexOf('AI Proposal — Chief-reviewed only');
-  const guardBefore = chiefEditorTsx.slice(Math.max(0, panelStart - 400), panelStart);
-  return /\{activeRevision && \(/.test(guardBefore);
+  const guardBefore = chiefEditorTsx.slice(Math.max(0, panelStart - 600), panelStart);
+  return /\{activeRevision && rosterAiV1Enabled && \(/.test(guardBefore);
+})());
+
+// --- Tenant exposure gate (2026-08-31 containment slice): the panel that
+//     was live and ungated for every Chief with an active revision is now
+//     gated on tenants.module_flags.roster_ai_v1_enabled, fail-closed by
+//     default. Static-only checks below, matching this file's own
+//     convention -- no live rendering/DOM test exists in this suite. ---
+
+check('rosterAiV1Enabled starts fail-closed (useState(false)) -- the render guard cannot be satisfied before the tenant fetch resolves, so "no active revision" and "flag not yet loaded" both hide the panel by the same default', (() => {
+  return /const \[rosterAiV1Enabled, setRosterAiV1Enabled\] = useState\(false\);/.test(chiefEditorTsx);
+})());
+
+check('rosterAiV1Enabled is set ONLY via a strict === true comparison against the fetched flag -- absent module_flags, a missing key, null, or false are all structurally indistinguishable and all resolve to false (never inferred true, never a truthy/falsy coercion that could treat an unexpected non-boolean value as enabling access)', (() => {
+  return /setRosterAiV1Enabled\(tenant\?\.module_flags\?\.roster_ai_v1_enabled === true\);/.test(chiefEditorTsx);
+})());
+
+check('a failed tenant fetch (network/RLS/any error) only logs a warning -- it never calls setRosterAiV1Enabled at all, so the state stays at its fail-closed default (false) rather than being set true on any error path', (() => {
+  const effectBlock = chiefEditorTsx.slice(chiefEditorTsx.indexOf('databaseService.getTenant(tenantId)'), chiefEditorTsx.indexOf('}, [tenantId]);') + 20);
+  const catchBlock = effectBlock.slice(effectBlock.indexOf('.catch('));
+  return catchBlock.length > 0 && !/setRosterAiV1Enabled/.test(catchBlock);
+})());
+
+check('roster_ai_v1_enabled is NOT added to TenantCustomizationView\'s Chief-facing MODULE_TOGGLES list -- stays operator-only for this first pilot, not Chief self-service', (() => {
+  const toggleListSrc = fs.readFileSync(path.join(__dirname, '..', 'src/modules/org-admin/components/dashboard/TenantCustomizationView.tsx'), 'utf8');
+  const togglesBlock = toggleListSrc.slice(toggleListSrc.indexOf('getModuleToggles'), toggleListSrc.indexOf('const TERMINOLOGY_KEYS'));
+  return !/roster_ai_v1_enabled/.test(togglesBlock);
+})());
+
+check('the tenant-fetch effect for the exposure gate is isolated from load() -- a separate useEffect keyed on [tenantId], never folded into the main data loader, so a failure here cannot affect roster/workforce/collection loading', (() => {
+  const gateEffectIdx = chiefEditorTsx.indexOf('databaseService.getTenant(tenantId)');
+  const loadCallIdx = chiefEditorTsx.indexOf('    load();');
+  const loadFnDeclIdx = chiefEditorTsx.indexOf('const load = async');
+  return gateEffectIdx > -1 && loadCallIdx > loadFnDeclIdx && gateEffectIdx > loadCallIdx;
+})());
+
+check('the exposure gate affects ONLY the AI Proposal panel\'s presentation -- rosterAiV1Enabled is never referenced inside the Structured Edit panel, the Swap panel, acceptAiOperations() (the pendingOperations queueing/save/publish path), or the request body sent to generateRosterPatchProposal (tenant derivation happens server-side from admin_access_code, unaffected by this client-side flag)', (() => {
+  const structuredEditBlock = chiefEditorTsx.slice(chiefEditorTsx.indexOf('Structured Edit — assign'), chiefEditorTsx.indexOf('Swap — compiles into 2 replace operations'));
+  // Ends at the AI panel's OWN render guard (not the later h3 text) -- that
+  // guard line legitimately contains the identifier; this check is about
+  // the Swap panel's content being unaffected, not the AI panel's own gate.
+  const swapBlock = chiefEditorTsx.slice(chiefEditorTsx.indexOf('Swap — compiles into 2 replace operations'), chiefEditorTsx.indexOf('{activeRevision && rosterAiV1Enabled && ('));
+  const acceptBlock = chiefEditorTsx.slice(chiefEditorTsx.indexOf('const acceptAiOperations'), chiefEditorTsx.indexOf('if (isLoading)'));
+  const generateBlock = chiefEditorTsx.slice(chiefEditorTsx.indexOf('const generateAiProposal'), chiefEditorTsx.indexOf('const toggleAiAcceptedIndex'));
+  return !/rosterAiV1Enabled/.test(structuredEditBlock)
+    && !/rosterAiV1Enabled/.test(swapBlock)
+    && !/rosterAiV1Enabled/.test(acceptBlock)
+    && !/rosterAiV1Enabled/.test(generateBlock);
 })());
 
 check('MultiRosterManagerView.tsx: acceptAiOperations() appends into the EXISTING pendingOperations queue via setPendingOperations, introducing no parallel queue', (() => {

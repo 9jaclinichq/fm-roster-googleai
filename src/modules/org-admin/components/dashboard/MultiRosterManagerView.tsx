@@ -185,6 +185,16 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
   // nothing else in this single-tab app changes activeRevision), the
   // existing rebase machinery is reused rather than silently
   // regenerating/applying anything.
+  // Tenant exposure gate (2026-08-31 containment slice) -- reuses the
+  // already-live tenants.module_flags mechanism (migration 59), same
+  // pattern as CasebookBuilderView.tsx's case_reports_required_count read.
+  // Fail-closed by construction: starts false, and only a fetched
+  // module_flags.roster_ai_v1_enabled === true strictly ever flips it true.
+  // Missing flag, null, absent module_flags, a fetch error, or false all
+  // leave it exactly where it started -- hidden. Not added to
+  // TenantCustomizationView's Chief-facing toggle list -- operator-only
+  // for this first pilot, per explicit instruction.
+  const [rosterAiV1Enabled, setRosterAiV1Enabled] = useState(false);
   const [aiInstruction, setAiInstruction] = useState('');
   const [isGeneratingAiProposal, setIsGeneratingAiProposal] = useState(false);
   const [aiProposal, setAiProposal] = useState<ProposedRosterPatch | null>(null);
@@ -314,6 +324,19 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Separate, isolated fetch -- a failure here must never affect roster
+  // load/save/publish, so it is deliberately NOT folded into load() above.
+  // Only an explicit `=== true` flips the panel on; every other outcome
+  // (absent flag, null, false, a thrown error) leaves rosterAiV1Enabled at
+  // its fail-closed default (false, set above).
+  useEffect(() => {
+    databaseService.getTenant(tenantId)
+      .then(tenant => {
+        setRosterAiV1Enabled(tenant?.module_flags?.roster_ai_v1_enabled === true);
+      })
+      .catch(err => console.warn('Failed to load tenant roster_ai_v1_enabled flag, AI panel stays hidden:', err));
+  }, [tenantId]);
 
   const onFloorResidents = workforce.filter(w => w.on_floor);
   const notOnFloorResidents = workforce.filter(w => !w.on_floor);
@@ -1440,14 +1463,19 @@ export const MultiRosterManagerView: React.FC<MultiRosterManagerViewProps> = ({ 
         );
       })()}
 
-      {/* Roster AI V1 -- Prompt-to-Patch Proposal Layer. LOCAL ONLY. Not a
-          chatbot: one instruction -> one proposal -> explicit Chief review
-          -> explicit accept. The AI never calls Save/Publish and never
-          writes pendingOperations except through the SAME "Add to Pending
-          Batch" step below, mirroring the manual/swap panels above. If
-          this panel fails entirely, the manual Structured Edit / Swap
-          panels above remain fully usable, unaffected by anything here. */}
-      {activeRevision && (
+      {/* Roster AI V1 -- Prompt-to-Patch Proposal Layer. Not a chatbot: one
+          instruction -> one proposal -> explicit Chief review -> explicit
+          accept. The AI never calls Save/Publish and never writes
+          pendingOperations except through the SAME "Add to Pending Batch"
+          step below, mirroring the manual/swap panels above. If this panel
+          fails entirely, the manual Structured Edit / Swap panels above
+          remain fully usable, unaffected by anything here.
+          GATED (2026-08-31 containment slice): renders only for the
+          explicitly-enabled pilot tenant (tenants.module_flags.
+          roster_ai_v1_enabled === true, fail-closed default false --
+          see the gate state declared near the top of this component).
+          Hidden for every other tenant. */}
+      {activeRevision && rosterAiV1Enabled && (
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 space-y-4">
           <div className="flex items-center space-x-2">
             <Sparkles className="text-violet-500" size={16} />
