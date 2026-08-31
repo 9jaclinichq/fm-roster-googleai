@@ -59,26 +59,38 @@
 -- introduced beyond what already exists project-wide for this
 -- authentication model.
 --
--- PRIVILEGE MODEL (ambient-default-privilege lesson, migrations 76/77):
--- a plain `REVOKE ALL ... FROM PUBLIC` after CREATE FUNCTION is NOT
--- sufficient on this project -- confirmed empirically in migrations 76
--- and 77 that `anon` had separately, ambiently obtained EXECUTE at
--- CREATE FUNCTION time, and a PUBLIC-only REVOKE did not remove it. Both
--- REVOKEs below are therefore explicit, by role name, exactly like
--- migrations 76/77's own remediation -- not inferred from a bare
--- `FROM PUBLIC` alone. `anon` AND `authenticated` are then explicitly
--- (re-)granted EXECUTE, matching verify_resident_login's own identical
--- posture (migration 77): this app's Chief/resident sessions are never
--- real Supabase Auth sessions, so `anon` is the actual PostgREST calling
--- role for every existing chief_*/resident_* RPC, and access control is
--- enforced entirely by the code parameter itself, verified inside the
--- function body -- exactly as this function does. This does not widen
--- any existing permission; it makes this one new function's resulting
--- privilege state explicit and deterministic rather than accidentally
--- inherited, and must still be confirmed against the LIVE database's own
--- actual ACL state (via has_function_privilege(...) or
--- information_schema.routine_privileges) once this migration is applied
--- -- that live check is explicitly OUT OF SCOPE for this local-only
+-- PRIVILEGE MODEL -- CORRECTED (human review decision, prompt1.txt,
+-- superseding this function's original anon/authenticated-executable
+-- design): unlike every other chief_*/resident_* RPC in this schema
+-- (which anon calls directly from the browser, since this app's
+-- Chief/resident sessions are never real Supabase Auth sessions), this
+-- specific RPC's ONLY caller is
+-- supabase/functions/roster-patch-proposal/index.ts's
+-- verifyAdminCodeAndDeriveTenant(), which invokes it via
+-- `createClient(supabaseUrl, serviceRoleKey).rpc('verify_chief_admin_code', ...)`
+-- -- a service-role Supabase client running inside the Edge Function's own
+-- trusted server runtime, never a browser/anon/authenticated PostgREST
+-- caller. There is therefore no legitimate direct-from-browser caller for
+-- this function to support, unlike verify_resident_login/verify_chief_login
+-- and every other admin-code-gated RPC that anon genuinely must call
+-- directly. Granting anon/authenticated EXECUTE here would needlessly
+-- expose a second, redundant public entry point for brute-forcing
+-- admin_access_code beyond the already-necessary chief_* RPCs, for no
+-- functional benefit -- so this function is restricted to service_role
+-- only. Both REVOKEs below are explicit, by role name (PUBLIC, anon,
+-- authenticated), following the same ambient-default-privilege discipline
+-- established in migrations 76/77/78/79 -- a PUBLIC-only REVOKE was
+-- empirically proven insufficient on this project (this project's ambient
+-- ALTER DEFAULT PRIVILEGES grants EXECUTE directly to anon/authenticated
+-- at CREATE FUNCTION time, a grant held by that specific role, not by the
+-- PUBLIC pseudo-role), so each role is revoked by name, never inferred.
+-- service_role's EXECUTE is granted explicitly rather than relied upon
+-- implicitly, matching this project's convention of an explicit,
+-- deterministic final privilege state rather than an accidentally
+-- inherited one. This must still be confirmed against the LIVE database's
+-- own actual ACL state (via has_function_privilege(...) for anon,
+-- authenticated, AND service_role) once this migration is applied -- that
+-- live check is explicitly OUT OF SCOPE for this local-only
 -- migration-authoring pass and is required before this function is ever
 -- relied upon in production.
 -- ====================================================================
@@ -96,7 +108,8 @@ $$;
 
 REVOKE ALL ON FUNCTION public.verify_chief_admin_code(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.verify_chief_admin_code(text) FROM anon;
-GRANT EXECUTE ON FUNCTION public.verify_chief_admin_code(text) TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.verify_chief_admin_code(text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_chief_admin_code(text) TO service_role;
 
 -- ====================================================================
 -- END OF MIGRATION 80

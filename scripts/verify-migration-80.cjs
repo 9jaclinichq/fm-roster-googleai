@@ -72,20 +72,32 @@ check('no other function/table is created, altered, or dropped in this migration
 })());
 
 // =====================================================================
-// Privilege model (ambient-default-privilege lesson, migrations 76/77)
+// Privilege model -- CORRECTED (human review decision, prompt1.txt): this
+// RPC's only caller is the Edge Function's service-role client, never a
+// browser/anon/authenticated PostgREST caller, so EXECUTE is restricted
+// to service_role only.
 // =====================================================================
 
 check('REVOKE ALL ... FROM PUBLIC is explicit for verify_chief_admin_code(text)', /REVOKE ALL ON FUNCTION public\.verify_chief_admin_code\(text\) FROM PUBLIC;/.test(sqlNoComments));
 
 check('REVOKE ALL ... FROM anon is explicit (PUBLIC-only REVOKE is documented as insufficient on this project, migrations 76/77) -- not inferred, not skipped', /REVOKE ALL ON FUNCTION public\.verify_chief_admin_code\(text\) FROM anon;/.test(sqlNoComments));
 
-check('the anon REVOKE comes before the final GRANT (revoke-then-grant, deterministic final state, not "grant on top of whatever anon already had")', sqlNoComments.indexOf('REVOKE ALL ON FUNCTION public.verify_chief_admin_code(text) FROM anon;') < sqlNoComments.indexOf('GRANT EXECUTE ON FUNCTION public.verify_chief_admin_code(text)'));
+check('REVOKE ALL ... FROM authenticated is explicit -- not inferred, not skipped', /REVOKE ALL ON FUNCTION public\.verify_chief_admin_code\(text\) FROM authenticated;/.test(sqlNoComments));
 
-check('EXECUTE is explicitly (re-)granted to anon and authenticated -- matching verify_resident_login\'s identical posture (migration 77), since this app\'s Chief/resident sessions are never real Supabase Auth sessions', /GRANT EXECUTE ON FUNCTION public\.verify_chief_admin_code\(text\) TO anon, authenticated;/.test(sqlNoComments));
+check('all three REVOKEs come before the final GRANT (revoke-then-grant, deterministic final state)', (() => {
+  const revokePublic = sqlNoComments.indexOf('REVOKE ALL ON FUNCTION public.verify_chief_admin_code(text) FROM PUBLIC;');
+  const revokeAnon = sqlNoComments.indexOf('REVOKE ALL ON FUNCTION public.verify_chief_admin_code(text) FROM anon;');
+  const revokeAuthenticated = sqlNoComments.indexOf('REVOKE ALL ON FUNCTION public.verify_chief_admin_code(text) FROM authenticated;');
+  const grant = sqlNoComments.indexOf('GRANT EXECUTE ON FUNCTION public.verify_chief_admin_code(text)');
+  return revokePublic >= 0 && revokeAnon >= 0 && revokeAuthenticated >= 0 && grant >= 0
+    && revokePublic < grant && revokeAnon < grant && revokeAuthenticated < grant;
+})());
 
-check('no other role (service_role, PUBLIC) is granted EXECUTE on this function -- the grant line names exactly anon and authenticated', (() => {
+check('EXECUTE is granted ONLY to service_role -- this RPC is called exclusively via the Edge Function\'s service-role client (verifyAdminCodeAndDeriveTenant in supabase/functions/roster-patch-proposal/index.ts), never directly by a browser/anon/authenticated caller, unlike every other chief_*/resident_* RPC in this schema', /GRANT EXECUTE ON FUNCTION public\.verify_chief_admin_code\(text\) TO service_role;/.test(sqlNoComments));
+
+check('no other role (anon, authenticated, PUBLIC) is granted EXECUTE on this function -- the grant line names exactly service_role', (() => {
   const grantMatch = sqlNoComments.match(/GRANT EXECUTE ON FUNCTION public\.verify_chief_admin_code\(text\) TO ([^;]+);/);
-  return grantMatch !== null && grantMatch[1].trim() === 'anon, authenticated';
+  return grantMatch !== null && grantMatch[1].trim() === 'service_role';
 })());
 
 // =====================================================================
@@ -105,11 +117,12 @@ console.log('');
 console.log('NOTE: the following require a LIVE database connection and are NOT proven by this');
 console.log('script -- they must be confirmed at live-apply time, per this migration\'s own header:');
 console.log('  - a correct admin code actually resolves its own tenant (requires live data)');
-console.log('  - has_function_privilege(\'anon\', \'public.verify_chief_admin_code(text)\', \'EXECUTE\')');
-console.log('    and the authenticated equivalent both return the intended true/true, confirming the');
-console.log('    REVOKE+GRANT sequence above actually took effect against this project\'s own ambient');
-console.log('    default-privilege behavior (the documented reason a purely static check cannot fully');
-console.log('    replace this step -- migrations 76/77 found PUBLIC-only REVOKE insufficient in practice).');
+console.log('  - has_function_privilege(\'anon\', \'public.verify_chief_admin_code(text)\', \'EXECUTE\')=false,');
+console.log('    the authenticated equivalent=false, AND has_function_privilege(\'service_role\', ...,');
+console.log('    \'EXECUTE\')=true, confirming the REVOKE+GRANT sequence above actually took effect against');
+console.log('    this project\'s own ambient default-privilege behavior (the documented reason a purely');
+console.log('    static check cannot fully replace this step -- migrations 76/77 found PUBLIC-only REVOKE');
+console.log('    insufficient in practice).');
 console.log('');
 
 console.log(`${failures} failure(s).`);
