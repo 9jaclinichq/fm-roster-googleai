@@ -1,0 +1,63 @@
+# Task Report — t-cbe99330
+
+**TASK**: Roster AI V1 containment: tenant exposure gate (fail-closed) (`t-cbe99330`)
+**TASK CLASS**: SECURITY_HARDENING
+**FINAL STATUS**: COMMITTED_LOCAL
+**SOURCE COMMIT**: 99523c0c004cf95439ab2878590bad1b8d9a5f0b
+**APPROVED SCOPE**: prompt1.txt: 'Urgent bounded containment + tenant-gating slice for Roster AI V1' -- the exposure review found the AI Proposal panel rendering for every Chief with an active revision, ungated, with a live callable Edge Function since ~14:20 UTC today. Phase 0: undeployed roster-patch-proposal (human-run via ! after showing the exact destructive command for authorization first, per explicit instruction) -- confirmed absent from functions list, no other function's content changed (hashes identical despite an unrelated version-counter increment across all functions). Phase 1: added tenants.module_flags.roster_ai_v1_enabled as a fail-closed client-side exposure gate in MultiRosterManagerView.tsx, reusing the exact existing pattern from CasebookBuilderView.tsx (databaseService.getTenant(tenantId), a separate isolated useEffect, module_flags?.key read) -- render guard changed from `{activeRevision && (` to `{activeRevision && rosterAiV1Enabled && (`; state initializes false; set ONLY via a strict `=== true` comparison; a fetch error only logs a warning, never sets true. Not added to TenantCustomizationView's Chief-facing toggle list. No migration, no new table, no new framework. Phase 2: added 6 new static structural checks to scripts/verify-roster-patch-proposal.ts proving fail-closed default, strict-equality gating, error-path safety, non-exposure to Chief self-service, effect isolation from load(), and presentation-only scope (no reference inside Structured Edit/Swap/acceptAiOperations/generateAiProposal blocks).
+
+## FILES CHANGED
+- scripts/verify-roster-patch-proposal.ts
+- src/modules/org-admin/components/dashboard/MultiRosterManagerView.tsx
+
+## FILES OUTSIDE EXPECTED SCOPE
+NONE
+
+## PROTECTED SURFACE HITS
+NONE
+
+## VERIFICATION RESULTS
+- security-manual-review — MANUAL_ACKNOWLEDGED (ack: "Manually reviewed full diff of both files. MultiRosterManagerView.tsx: 3 additive hunks only -- new state (fail-closed useState(false)), a new isolated useEffect (strict === true comparison, error path never sets true, deliberately not folded into load()), and the render guard changed from {activeRevision && (} to {activeRevision && rosterAiV1Enabled && (}. No other line touched -- Structured Edit, Swap, acceptAiOperations, pendingOperations queueing, save/publish, tenant derivation, quota, and compiler logic are all byte-for-byte unchanged (confirmed both by diff and by the new structural checks). Reuses the exact existing databaseService.getTenant() + module_flags pattern from CasebookBuilderView.tsx -- no new persistence mechanism, no new table, no migration. Not added to TenantCustomizationView's Chief-facing toggle list. verify-roster-patch-proposal.ts: 7 new checks are static/structural only, consistent with this file's established convention, and were self-corrected during this task (a JSX comment that happened to spell out the identifier name, and an overly literal multi-line string match, both caused false-positive-looking failures that were root-caused and fixed rather than the checks being loosened). No credentials, no secrets, no widened permission.") — manual diff/control-flow review may remain necessary
+- unregistered:npx tsx scripts/verify-roster-patch-proposal.ts — MANUAL_ACKNOWLEDGED (ack: "Ran manually: 0 failures, 85 checks (78 prior + 7 new gate-specific structural checks).") — UNREGISTERED — MANUAL REVIEW REQUIRED: npx tsx scripts/verify-roster-patch-proposal.ts
+- unregistered:node scripts/verify-e0-containment.cjs — MANUAL_ACKNOWLEDGED (ack: "Ran manually: all pass, unrelated protected surface untouched.") — UNREGISTERED — MANUAL REVIEW REQUIRED: node scripts/verify-e0-containment.cjs
+- unregistered:node scripts/harness.cjs self-test — MANUAL_ACKNOWLEDGED (ack: "Ran manually: 156/157, the single failure being the same pre-existing timing-sensitive harness-internal fixture race documented across multiple prior task reports today -- not referencing this task's files.") — UNREGISTERED — MANUAL REVIEW REQUIRED: node scripts/harness.cjs self-test
+- npm-verify — PASS — ok
+
+## MANUAL ACKNOWLEDGEMENTS
+- unregistered:npx tsx scripts/verify-roster-patch-proposal.ts — "Ran manually: 0 failures, 85 checks (78 prior + 7 new gate-specific structural checks)." (2026-08-31T19:19:39.459Z)
+- unregistered:node scripts/verify-e0-containment.cjs — "Ran manually: all pass, unrelated protected surface untouched." (2026-08-31T19:19:39.827Z)
+- unregistered:node scripts/harness.cjs self-test — "Ran manually: 156/157, the single failure being the same pre-existing timing-sensitive harness-internal fixture race documented across multiple prior task reports today -- not referencing this task's files." (2026-08-31T19:19:40.277Z)
+- security-manual-review — "Manually reviewed full diff of both files. MultiRosterManagerView.tsx: 3 additive hunks only -- new state (fail-closed useState(false)), a new isolated useEffect (strict === true comparison, error path never sets true, deliberately not folded into load()), and the render guard changed from {activeRevision && (} to {activeRevision && rosterAiV1Enabled && (}. No other line touched -- Structured Edit, Swap, acceptAiOperations, pendingOperations queueing, save/publish, tenant derivation, quota, and compiler logic are all byte-for-byte unchanged (confirmed both by diff and by the new structural checks). Reuses the exact existing databaseService.getTenant() + module_flags pattern from CasebookBuilderView.tsx -- no new persistence mechanism, no new table, no migration. Not added to TenantCustomizationView's Chief-facing toggle list. verify-roster-patch-proposal.ts: 7 new checks are static/structural only, consistent with this file's established convention, and were self-corrected during this task (a JSX comment that happened to spell out the identifier name, and an overly literal multi-line string match, both caused false-positive-looking failures that were root-caused and fixed rather than the checks being loosened). No credentials, no secrets, no widened permission." (2026-08-31T19:20:14.953Z)
+
+## LIVE CHECKS
+NONE
+
+## MIGRATIONS CREATED
+NONE
+
+## MIGRATIONS APPLIED
+NONE
+
+## UNAPPLIED MIGRATIONS
+- 1-57: UNKNOWN
+
+**LOCAL COMMIT**: 079fc1e82c3ef0cdb09dd6e0cbd56cfa28874990
+**PUSH STATUS**: NOT_PUSHED
+**PRODUCTION BASELINE**: c2d22ff01c4f63f7f71fcdc61268bc19dd0121f0
+
+## DECISIONS MADE
+Phase 0 containment: verified read-only production state first (HEAD==origin/main==99523c0, 0/0; Cloud Run serving image tag 99523c0 at 100% traffic; roster-patch-proposal ACTIVE version 5; no roster_ai_v1_enabled reference anywhere in source). Per explicit instruction to show the exact destructive command and stop for authorization before running it, presented {"_tag":"Error","error":{"code":"FunctionNotFoundError","message":"Function roster-patch-proposal does not exist on the Supabase project: nothing to delete"}} for review; human ran it via !. Confirmed containment: roster-patch-proposal is completely absent from functions list (undeployed, not merely disabled) -- a deleted function cannot be invoked, no HTTP call can reach it, so this alone proves it is no longer callable without a further live call. All 6 other Edge Functions' content hashes (ezbr_sha256) are confirmed byte-identical to before, despite their version numbers all incrementing by 2 uniformly -- an unrelated platform counter behavior, not a content change, and out of this task's scope to investigate further. Phase 1 gate implementation: added tenants.module_flags.roster_ai_v1_enabled to MultiRosterManagerView.tsx, reusing CasebookBuilderView.tsx's exact existing databaseService.getTenant()+module_flags pattern verbatim in structure -- no new persistence mechanism. Render guard changed from {activeRevision && (} to {activeRevision && rosterAiV1Enabled && (}. State initializes useState(false); the only setter call uses a strict  comparison (tenant?.module_flags?.roster_ai_v1_enabled === true), so an absent flag, null, a non-boolean value, or false are all structurally indistinguishable from each other and all resolve to false; the fetch's .catch() only logs a console.warn, it never calls the setter, so a network/RLS/any error also leaves the gate at its fail-closed default. The fetch runs in its own useEffect keyed on [tenantId], deliberately kept separate from the pre-existing load() effect so a failure here cannot cascade into roster/workforce/collection loading. Not added to TenantCustomizationView's Chief-facing MODULE_TOGGLES list -- confirmed by a new check reading that exact array and asserting the key's absence -- so this stays fully operator-controlled, not Chief self-service, for the first pilot. Phase 2 verification: added 7 new static structural checks (this file's own established convention -- no live rendering/DOM test exists in this suite) to scripts/verify-roster-patch-proposal.ts, proving: (1) the render guard requires activeRevision AND rosterAiV1Enabled as a strict two-operand &&, so a missing revision hides the panel regardless of the flag; (2) fail-closed default; (3) strict-equality-only gating; (4) error-path never enables; (5) absence from the Chief-facing toggle list; (6) effect isolation from load(); (7) the gate identifier is referenced nowhere inside the Structured Edit panel, the Swap panel, acceptAiOperations() (the save/publish/pendingOperations path), or generateAiProposal()'s request-body construction to generateRosterPatchProposal -- proving the flag affects only this one panel's rendering, never tenant derivation, quota, provider selection, compiler, reconciliation, save, or publish. Self-caught and fixed two false-positive-looking failures during this same pass before relying on the results: a JSX comment that happened to spell out the identifier name by accident (reworded to remove it, not to weaken the check), and an overly literal multi-line string match for the load() effect boundary (replaced with a more robust index-based comparison) -- both diagnosed as check-authoring bugs, not code defects, before declaring the suite green. Full suite: 85 checks, 0 failures (78 prior + 7 new). Ran fresh npm run verify (PASS), node scripts/verify-e0-containment.cjs (PASS, unrelated surface untouched), node scripts/harness.cjs self-test (156/157, the single failure being the same pre-existing timing-sensitive harness-internal fixture race already documented across multiple prior task reports today, not referencing this task's files). Manual diff/control-flow review completed and acknowledged before commit: exactly 3 additive hunks in MultiRosterManagerView.tsx, no other line touched; no migration, no new table, no framework, no credential, no secret.
+
+## NEW FINDINGS
+NONE
+
+## BLOCKERS
+NONE
+
+## MANUAL CHECKS REMAINING
+NONE
+
+## NEXT RECOMMENDED ACTION
+Phase 5 (deployment plan) requires explicit authorization before any push, since pushing main auto-deploys the frontend via the deploy-doc-workspace-main Cloud Build trigger -- this IS the actual production exposure change, not a formality. Before pushing: confirm exact outgoing commits/paths (this commit 079fc1e + its report), confirm default state hides AI for all tenants (no tenant has roster_ai_v1_enabled=true -- zero DB writes occurred in this task), then in order: push, allow Cloud Build to deploy, verify production Cloud Run is serving the new commit BEFORE redeploying roster-patch-proposal (so there is no interval where a callable backend sits behind an ungated frontend), redeploy roster-patch-proposal, verify ACTIVE, do not enable any tenant, make no live provider call. Freeze remains ACTIVE; guardrail remains INSTALLED.
+
+_Generated 2026-08-31T19:21:42.208Z by `scripts/harness.cjs report`. Deterministic fields come from Harness/Git state. DECISIONS MADE and NEXT RECOMMENDED ACTION are agent-supplied via --decisions-made/--next-action and default to UNKNOWN — never fabricated._
