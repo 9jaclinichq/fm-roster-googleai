@@ -593,48 +593,23 @@ check('the Edge Function still derives tenant ONLY from the verified admin code,
   return /const tenantId = await verifyAdminCodeAndDeriveTenant\(supabaseUrl, serviceRoleKey, admin_access_code\);/.test(edgeFunctionSrc);
 })());
 
-// --- Server-only tenant-bound smoke gate (2026-08-31): exactly-one-
-//     provider-request mechanism for a future disposable-tenant smoke
-//     call. Caller-invisible by design -- no request-body flag, no HTTP
-//     header. Static-only checks below, matching this file's own
-//     zero-network/zero-DB convention: they prove the CODE's structural
-//     guarantees, not live runtime behavior (that is the deferred smoke
-//     call's own job). ---
+// --- Smoke-gate cleanup (2026-08-31): the server-only tenant-bound
+//     exactly-one-provider-request mechanism (ROSTER_AI_SMOKE_PROVIDER /
+//     ROSTER_AI_SMOKE_TENANT_ID) has served its purpose -- the one
+//     authorized live AI smoke call succeeded and was fully verified
+//     (DEPLOYED_AI_SMOKE_VERIFIED) -- and has been removed from source.
+//     This single check proves the removal is complete and the original
+//     unconditional fallback is restored exactly, replacing the 7 checks
+//     that used to assert the gate's own structural guarantees. ---
 
-check('smoke gate activation requires BOTH an exact env-configured provider AND an exact env-configured tenant match -- absent either env var (undefined !== the required literal/tenantId), smokeModeActive is structurally false, so "absent env -> normal fallback" and "wrong tenant -> normal fallback" both hold by construction, not by a runtime branch that could be bypassed', (() => {
-  return /const smokeModeActive =\s*\n\s*smokeProvider === 'openai' &&\s*\n\s*smokeTenantId === tenantId;/.test(edgeFunctionSrc);
-})());
-
-check('smoke gate is positioned AFTER tenantId is derived from the verified admin code (never before) -- it can only ever compare against an already-authoritative, server-resolved tenantId, never a caller-supplied one', (() => {
-  const gateIdx = edgeFunctionSrc.indexOf('const smokeModeActive');
-  const tenantIdx = edgeFunctionSrc.indexOf('const tenantId = await verifyAdminCodeAndDeriveTenant');
-  return gateIdx > -1 && tenantIdx > -1 && gateIdx > tenantIdx;
-})());
-
-check('when smokeModeActive is true, exactly ONE provider is called -- the true-branch is a bare `await callOpenAI(...)` with no `??` and no callGemini anywhere in it, so "exact synthetic tenant + openai -> one OpenAI call only" and "OpenAI failure in smoke mode -> no Gemini call" both hold structurally: a null result from callOpenAI flows directly into the existing `if (!result)` 503 guard with no code path that could ever reach callGemini', (() => {
-  const trueBranchMatch = edgeFunctionSrc.match(/const result = smokeModeActive\s*\n\s*\? await callOpenAI\(systemPrompt, instruction\)\s*\n\s*: /);
-  if (!trueBranchMatch) return false;
-  const trueBranchText = trueBranchMatch[0];
-  return !trueBranchText.includes('??') && !trueBranchText.includes('callGemini');
-})());
-
-check('when smokeModeActive is false (all other tenants), the false-branch is BYTE-IDENTICAL to the original unconditional production fallback expression -- "all other tenants retain existing OpenAI->Gemini fallback" is not just "similar," it is the exact same expression', (() => {
-  return /: \(await callOpenAI\(systemPrompt, instruction\)\) \?\?\s*\n\s*\(await callGemini\(systemPrompt, instruction\)\);/.test(edgeFunctionSrc);
-})());
-
-check('smokeProvider and smokeTenantId are used ONLY inside the smokeModeActive computation -- neither identifier appears anywhere else in the file (never interpolated into buildSystemPrompt/instruction/any provider payload, never passed to console.log/console.error), so smoke config can never reach the provider payload or logs', (() => {
-  const smokeProviderCount = (edgeFunctionCodeOnly.match(/smokeProvider/g) || []).length;
-  const smokeTenantIdCount = (edgeFunctionCodeOnly.match(/smokeTenantId/g) || []).length;
-  // Exactly 2 each: 1 declaration (`const smokeX = Deno.env.get(...)`) + 1 use inside the smokeModeActive comparison. Any more means it leaked elsewhere.
-  return smokeProviderCount === 2 && smokeTenantIdCount === 2;
-})());
-
-check('the smoke gate reads its config exclusively via Deno.env.get -- no request-body field, no HTTP header, is ever consulted for smoke activation (RequestBody\'s own shape, checked earlier in this file, is unchanged; this just confirms no new caller-observable input feeds smokeModeActive)', (() => {
-  const gateBlock = edgeFunctionSrc.slice(edgeFunctionSrc.indexOf('const smokeProvider'), edgeFunctionSrc.indexOf('if (!result) {'));
-  return /Deno\.env\.get\('ROSTER_AI_SMOKE_PROVIDER'\)/.test(gateBlock)
-    && /Deno\.env\.get\('ROSTER_AI_SMOKE_TENANT_ID'\)/.test(gateBlock)
-    && !/req\.headers/.test(gateBlock)
-    && !/body\./.test(gateBlock);
+check('no smoke-gate reference of any kind remains in the Edge Function -- no ROSTER_AI_SMOKE_PROVIDER, no ROSTER_AI_SMOKE_TENANT_ID, no smokeModeActive/smokeProvider/smokeTenantId identifier anywhere -- and the provider-call line is restored to the exact original unconditional OpenAI-then-Gemini fallback expression, byte-for-byte', (() => {
+  const noSmokeReferences = !/ROSTER_AI_SMOKE_PROVIDER/.test(edgeFunctionSrc)
+    && !/ROSTER_AI_SMOKE_TENANT_ID/.test(edgeFunctionSrc)
+    && !/smokeModeActive/.test(edgeFunctionSrc)
+    && !/smokeProvider/.test(edgeFunctionSrc)
+    && !/smokeTenantId/.test(edgeFunctionSrc);
+  const exactOriginalFallbackRestored = /const result = \(await callOpenAI\(systemPrompt, instruction\)\) \?\? \(await callGemini\(systemPrompt, instruction\)\);/.test(edgeFunctionSrc);
+  return noSmokeReferences && exactOriginalFallbackRestored;
 })());
 
 check('Client service (rosterPatchProposalService.ts) makes NO database write of any kind and calls NO RPC -- only supabase.functions.invoke', (() => {
