@@ -318,7 +318,29 @@ Deno.serve(async (req: Request) => {
   const extraInstructions = await fetchTenantAdaptationPromptOverride(supabaseUrl, serviceRoleKey, tenantId, 'roster_patch_proposal');
   systemPrompt = appendTenantAdaptationOverride(systemPrompt, extraInstructions);
 
-  const result = (await callOpenAI(systemPrompt, instruction)) ?? (await callGemini(systemPrompt, instruction));
+  // Production smoke-test gate -- server-only, tenant-bound, NEVER
+  // caller-observable (no request-body flag, no HTTP header, no
+  // client-controlled provider selection). Activation requires BOTH: (1) a
+  // valid admin_access_code for the ONE specific tenant an operator has
+  // pre-designated via ROSTER_AI_SMOKE_TENANT_ID (composing the
+  // already-authoritative tenantId this function just derived above, never
+  // a caller-supplied value), AND (2) ROSTER_AI_SMOKE_PROVIDER='openai'
+  // actively set as a Supabase secret. Absent either, this is always false
+  // and the line below is byte-identical to unconditional production
+  // fallback. Removed by unsetting the two secrets -- no redeploy required
+  // to disable it. Neither value is ever interpolated into systemPrompt/
+  // instruction (the only two values passed to callOpenAI/callGemini) or
+  // logged anywhere in this file.
+  const smokeProvider = Deno.env.get('ROSTER_AI_SMOKE_PROVIDER');
+  const smokeTenantId = Deno.env.get('ROSTER_AI_SMOKE_TENANT_ID');
+  const smokeModeActive =
+    smokeProvider === 'openai' &&
+    smokeTenantId === tenantId;
+
+  const result = smokeModeActive
+    ? await callOpenAI(systemPrompt, instruction)
+    : (await callOpenAI(systemPrompt, instruction)) ??
+      (await callGemini(systemPrompt, instruction));
   if (!result) {
     return jsonResponse({ status: 'provider_unavailable' }, 503);
   }
