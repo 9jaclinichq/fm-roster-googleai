@@ -443,6 +443,25 @@ check('the Edge Function system prompt no longer describes row_index in the Symb
     && /verbatim/i.test(promptFnBlock);
 })());
 
+// supabase/functions is excluded from tsconfig.json (see tsconfig.json's
+// own "exclude" list) -- npx tsc --noEmit and npm run verify NEVER
+// typecheck this file, so a declared-but-unreferenced HITL_INSTRUCTION
+// const would silently compile and deploy with zero compiler warning.
+// This regression actually happened once during this same row-targeting
+// fix (2026-09-01): an edit meant to ADD the new location-instruction
+// comment block accidentally REPLACED the `HITL_INSTRUCTION,` array
+// element instead, silently dropping the human-in-the-loop framing text
+// from every real prompt sent to the provider. Caught only by a manual
+// pre-push source read, not by any automated check -- hence this one.
+check('the Edge Function system prompt still includes HITL_INSTRUCTION as an actual element of the array buildSystemPrompt() returns (not merely defined-and-unused) -- guards against this file\'s own tsconfig exclusion silently letting a real prompt element get dropped', (() => {
+  const definitionCount = (edgeFunctionSrc.match(/\bHITL_INSTRUCTION\b/g) || []).length;
+  const promptFnStart = edgeFunctionSrc.indexOf('function buildSystemPrompt');
+  const returnStart = edgeFunctionSrc.indexOf('return [', promptFnStart);
+  const returnEnd = edgeFunctionSrc.indexOf('].filter(Boolean).join', returnStart);
+  const returnedArrayBlock = edgeFunctionSrc.slice(returnStart, returnEnd);
+  return definitionCount >= 2 && /\bHITL_INSTRUCTION\b/.test(returnedArrayBlock);
+})());
+
 // =====================================================================
 // 3. End-to-end fixture: symbolic proposal -> compiled operations ->
 //    applyRosterPatch -> reconciliation -> net diff, ALL UNCHANGED.

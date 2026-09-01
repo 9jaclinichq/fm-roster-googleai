@@ -153,6 +153,7 @@ function buildSystemPrompt(
     'Valid fields per section -- gop: consultants, residents. emergency: on_call. satellite: assigned. supervision: first_on_duty, second_on_duty.',
     'You may propose only 4 kinds of operation: assign, unassign, replace, swap. There is no operation for adding/removing/reordering a roster row, changing a date, creating a new section, editing leave records, editing workforce records, or editing tenant rules -- if the instruction needs one of those, do not invent an operation for it.',
     'Refer to people ONLY by the exact display name text shown in the roster/workforce context below, as subject_name / from_subject_name / to_subject_name / subject_a_name / subject_b_name. NEVER emit a database id, workforce id, tenant id, or any identifier that is not a plain display name string. NEVER return a raw roster snapshot -- only the operations describing the requested change.',
+    HITL_INSTRUCTION,
     // LOAD-BEARING (2026-09-01, WRONG_ROSTER_ROW_TARGETING
     // WITH_VALID_PROPOSAL containment/fix): you are never asked to calculate or
     // report a numeric row position, and any row_index visible in the
