@@ -243,10 +243,10 @@ path: `src/modules/doctors/components/DoctorHomeView.tsx`
 owner engine: none
 tenant scope: individual
 consumes: `currentDoctor` session
-emits: navigation intents (`/doctor/research`, `/doctor/casebook-logbook`)
+emits: navigation intents (`/doctor/research`, `/doctor/casebook-logbook`, `/doctor/cases`)
 udr fields: none
 gates: none
-status: stable — surfaces entry cards into personal Research and Casebook workspaces (migration 25), **and now also renders F19 `DoctorIntegrationsPanel`** (new since the previous snapshot — see L4 organs).
+status: stable — surfaces entry cards into personal Research, Casebook, and Cases workspaces, **and now also renders F19 `DoctorIntegrationsPanel`** (new since the previous snapshot — see L4 organs).
 
 ### F8 SaaS Operator Console
 layer: L5
@@ -399,14 +399,15 @@ status: stub — read-only. Sibling to org-admin's `IntegrationsPanel` (M14 belo
 ### M1 Announcements
 layer: L4
 face: doctor, org-admin
-path: `src/modules/announcements/components/AnnouncementBoardView.tsx` (instance/consumption view); **builder now exists** at `src/modules/org-admin/components/dashboard/AnnouncementsAdminPanel.tsx`
+path: `src/modules/announcements/components/AnnouncementBoardView.tsx` (instance/consumption view); `src/modules/announcements/lib/teamCoordination.ts`; **builder now exists** at `src/modules/org-admin/components/dashboard/AnnouncementsAdminPanel.tsx`
 owner engine: none — intelligence/automation layer (target; no in-repo agent implemented yet)
 tenant scope: org
 consumes: `announcements` (tenant-scoped, migration 11), `announcement_reads`
 emits: none today (spec wants `module.configured`/broadcast events — not implemented; `event_log`/`eventBus.ts` now exist but nothing in this module calls `emitEvent`)
 udr fields: none
 gates: none
-status: fragmented, **gap partially closed since the previous audit** — the previous snapshot flagged "module has no builder component of its own... not traced in this pass." That's now confirmed: `AnnouncementsAdminPanel.tsx` is a real, separate builder component (create/pin/categorize), composed into `ChiefDashboardView.tsx` (F9) rather than embedded inline in the god-file. **Gap vs spec unchanged**: still one fixed announcement-category enum (Roster/Exam/CME/Admin), not a generic instance/pipeline model — maps toward target capability #8 "Messages & broadcasts."
+2026-09-07 addendum: Team Coordination V1 now makes `/workspace/announcements` tenant-context-aware for members, surfaces active/pinned announcements, persisted read receipts, and upcoming tenant meetings where the Meetings service can read scheduled occurrences. The Chief announcements tab now summarizes active/pinned/unsupported lifecycle state while keeping create/pin actions on the existing Chief dashboard authority path.
+status: fragmented, **gap partially closed since the previous audit** — the previous snapshot flagged "module has no builder component of its own... not traced in this pass." That's now confirmed: `AnnouncementsAdminPanel.tsx` is a real, separate builder component (create/pin/categorize), composed into `ChiefDashboardView.tsx` (F9) rather than embedded inline in the god-file. **Gap vs spec unchanged**: still one fixed announcement-category enum (Roster/Exam/CME/Admin), no scheduled/expired/archived/draft announcement lifecycle fields, and not a generic instance/pipeline model — maps toward target capability #8 "Messages & broadcasts."
 
 ### M2 Auth (see L5 Faces F1–F5, F17 above)
 This "module" is entirely L5 faces (login/landing screens), not an L4 organ with builder/instance/data/pipeline shape. Registered under Faces, not here, to avoid a duplicate entry.
@@ -426,14 +427,14 @@ status: stable — unchanged in this pass. Now that `integrations_catalog` (M14)
 ### M4 Casebook & Logbook
 layer: L4
 face: doctor, org-admin
-path: `src/modules/casebook-logbook/components/{CasebookBuilderView,CasebookWorkspaceView}.tsx`, `src/modules/casebook-logbook/lib/{caseRubricEngine,casebookCopilot,familyTools}.ts`
+path: `src/modules/casebook-logbook/components/{CasebookBuilderView,CasebookWorkspaceView}.tsx`, `src/modules/casebook-logbook/lib/{caseRubricEngine,casebookCopilot,familyTools}.ts`; Cases V1 landing: `src/modules/cases/components/CasesLandingView.tsx`, `src/modules/cases/lib/{caseCaptureService,caseContinuityService,caseContinuityDomain,casesOverview}.ts`
 owner engine: none — intelligence/automation layer, concretely `casebookCopilot.ts` (calls the `casebook-copilot` Edge Function, E3)
 tenant scope: org (institutional) and individual (doctor-owned workspaces, migration 25)
-consumes: `casebook_templates`, `casebook_workspaces`, `clinical_case_reports`, `clinical_logbooks`, `case_reports` (old MVP)
+consumes: `casebook_templates`, `casebook_workspaces`, `clinical_case_reports`, `clinical_logbooks`, `case_reports` (old MVP); Cases V1 consumes doctor-owned `case_capture_records`/`case_capture_artifacts` and optionally `case_continuity_actions` when migration 83 is present
 emits: none
 udr fields: `udr.ts`'s `instances[]` now includes `casebook_workspace` rows (see S3) — the first real UDR read-composition wiring for this module, though `udr.ts` remains read-only/composition-only, not a write path this module calls into
 gates: AI Copilot actions require doctor review before save (client-side, no formal gate record)
-status: stable, unchanged in this pass — still two separate hardcoded flows (`CasebookBuilderView`/`case_reports` vs. `CasebookWorkspaceView`/`clinical_case_reports`), deliberately kept independent per CLAUDE.md's own "SCOPE DECISION."
+status: stable with Cases V1 addition — `/doctor/cases` now gives authenticated doctors a privacy-safe landing over captured cases, artifact availability, optional continuity actions, and links back to Casebook/Logbook. The old MVP `case_reports`, Casebook/Logbook `clinical_case_reports`, and raw Case Capture tables remain distinct rather than merged speculatively.
 
 **`casebook_templates` gains 1 new global seed row this pass (migration 43, schema only — not confirmed applied live, see intro note)**: "Generic Case-Based Portfolio (Specialty-Agnostic)" (`framework_type = 'CUSTOM_CLINICAL'`), bundling a case-mix planner into `thematic_distribution`, a generic 8-domain scoring rubric, and a generic case-write-up-structure + case-selection-guide pair folded into `formatting_rules` — deliberately reusing existing jsonb columns rather than adding a new table, per migration 43's own header (Judgment Call 4). This is content-only (no schema/app-code change) and sits alongside the 4 WACP/NPMCN rows migration 15 already seeded, taking the total to 5 seeded `casebook_templates` rows once applied.
 
@@ -452,26 +453,28 @@ status: stable, unchanged in this pass structurally. One retrofit gap carried fo
 ### M6 Dissertation Assistant
 layer: L4
 face: doctor
-path: `src/modules/dissertation/components/DissertationAssistantView.tsx`, `src/modules/dissertation/lib/academicCopilot.ts`
+path: `src/modules/dissertation/components/DissertationAssistantView.tsx`, `src/modules/dissertation/lib/{academicCopilot,dissertationCommandCentre}.ts`, `src/modules/research/components/FieldworkReadinessPanel.tsx`
 owner engine: none — intelligence/automation layer, concretely `academicCopilot.ts` (calls the `dissertation-copilot` Edge Function, E1)
 tenant scope: org (institutional resident only — no doctor-owned path)
-consumes: `dissertations`, `dissertation_milestones`
+consumes: `dissertations`, `dissertation_milestones`, reusable research fieldwork readiness definition from M10
 emits: none
 udr fields: `udr.ts`'s `academic.dissertation`/`entries[]` (type `dissertation_milestone`) now read this module's tables directly (see S3) — read-only composition, no write-back
 gates: none
-status: stable, unchanged — still one hardcoded dissertation-tracking flow, not folded into the newer `research` module's template system (M10).
+2026-09-07 addendum: `/workspace/dissertation` now has a Dissertation V1 command centre backed only by `dissertations` and `dissertation_milestones`: current project/stage, latest milestone, one deterministic next action, safe HTTPS-only milestone document links, continuation links into Research/Library/Review, and advisory fieldwork readiness. It does not read Drive, embed documents, infer approval from free text, or persist fieldwork configuration.
+status: stable with command-centre addition — the dissertation route now consolidates milestone continuity, authoritative document links, continuation navigation, and tenant-neutral fieldwork readiness guidance without replacing approved research documents as the authority.
 
 ### M7 Exam Readiness
 layer: L4
 face: doctor
-path: `src/modules/exam-readiness/components/ExamReadinessView.tsx`
+path: `src/modules/exam-readiness/components/ExamReadinessView.tsx`, `src/modules/exam-readiness/lib/learningAssessmentCommandCentre.ts`
 owner engine: none — intelligence/automation layer (target — "compliance checker" concept; no in-repo agent implemented yet)
 tenant scope: org
 consumes: `exam_readiness` (fixed named columns, migration 05)
 emits: none
 udr fields: `udr.ts`'s `academic.examReadiness` now reads this table directly (see S3) — read-only
 gates: none
-status: stable — unchanged, deliberately not generalized (see CLAUDE.md).
+2026-09-07 addendum: `/workspace/exam-readiness` is now the Learning & Assessment V1 entry surface. It projects only owner-scoped resident metadata plus tenant-scoped library resources: recent activity, structurally tracked exam/logistics fields, safe Viva practice metadata, library resource counts, review availability, a deterministic next action, and links to Exam Readiness, Viva Simulator, Library, Review Workspace, and My Professional Record. It intentionally removed the former derived readiness percentage UI so the app does not invent readiness scores, completion percentages, exam dates, competencies, supervisor approvals, or recommendations.
+status: stable with Learning & Assessment V1 entry-surface addition — deliberately not generalized into an LMS.
 
 ### M8 Forms (monthly roster submission)
 layer: L4
@@ -495,19 +498,21 @@ consumes: `knowledge_packs`, `knowledge_pack_items`
 emits: none
 udr fields: none
 gates: none
-status: stable, unchanged in this pass.
+status: stable with Learning & Assessment V1 tenant-threading addition — the resident Library route now receives the authenticated resident's tenant id instead of relying on the default tenant.
 
 ### M10 Research Engine
 layer: L4
 face: doctor, org-admin
-path: `src/modules/research/components/ResearchWorkspaceView.tsx`, `src/modules/research/lib/{folderStructure,researchCopilot,rubricEngine,templateEngine}.ts`
+path: `src/modules/research/components/ResearchWorkspaceView.tsx`, `src/modules/research/components/FieldworkReadinessPanel.tsx`, `src/modules/research/lib/{fieldworkReadiness,folderStructure,researchCopilot,researchEvidenceCommandCentre,rubricEngine,templateEngine}.ts`
 owner engine: none — intelligence/automation layer, concretely `researchCopilot.ts` (calls the `research-copilot` Edge Function, E2)
 tenant scope: org (institutional) and individual (doctor-owned, migration 25)
 consumes: `research_templates`, `research_workspaces`, `research_chapters`, `research_correction_logs`
 emits: none
 udr fields: `udr.ts`'s `instances[]` includes `research_workspace` rows for both `workforceId` and `doctorId` lookups (see S3) — read-only composition
 gates: none
-status: stable, unchanged in this pass — still the module closest to the spec's target shape.
+2026-09-06 addendum: `fieldworkReadiness.ts` adds a deterministic, tenant-neutral advisory template for pretest/pilot/main-fieldwork readiness, including evidence lanes, finding dispositions, unsafe metadata rejection, and no external-write authority.
+2026-09-07 addendum: `/workspace/research` and `/doctor/research` now start with a Research & Evidence command centre backed by owner-scoped `research_workspaces`: safe workspace metadata, most-recent resume via the existing in-page workspace selector, one deterministic next action, honest empty states, and explicit navigation to Research Engine, Library, Review Workspace, and Dissertation. It does not expose raw chapter text, correction comments, participant/patient details, private URLs, Drive content, or direct item routes.
+status: stable with command-centre addition — still the module closest to the spec's target shape, now with advisory fieldwork readiness logic and a tenant-neutral research/evidence start-resume-review surface.
 
 **`research_templates` gains 3 new global seed rows this pass (migration 43, schema only — not confirmed applied live, see intro note)**: "Generic Audit / Quality Improvement (QI) Project Track" (the only one of the 3 with a real `dissertation_rubric`, riding the same fixed `ch1_intro`..`ch5_discussion` chapter slots every staged template uses), "Generic Publication / Journal Manuscript Track", and "Generic Research Grant Proposal Track" (both single-stage, proposal-rubric-only, mirroring the existing lighter ICMJE/STROBE/CONSORT/PRISMA/CARE rows). All 3 use `organization_or_body = 'Custom_Doctor'` — migration 43's own header flags this as a judgment call (the CHECK-constrained enum has no QI/publication/grant-specific value, and widening it for 3 rows was judged not worth the schema churn) rather than an oversight. Takes the seeded total from 9 (migration 13) to 12 once applied.
 
@@ -533,7 +538,7 @@ consumes: `viva_vignettes` (tenant-scoped bank, migration 28), `viva_simulations
 emits: none
 udr fields: none
 gates: plan-gated vignette creation (migration 29, Chief-authored content only)
-status: stable, unchanged in this pass.
+status: stable with Learning & Assessment V1 integration — Viva remains a distinct oral-practice route and feeds the learning entry surface with owner-scoped attempted-date metadata only; private self-reflection feedback remains in the Viva source module.
 
 ### M13 Forms & Pipelines (generalization scaffold)
 layer: L4
@@ -621,6 +626,7 @@ consumes: `meeting_series`, `meetings`, `meeting_actions`
 emits: `instance.created` (series creation), `meeting.scheduled` (occurrence creation) — both confirmed in `meetingsService.ts`; `meeting.action.owed` is **not** emitted at action-creation time (the file's own comment documents a deliberate design change: firing it at creation would be premature since most actions aren't yet overdue) — it's emitted instead by the separate `meetingActionAgent.ts` (A2) when an action is actually found overdue
 udr fields: `udr.ts`'s new `meetings[]` field (2026-08-17 extension, see S3) — scoped to "meetings this person owes an action on" via `meeting_actions.owner_workforce_id`, matching spec §5's own framing; returns `[]` today since `meeting_actions` has no confirmed live rows yet (schema/path real, no known producer of real usage)
 gates: none
+2026-09-07 addendum: Team Coordination V1 reuses `listMeetingSeries({ tenantId })` and `listMeetings(series.id)` for a read-only member preview of upcoming scheduled meetings on `/workspace/announcements`. It does not add member meeting CRUD, and cannot show meeting links/locations because no persisted fields exist for them.
 status: **[43-snapshot, superseded: previously "gap — not built, not found"] — now real, built exactly as scoped, and the first of the newer modules to gain its own rung-1 agent.** `meeting_series`/`meetings`/`meeting_actions` all exist (migration 45), seeded with one global "Standing Departmental Meeting" template. RLS: `meeting_series`/`meetings` got the real doctor-owned boundary in migration 57; `meeting_actions` was explicitly left permissive (57's header: "has ONLY owner_workforce_id, no doctor_id column at all — no doctor-owned row shape to protect"). Wired into `ChiefDashboardView.tsx`'s `'meetings'` tab — same no-member-facing-route gap as M16. **New since the 43-snapshot**: `src/modules/shared/lib/meetingActionAgent.ts` (A2 below, migration 50) is a real rung-1 agent that reads overdue `meeting_actions` and raises a dismissible insight. Disposition: HIDE for V1 per the Constitution's M7 (explicitly named — "park Meetings/Clinical Writing/Research as-is for Workforce V1, do not perform V1-adjacent feature development in them").
 
 ### M18 Clinical & Professional Writing
@@ -678,7 +684,7 @@ status: **[43-snapshot, superseded: previously "one real caller, nothing reads i
 ### S3 Unified Doctor Record (UDR)
 layer: L3
 face: shared
-path: `src/modules/shared/lib/udr.ts`
+path: `src/modules/shared/lib/{professionalRecordCommandCentre,udr}.ts`, `src/modules/shared/ui/UnifiedRecordView.tsx`
 owner engine: none
 tenant scope: any
 consumes: `workforce`, `doctor_profiles`, `tenants`, `research_workspaces`, `casebook_workspaces`, `submissions`, `case_reports`, `dissertations`, `dissertation_milestones`, `exam_readiness`, `user_subscriptions`, **now also** `insights`, `clinical_documents`, `rubric_instances`, `meeting_actions`, `meetings`, `form_pipelines`, `scheduling_pipelines`
@@ -692,6 +698,7 @@ status: **[43-snapshot, superseded: "`insights[]` hardcoded to `[]`, `meetings[]
 - **`audit[]` is confirmed still always `[]`**, and unlike the three fields above, this one has **no real backing data source at all** per the file's own header: `event_log` has no per-person actor column, so scoping it to a person is not possible without misattributing every other tenant member's events. This remains the one genuinely unclosed field in this section — not a wiring gap like the others were, but a real missing-column gap in `event_log` itself.
 - `instances[]` deliberately still does NOT expand to cover `scheduling_instances`/`clinical_document_types` (see M16/M18's own udr-fields notes for why — shared config, not personal records) and still does not expand into `research_chapters`/`clinical_case_reports` at the sub-instance level (kept at the coarser `instances[]` granularity, unchanged from the 43-snapshot).
 - `billing` is unchanged from the 43-snapshot: only reflects `workforce_id`-scoped subscriptions, never `scope='tenant'` org-wide ones or an unlinked doctor's billing.
+- 2026-09-07 addendum: `UnifiedRecordView.tsx` now presents My Professional Record V1 through `professionalRecordCommandCentre.ts`, a safe projection over UDR that groups identity/assignment, cases, dissertation/research, learning, meetings, billing, and audit into concise lanes with one deterministic next action. It no longer renders the raw `entries[]` timeline, avoiding patient identifiers, diagnosis text, raw feedback, private URLs, and sensitive research detail in the overview.
 
 ### S4 Tenant Config Service
 layer: L3

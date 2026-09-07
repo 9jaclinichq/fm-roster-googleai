@@ -1,9 +1,10 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Hourglass, LogOut, FlaskConical, Stethoscope, ChevronRight, IdCard } from 'lucide-react';
+import { Hourglass, LogOut, FlaskConical, Stethoscope, ChevronRight, IdCard, Camera } from 'lucide-react';
 import { useTerminology } from '../../shared/terminology';
 import { DoctorIntegrationsPanel } from './DoctorIntegrationsPanel';
 import { DoctorFormsBuilderPanel } from './DoctorFormsBuilderPanel';
+import { ProfessionalWorkContinuityPanel } from '../../shared/ui/ProfessionalWorkContinuityPanel';
 
 interface DoctorHomeViewProps {
   doctor: { id: string; email: string; fullName: string };
@@ -27,7 +28,7 @@ export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout
   const navigate = useNavigate();
   const { t } = useTerminology();
   return (
-    <div className="max-w-md mx-auto my-12 px-4 space-y-6">
+    <div className="max-w-5xl mx-auto my-12 px-4 space-y-6">
       <div className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
         <div className="bg-gradient-to-br from-blue-600 to-blue-700 p-6 text-white text-center">
           <div className="mx-auto bg-white/15 text-white w-12 h-12 rounded-xl flex items-center justify-center mb-3 shadow-inner">
@@ -82,6 +83,25 @@ export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout
               </span>
               <ChevronRight size={16} className="text-slate-400 shrink-0" />
             </button>
+            {/* Cases capture (migration 81 / slice 1). Sits alongside the
+                Casebook rather than inside it on purpose: the Casebook holds
+                finished academic write-ups, while this captures raw clinical
+                source before any write-up exists. Doctor-owned and private —
+                its bucket and rows are scoped to auth.uid(). */}
+            <button
+              type="button"
+              onClick={() => navigate('/doctor/cases')}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-left transition cursor-pointer"
+            >
+              <span className="flex items-center space-x-3">
+                <Camera size={16} className="text-blue-600 shrink-0" />
+                <span>
+                  <span className="block text-sm font-bold text-slate-800">Cases</span>
+                  <span className="block text-[11px] text-slate-500 mt-0.5">Capture, continuity, artifacts and casebook links</span>
+                </span>
+              </span>
+              <ChevronRight size={16} className="text-slate-400 shrink-0" />
+            </button>
             <button
               type="button"
               onClick={() => navigate('/doctor/my-record')}
@@ -114,6 +134,13 @@ export const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({ doctor, onLogout
           </button>
         </div>
       </div>
+
+      <ProfessionalWorkContinuityPanel
+        owner={{ id: doctor.id, name: doctor.fullName || doctor.email, kind: 'doctor' }}
+        canOpenCaseCapture
+        canUseInstitutionalReview={false}
+        canUseLearningTools={false}
+      />
 
       <DoctorFormsBuilderPanel doctorId={doctor.id} />
 

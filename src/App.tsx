@@ -63,6 +63,13 @@ const ResearchWorkspaceView = lazy(() =>
 const CasebookWorkspaceView = lazy(() =>
   import('./modules/casebook-logbook/components/CasebookWorkspaceView').then(m => ({ default: m.CasebookWorkspaceView }))
 );
+// Cases V1 landing surface. Doctor-persona only by construction:
+// case_capture_records.doctor_id is NOT NULL with `doctor_id = auth.uid()` RLS,
+// and the individual doctor is the only persona in this app holding a real
+// Supabase session, so there is no institutional route for it to mirror.
+const CasesLandingView = lazy(() =>
+  import('./modules/cases/components/CasesLandingView').then(m => ({ default: m.CasesLandingView }))
+);
 // Public routes added by the SaaS multi-tenancy pass — neither is gated by
 // resident/chief session state. GuestReviewView is reachable by anyone
 // holding a review token (a capability URL); SaaSOperatorConsoleView
@@ -278,6 +285,7 @@ function MainAppContent() {
             name: linkedWorkforce.full_name,
             category: linkedWorkforce.category,
             subadminRoles: [],
+            tenant_id: linkedWorkforce.tenant_id,
             // This session already has a real, verified email via
             // doctor_profiles (a Supabase Auth account) — never show the
             // workforce.email capture prompt for this path regardless of
@@ -715,7 +723,7 @@ function MainAppContent() {
             path="/workspace/library"
             element={
               currentResident ? (
-                <KnowledgeLibraryView />
+                <KnowledgeLibraryView tenantId={currentResident.tenant_id ?? DEFAULT_TENANT_ID} />
               ) : (
                 <Navigate to="/workspace/login" replace />
               )
@@ -847,6 +855,21 @@ function MainAppContent() {
                   owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor', tenantId: DEFAULT_TENANT_ID }}
                   canManageLogbooks={false}
                 />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+          {/* Cases. Unlike the other /doctor routes there is no
+              institutional twin to redirect a linked resident to: capture is
+              authenticated-doctor-only by design, so a resident session falls
+              through to the doctor gate rather than being sent to a
+              /workspace equivalent that does not exist. */}
+          <Route
+            path="/doctor/cases"
+            element={
+              currentDoctor ? (
+                <CasesLandingView doctor={{ id: currentDoctor.id, fullName: currentDoctor.fullName }} />
               ) : (
                 <Navigate to="/login" replace />
               )

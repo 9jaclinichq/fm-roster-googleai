@@ -1,7 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { databaseService } from '../../../lib/databaseService';
 import { academicCopilot, AcademicCopilotSource } from '../lib/academicCopilot';
 import { Dissertation, DissertationMilestone, DissertationStage, WACP_DISSERTATION_STAGES } from '../../../types';
+import { FieldworkReadinessPanel } from '../../research/components/FieldworkReadinessPanel';
+import {
+  DISSERTATION_COMMAND_ROUTES,
+  isSafeExternalDocumentUrl,
+  projectDissertationCommandCentre,
+} from '../lib/dissertationCommandCentre';
 import {
   GraduationCap,
   CheckCircle2,
@@ -17,6 +24,7 @@ import {
   Link2,
   Copy,
   Check,
+  ExternalLink,
 } from 'lucide-react';
 
 interface DissertationAssistantViewProps {
@@ -29,7 +37,15 @@ const STATUS_STYLES: Record<string, string> = {
   draft: 'bg-white text-slate-400 border-slate-300',
 };
 
+function formatDate(value: string | null | undefined): string {
+  if (!value) return 'Not recorded';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Invalid date';
+  return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 export const DissertationAssistantView: React.FC<DissertationAssistantViewProps> = ({ resident }) => {
+  const navigate = useNavigate();
   const [dissertation, setDissertation] = useState<Dissertation | null>(null);
   const [milestones, setMilestones] = useState<DissertationMilestone[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -107,6 +123,23 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
   };
 
   const currentMilestone = milestones.find(m => m.stage === selectedStage) || null;
+  const proposalApproved = useMemo(
+    () => milestones.some(m => m.stage === 'Proposal Development' && m.status === 'approved'),
+    [milestones]
+  );
+  const commandCentre = useMemo(
+    () => dissertation ? projectDissertationCommandCentre(dissertation, milestones) : null,
+    [dissertation, milestones]
+  );
+
+  const handleCommandRoute = (route: string | null) => {
+    if (!route) return;
+    if (isSafeExternalDocumentUrl(route)) {
+      window.open(route, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    navigate(route);
+  };
 
   const handleCreateGuestLink = async () => {
     if (!currentMilestone) return;
@@ -256,17 +289,117 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
 
   return (
     <div className="max-w-4xl mx-auto my-8 px-4 space-y-6">
-      {/* Header */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-1">
-        <div className="flex items-center space-x-2">
-          <GraduationCap className="text-slate-500" size={18} />
-          <h2 className="font-bold text-slate-900 text-lg tracking-tight truncate">{dissertation.title}</h2>
+      {/* Command centre */}
+      {commandCentre && (
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="flex items-center space-x-2">
+                <GraduationCap className="text-slate-500" size={18} />
+                <h2 className="font-bold text-slate-900 text-lg tracking-tight truncate">{commandCentre.title}</h2>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Supervisor: {commandCentre.supervisorName || 'Not assigned'} &bull; Current stage:{' '}
+                <span className="font-bold text-slate-700">{commandCentre.currentStage}</span>
+              </p>
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Next action</p>
+              <button
+                type="button"
+                onClick={() => handleCommandRoute(commandCentre.nextActionRoute)}
+                className="mt-1 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white hover:bg-slate-900 cursor-pointer"
+              >
+                {commandCentre.nextAction}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Current milestone</p>
+              <p className="mt-1 text-xs font-bold text-slate-800">{commandCentre.currentMilestone?.stage || 'Not recorded'}</p>
+              <p className="mt-0.5 text-[10px] uppercase tracking-wider text-slate-500">
+                {commandCentre.currentMilestone?.status.replace('_', ' ') || 'no status'}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Most recent milestone</p>
+              <p className="mt-1 text-xs font-bold text-slate-800">{commandCentre.latestMilestone?.stage || 'No milestones'}</p>
+              <p className="mt-0.5 text-[10px] text-slate-500">{formatDate(commandCentre.latestMilestone?.updated_at)}</p>
+            </div>
+            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Proposal status</p>
+              <p className={`mt-1 text-xs font-bold ${commandCentre.proposalApproved ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {commandCentre.proposalApproved ? 'Approved in milestones' : 'Not structurally approved'}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Documents</p>
+              <p className="mt-1 text-xs font-bold text-slate-800">{commandCentre.safeDocuments.length} available</p>
+              {commandCentre.invalidDocumentCount > 0 && (
+                <p className="mt-0.5 text-[10px] text-amber-700">{commandCentre.invalidDocumentCount} unsafe or malformed hidden</p>
+              )}
+            </div>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+            <div className="rounded-xl border border-slate-200 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Study documents</p>
+                <span className="text-[10px] text-slate-400">HTTPS links only</span>
+              </div>
+              {commandCentre.safeDocuments.length === 0 ? (
+                <p className="mt-3 text-xs text-slate-500">No safe authoritative document links are attached to milestones yet.</p>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {commandCentre.safeDocuments.map((doc) => (
+                    <a
+                      key={doc.id}
+                      href={doc.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 hover:bg-slate-100"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-bold text-slate-800">{doc.stage}</span>
+                        <span className="block text-[10px] uppercase tracking-wider text-slate-500">{doc.status.replace('_', ' ')} &bull; {formatDate(doc.updatedAt)}</span>
+                      </span>
+                      <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-slate-700">
+                        Open document <ExternalLink size={12} />
+                      </span>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Continue work</p>
+              <div className="mt-3 grid gap-2">
+                {[
+                  { label: 'Dissertation', description: 'Milestone and chapter continuity', route: DISSERTATION_COMMAND_ROUTES.dissertation },
+                  { label: 'Research Engine', description: 'Research workspace', route: DISSERTATION_COMMAND_ROUTES.research },
+                  { label: 'Library', description: 'Evidence and saved resources', route: DISSERTATION_COMMAND_ROUTES.library },
+                  { label: 'Review Workspace', description: 'Structured review', route: DISSERTATION_COMMAND_ROUTES.review },
+                ].map((item) => (
+                  <button
+                    key={item.route}
+                    type="button"
+                    onClick={() => navigate(item.route)}
+                    className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:bg-slate-100 cursor-pointer"
+                  >
+                    <span className="block text-xs font-bold text-slate-800">{item.label}</span>
+                    <span className="block text-[10px] text-slate-500">{item.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
-        <p className="text-xs text-slate-500">
-          Supervisor: {dissertation.supervisor_name || 'Not assigned'} &bull; Current stage:{' '}
-          <span className="font-bold text-slate-700">{dissertation.stage}</span>
-        </p>
-      </div>
+      )}
+
+      <FieldworkReadinessPanel projectRef={dissertation.title} proposalApproved={proposalApproved} />
 
       {/* Stage-gate timeline */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
@@ -321,16 +454,18 @@ export const DissertationAssistantView: React.FC<DissertationAssistantViewProps>
           {/* Document upload */}
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-700 uppercase">Milestone Document</label>
-            {currentMilestone.document_url ? (
+            {currentMilestone.document_url && isSafeExternalDocumentUrl(currentMilestone.document_url) ? (
               <a
                 href={currentMilestone.document_url}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="flex items-center space-x-2 text-xs font-semibold text-slate-800 hover:underline bg-slate-50 p-2.5 rounded-lg border border-slate-200 w-max"
               >
                 <FileText size={14} className="text-slate-400" />
                 <span>View uploaded document</span>
               </a>
+            ) : currentMilestone.document_url ? (
+              <p className="text-xs text-amber-600">A document is recorded for this stage, but its URL is not a safe HTTPS link.</p>
             ) : (
               <p className="text-xs text-slate-400">No document uploaded for this stage yet.</p>
             )}

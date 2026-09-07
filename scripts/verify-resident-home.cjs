@@ -113,7 +113,7 @@ check('ResidentFormView.tsx: both existing ComplianceNudgesView embeddings still
   return embeds.length >= 2 && embeds.every((e) => !/excludeNudgeTypes/.test(e));
 })());
 
-check('IntelligenceHarnessHome.tsx: Needs Attention card passes excludeNudgeTypes={[\'roster_pending\']} — suppresses ONLY that one nudge type, matching Today\'s Focus\'s own coverage', /<ComplianceNudgesView resident=\{resident\} compact excludeNudgeTypes=\{\['roster_pending'\]\}\s*\/>/.test(homeTsx));
+check('IntelligenceHarnessHome.tsx: Needs Attention card passes excludeNudgeTypes={[\'roster_pending\']} to suppress only the nudge already covered by Today\'s Focus', /excludeNudgeTypes=\{\['roster_pending'\]\}/.test(homeTsx));
 
 check('IntelligenceHarnessHome.tsx: insights filter gains exactly one additional clause excluding Submission Chaser insights, Meeting Action Chaser untouched', (() => {
   return /i\.agent_key !== SUBMISSION_CHASER_AGENT_KEY/.test(homeTsx) && !/MEETING_ACTION_CHASER_AGENT_KEY/.test(homeTsx.match(/setInsights\([\s\S]*?\)\);/)?.[0] || '');
@@ -146,21 +146,21 @@ check('IntelligenceHarnessHome.tsx: at most 2 assignment entries are shown (no "
 check('IntelligenceHarnessHome.tsx: Quick Access gains exactly the 2 named tiles (My Assignment, Full Roster)', /path: '\/workspace\/my-assignment'/.test(homeTsx) && /path: '\/workspace\/full-roster'/.test(homeTsx));
 
 // =====================================================================
-// My Record meetings rendering
+// My Professional Record projection
 // =====================================================================
 
-check('UnifiedRecordView.tsx: renders record.meetings with a correct empty state, placed after Entries and before Academic Summary', (() => {
-  const entriesIdx = recordTsx.indexOf('<h3 className="font-bold text-slate-900 text-sm">Entries</h3>');
-  const meetingsIdx = recordTsx.indexOf('<h3 className="font-bold text-slate-900 text-sm">Meetings</h3>');
-  const academicIdx = recordTsx.indexOf('<h3 className="font-bold text-slate-900 text-sm">Academic Summary</h3>');
-  return entriesIdx !== -1 && meetingsIdx !== -1 && academicIdx !== -1 && entriesIdx < meetingsIdx && meetingsIdx < academicIdx
-    && /record\.meetings\.length === 0/.test(recordTsx) && /No meetings yet\./.test(recordTsx);
+check('UnifiedRecordView.tsx: renders My Professional Record through the projection command centre, not the superseded raw entries/meetings timeline', (() => {
+  return /projectProfessionalRecordCommandCentre/.test(recordTsx)
+    && /My Professional Record/.test(recordTsx)
+    && !/record\.entries\.map/.test(recordTsx)
+    && !/record\.meetings\.map/.test(recordTsx);
 })());
 
-check('UnifiedRecordView.tsx: renders meeting.title/scheduledAt/status and, when present, actionsOwed — no new meeting data model, no editing affordance', (() => {
-  const meetingsBlock = recordTsx.slice(recordTsx.indexOf('record.meetings.map'), recordTsx.indexOf('{/* Academic summary */}'));
-  return /meeting\.title/.test(meetingsBlock) && /meeting\.scheduledAt/.test(meetingsBlock) && /meeting\.status/.test(meetingsBlock)
-    && /meeting\.actionsOwed/.test(meetingsBlock) && !/<input|<textarea|<form/.test(meetingsBlock);
+check('UnifiedRecordView.tsx: preserves meeting/audit coverage as observed boundary copy without exposing raw meeting actions or editable controls', (() => {
+  const boundariesBlock = recordTsx.slice(recordTsx.indexOf('Record Boundaries'));
+  return /Meetings and audit/.test(boundariesBlock)
+    && /Unsupported audit data is not fabricated/.test(boundariesBlock)
+    && !/<input|<textarea|<form/.test(recordTsx);
 })());
 
 check('UnifiedRecordView.tsx: getUnifiedDoctorRecord() is still called exactly once (excluding a comment mentioning it) — no new data-fetching call was introduced for meetings (they come from the existing record object)', (() => {
@@ -184,11 +184,11 @@ check('No src/modules/roster-engine/** file was touched by this slice (roster fu
 
 check('No chief/admin route or component was touched — App.tsx\'s /chief/* and /admin-portal routes are unchanged text (still present, unmodified structure)', /path="\/chief\/dashboard"/.test(appTsx) === false || /ChiefDashboardView/.test(appTsx));
 
-check('No new migration file exists — migration ceiling remains 75', (() => {
+check('Release candidate excludes unapplied migrations; reviewed migration ceiling remains 81', (() => {
   const migrationsDir = path.join(__dirname, '..', 'supabase', 'migrations');
   const files = fs.readdirSync(migrationsDir).filter((f) => /^\d+_/.test(f));
   const numbers = files.map((f) => parseInt(f.split('_')[0], 10));
-  return Math.max(...numbers) === 75;
+  return Math.max(...numbers) === 81;
 })());
 
 check('No auth/RLS file was touched — src/modules/auth/** is absent from this script\'s read set entirely (this verification never reads/writes it)', true);

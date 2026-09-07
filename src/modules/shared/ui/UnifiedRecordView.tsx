@@ -1,20 +1,28 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/databaseService';
-import { getUnifiedDoctorRecord, UnifiedDoctorRecord, UdrInstanceType, UdrEntryType } from '../lib/udr';
+import { getUnifiedDoctorRecord, UnifiedDoctorRecord } from '../lib/udr';
+import {
+  projectProfessionalRecordCommandCentre,
+  ProfessionalRecordLaneStatus,
+} from '../lib/professionalRecordCommandCentre';
 import { runRubricComplianceChaserForDoctor } from '../lib/rubricComplianceAgent';
 import {
-  RefreshCw, IdCard, Building2, FolderKanban, History, GraduationCap, CreditCard, Sparkles, ChevronRight,
+  ArrowRight,
+  BookOpen,
+  BriefcaseBusiness,
   CalendarDays,
+  ChevronRight,
+  ClipboardList,
+  CreditCard,
+  FileWarning,
+  GraduationCap,
+  IdCard,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
 } from 'lucide-react';
 
-// First real face for the L3 Spine's Unified Doctor Record read-composition
-// layer (src/modules/shared/lib/udr.ts) — see that file's header and
-// docs/PRIVYDOC_WORKSPACE_LIVING_SYSTEM.md §5. This component is a pure
-// display of whatever getUnifiedDoctorRecord() returns; it performs no
-// writes and reuses this app's existing card/loading/error conventions
-// (see ResearchWorkspaceView.tsx / CasebookWorkspaceView.tsx) rather than
-// inventing new visual language.
 interface UnifiedRecordOwner {
   id: string;
   name: string;
@@ -29,25 +37,33 @@ interface UnifiedRecordViewProps {
 const IDENTITY_KIND_LABEL: Record<UnifiedDoctorRecord['identity']['kind'], string> = {
   workforce: 'Workforce',
   doctor: 'Doctor',
-  workforce_linked_to_doctor: 'Workforce (linked to Doctor)',
+  workforce_linked_to_doctor: 'Workforce linked to Doctor',
 };
 
-const INSTANCE_TYPE_LABEL: Record<UdrInstanceType, string> = {
-  research_workspace: 'Research Workspace',
-  casebook_workspace: 'Casebook Workspace',
+const LANE_STATUS_LABEL: Record<ProfessionalRecordLaneStatus, string> = {
+  available: 'Available',
+  no_records_yet: 'No records yet',
+  not_connected: 'Not connected',
+  not_currently_tracked: 'Not currently tracked',
+  needs_attention: 'Needs attention',
 };
 
-const INSTANCE_ROUTE_SUFFIX: Record<UdrInstanceType, string> = {
-  research_workspace: 'research',
-  casebook_workspace: 'casebook-logbook',
+const LANE_STATUS_CLASS: Record<ProfessionalRecordLaneStatus, string> = {
+  available: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  no_records_yet: 'bg-slate-50 text-slate-600 border-slate-200',
+  not_connected: 'bg-amber-50 text-amber-700 border-amber-200',
+  not_currently_tracked: 'bg-slate-50 text-slate-500 border-slate-200',
+  needs_attention: 'bg-rose-50 text-rose-700 border-rose-200',
 };
 
-const ENTRY_TYPE_LABEL: Record<UdrEntryType, string> = {
-  submission: 'Submission',
-  case_report: 'Case Report',
-  dissertation_milestone: 'Dissertation Milestone',
-  clinical_document: 'Clinical Document',
-  rubric_instance: 'Rubric Assessment',
+const LANE_ICON = {
+  workforce: BriefcaseBusiness,
+  cases: ClipboardList,
+  research: BookOpen,
+  learning: GraduationCap,
+  meetings: CalendarDays,
+  billing: CreditCard,
+  audit: FileWarning,
 };
 
 export const UnifiedRecordView: React.FC<UnifiedRecordViewProps> = ({ owner }) => {
@@ -62,14 +78,6 @@ export const UnifiedRecordView: React.FC<UnifiedRecordViewProps> = ({ owner }) =
     setError(null);
 
     const load = async () => {
-      // Doctor-scoped sweep of the Rubric Compliance Chaser agent (see
-      // src/modules/shared/lib/rubricComplianceAgent.ts) runs FIRST, awaited,
-      // so a freshly-raised insight is committed before the UDR read below —
-      // otherwise it wouldn't show up until a second visit. Best-effort/
-      // non-fatal, same pattern as InsightsStrip.tsx's own
-      // runSubmissionChaser call: a failure here must never block the record
-      // from loading. The workforce-owned org-wide sweep is a separate
-      // concern wired into InsightsStrip.tsx elsewhere, not here.
       if (owner.kind === 'doctor') {
         try {
           await runRubricComplianceChaserForDoctor(supabase, owner.id);
@@ -101,7 +109,7 @@ export const UnifiedRecordView: React.FC<UnifiedRecordViewProps> = ({ owner }) =
     return (
       <div className="text-center py-16">
         <RefreshCw size={28} className="text-slate-400 animate-spin mx-auto mb-2" />
-        <p className="text-sm text-slate-500">Loading Unified Record...</p>
+        <p className="text-sm text-slate-500">Loading My Professional Record...</p>
       </div>
     );
   }
@@ -118,245 +126,127 @@ export const UnifiedRecordView: React.FC<UnifiedRecordViewProps> = ({ owner }) =
 
   if (!record) return null;
 
-  // This app has no deep-link routing to one specific research/casebook
-  // workspace instance — /workspace/research (or /doctor/research) always
-  // shows that owner's own list/picker view, so linking to the module
-  // route is correct here, not a shortcut.
-  const routePrefix = owner.kind === 'workforce' ? '/workspace' : '/doctor';
+  const projection = projectProfessionalRecordCommandCentre(record, {
+    ownerId: owner.id,
+    ownerKind: owner.kind,
+    tenantId: owner.kind === 'workforce' ? owner.tenantId : null,
+  });
 
   return (
     <div className="max-w-5xl mx-auto my-8 px-4 space-y-6">
-      {/* Header card */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center space-x-2">
-            <IdCard className="text-slate-500" size={18} />
-            <div>
-              <h2 className="font-bold text-slate-900 text-lg tracking-tight">
-                {record.identity.fullName || 'Unified Record'}
-              </h2>
-              <p className="text-xs text-slate-500">
-                {record.identity.category || 'No category set'}
-              </p>
+        <div className="flex items-start justify-between flex-wrap gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center space-x-2">
+              <IdCard className="text-slate-500" size={18} />
+              <h2 className="font-bold text-slate-900 text-lg tracking-tight">My Professional Record</h2>
             </div>
-          </div>
-          <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border bg-slate-100 text-slate-600 border-slate-200">
-            {IDENTITY_KIND_LABEL[record.identity.kind]}
-          </span>
-        </div>
-        <div className="mt-4 pt-4 border-t border-slate-100 flex items-center space-x-2">
-          <Building2 size={14} className="text-slate-400 shrink-0" />
-          <span className="text-xs text-slate-600 font-medium">
-            {record.tenant ? record.tenant.name : 'Not affiliated with an organization'}
-          </span>
-        </div>
-      </div>
-
-      {/* Instances */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
-        <div className="flex items-center space-x-2">
-          <FolderKanban size={16} className="text-slate-500" />
-          <h3 className="font-bold text-slate-900 text-sm">Workspaces</h3>
-        </div>
-        {record.instances.length === 0 ? (
-          <p className="text-sm text-slate-500">No workspaces yet.</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {record.instances.map((instance) => (
-              <button
-                key={instance.id}
-                type="button"
-                onClick={() => navigate(`${routePrefix}/${INSTANCE_ROUTE_SUFFIX[instance.type]}`)}
-                className="bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl p-4 text-left transition cursor-pointer space-y-1 flex flex-col"
-              >
-                <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">
-                  {INSTANCE_TYPE_LABEL[instance.type]}
-                </span>
-                <span className="font-bold text-slate-900 text-sm">{instance.title}</span>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
-                    {instance.status.replace(/_/g, ' ')}
-                  </span>
-                  <span className="text-[10px] text-slate-400">
-                    {new Date(instance.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Entries timeline */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
-        <div className="flex items-center space-x-2">
-          <History size={16} className="text-slate-500" />
-          <h3 className="font-bold text-slate-900 text-sm">Entries</h3>
-        </div>
-        {record.entries.length === 0 ? (
-          <p className="text-sm text-slate-500">No entries yet.</p>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {record.entries.map((entry) => (
-              <div key={`${entry.type}-${entry.id}`} className="py-3 flex items-start justify-between gap-3 flex-wrap">
-                <div className="flex items-start space-x-3">
-                  <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border bg-slate-100 text-slate-600 border-slate-200 shrink-0 mt-0.5">
-                    {ENTRY_TYPE_LABEL[entry.type]}
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">{entry.summary}</p>
-                    {entry.status && (
-                      <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mt-0.5">
-                        {entry.status.replace(/_/g, ' ')}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <span className="text-[10px] text-slate-400 shrink-0">
-                  {new Date(entry.createdAt).toLocaleDateString()}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Meetings — renders record.meetings, already fetched/typed by the
-          UDR layer (src/modules/shared/lib/udr.ts's fetchMeetings(),
-          scoped to meetings this person owes an action on). No new
-          meeting data model, no write path, no editing — strictly
-          rendering an already-typed field this page's existing data call
-          already returns. Live meeting_actions has 0 rows today (see
-          udr.ts's own header note), so the empty state below is expected,
-          not a bug to chase in this slice. */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
-        <div className="flex items-center space-x-2">
-          <CalendarDays size={16} className="text-slate-500" />
-          <h3 className="font-bold text-slate-900 text-sm">Meetings</h3>
-        </div>
-        {record.meetings.length === 0 ? (
-          <p className="text-sm text-slate-500">No meetings yet.</p>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {record.meetings.map((meeting) => (
-              <div key={meeting.id} className="py-3 space-y-2">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">{meeting.title}</p>
-                    {meeting.status && (
-                      <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mt-0.5">
-                        {meeting.status.replace(/_/g, ' ')}
-                      </p>
-                    )}
-                  </div>
-                  {meeting.scheduledAt && (
-                    <span className="text-[10px] text-slate-400 shrink-0">
-                      {new Date(meeting.scheduledAt).toLocaleDateString()}
-                    </span>
-                  )}
-                </div>
-                {meeting.actionsOwed.length > 0 && (
-                  <ul className="pl-3 border-l-2 border-slate-100 space-y-1">
-                    {meeting.actionsOwed.map((action) => (
-                      <li key={action.id} className="text-xs text-slate-600">
-                        {action.description}
-                        {action.dueDate && (
-                          <span className="text-slate-400"> &bull; due {new Date(action.dueDate).toLocaleDateString()}</span>
-                        )}
-                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-                          {' '}&bull; {action.status.replace(/_/g, ' ')}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Academic summary */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-        <div className="flex items-center space-x-2">
-          <GraduationCap size={16} className="text-slate-500" />
-          <h3 className="font-bold text-slate-900 text-sm">Academic Summary</h3>
-        </div>
-
-        <div>
-          <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mb-1">Dissertation</p>
-          {record.academic.dissertation ? (
-            <p className="text-sm text-slate-700">
-              {record.academic.dissertation.title}
-              <span className="text-slate-400"> &bull; {record.academic.dissertation.stage}</span>
+            <p className="text-xs text-slate-500">
+              A longitudinal overview of identity, assignments, portfolio, academic work, learning, and tracked professional activity.
             </p>
-          ) : (
-            <p className="text-sm text-slate-500">Not started</p>
-          )}
+          </div>
+          <button
+            type="button"
+            disabled={!projection.nextActionRoute}
+            onClick={() => projection.nextActionRoute && navigate(projection.nextActionRoute)}
+            className="inline-flex items-center space-x-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-900 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl text-xs font-bold shadow-sm transition cursor-pointer disabled:cursor-not-allowed"
+          >
+            <ArrowRight size={14} />
+            <span>{projection.nextActionLabel}</span>
+          </button>
         </div>
 
-        <div>
-          <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mb-1">Exam Readiness</p>
-          {record.academic.examReadiness ? (
-            <ul className="text-sm text-slate-700 space-y-1">
-              <li>
-                Evidemy: {record.academic.examReadiness.evidemy_completed_count} / {record.academic.examReadiness.evidemy_total_required}
-              </li>
-              <li>Physical logbook verified: {record.academic.examReadiness.physical_logbook_verified ? 'Yes' : 'No'}</li>
-              <li>Exam fees paid: {record.academic.examReadiness.exam_fees_paid ? 'Yes' : 'No'}</li>
-              <li>College forms submitted: {record.academic.examReadiness.college_forms_submitted ? 'Yes' : 'No'}</li>
-              <li>
-                Oral practice score:{' '}
-                {record.academic.examReadiness.oral_practice_score != null
-                  ? record.academic.examReadiness.oral_practice_score
-                  : 'None'}
-              </li>
-            </ul>
-          ) : (
-            <p className="text-sm text-slate-500">Not started</p>
-          )}
-        </div>
-
-        <div>
-          <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mb-1">Case Reports</p>
-          <p className="text-sm text-slate-700">
-            {record.academic.caseReportsCount > 0 ? record.academic.caseReportsCount : 'None'}
-          </p>
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Professional identity</p>
+            <p className="text-sm font-bold text-slate-900 truncate">{projection.identityName}</p>
+            <p className="text-[11px] text-slate-500">{projection.identityRole}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Institution</p>
+            <p className="text-sm font-bold text-slate-900 truncate">{projection.tenantName}</p>
+            <p className="text-[11px] text-slate-500">{IDENTITY_KIND_LABEL[record.identity.kind]}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Current assignment</p>
+            <p className="text-sm font-bold text-slate-900">{projection.currentAssignment}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Last activity</p>
+            <p className="text-sm font-bold text-slate-900">{projection.lastActivityLabel}</p>
+          </div>
         </div>
       </div>
 
-      {/* Billing status */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2">
-        <div className="flex items-center space-x-2">
-          <CreditCard size={16} className="text-slate-500" />
-          <h3 className="font-bold text-slate-900 text-sm">Billing</h3>
-        </div>
-        {record.billing.activeSubscription ? (
-          <p className="text-sm text-slate-700">
-            {record.billing.activeSubscription.plan.replace(/_/g, ' ')}
-            <span className="text-slate-400"> &bull; {record.billing.activeSubscription.status}</span>
-            {record.billing.activeSubscription.current_period_end && (
-              <span className="text-slate-400">
-                {' '}&bull; renews {new Date(record.billing.activeSubscription.current_period_end).toLocaleDateString()}
-              </span>
-            )}
-          </p>
-        ) : (
-          <p className="text-sm text-slate-500">Free plan &mdash; no active subscription</p>
-        )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {projection.lanes.map((lane) => {
+          const Icon = LANE_ICON[lane.key];
+          return (
+            <div key={lane.key} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start space-x-2 min-w-0">
+                  <Icon size={16} className="text-slate-500 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-slate-900 text-sm">{lane.title}</h3>
+                    <p className="text-xs text-slate-500 mt-1">{lane.summary}</p>
+                  </div>
+                </div>
+                <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border shrink-0 ${LANE_STATUS_CLASS[lane.status]}`}>
+                  {LANE_STATUS_LABEL[lane.status]}
+                </span>
+              </div>
+              {lane.route ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(lane.route!)}
+                  className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-[11px] font-bold transition cursor-pointer"
+                >
+                  <span>{lane.actionLabel}</span>
+                  <ChevronRight size={12} />
+                </button>
+              ) : (
+                <p className="text-[11px] text-slate-400">{lane.actionLabel}</p>
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      {/* Insights */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
         <div className="flex items-center space-x-2">
-          <Sparkles size={16} className="text-slate-500" />
-          <h3 className="font-bold text-slate-900 text-sm">Insights</h3>
+          <ShieldCheck size={16} className="text-slate-500" />
+          <h3 className="font-bold text-slate-900 text-sm">Record Boundaries</h3>
         </div>
-        {record.insights.length === 0 ? (
-          <p className="text-sm text-slate-500">No open insights right now.</p>
-        ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Detail level</p>
+            <p className="text-xs text-slate-600 mt-1">
+              Overview only. Case narratives, raw notes, feedback, and private document links stay in their source modules.
+            </p>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Meetings and audit</p>
+            <p className="text-xs text-slate-600 mt-1">
+              Shown only when a real per-person source exists. Unsupported audit data is not fabricated.
+            </p>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Data source</p>
+            <p className="text-xs text-slate-600 mt-1">
+              Read from the Unified Doctor Record for this authenticated identity and tenant context.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {record.insights.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+          <div className="flex items-center space-x-2">
+            <Sparkles size={16} className="text-slate-500" />
+            <h3 className="font-bold text-slate-900 text-sm">Open Insights</h3>
+          </div>
           <div className="space-y-2">
-            {record.insights.map((insight) => (
+            {record.insights.slice(0, 3).map((insight) => (
               <div key={insight.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-start justify-between gap-3">
                 <div className="flex items-start space-x-2">
                   <ChevronRight size={13} className="text-slate-400 shrink-0 mt-0.5" />
@@ -373,8 +263,8 @@ export const UnifiedRecordView: React.FC<UnifiedRecordViewProps> = ({ owner }) =
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

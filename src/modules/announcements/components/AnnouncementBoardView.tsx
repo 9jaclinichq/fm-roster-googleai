@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { databaseService } from '../../../lib/databaseService';
 import { Announcement, AnnouncementCategory } from '../../../types';
-import { Pin, Search, Megaphone, RefreshCw, CheckCircle2, ChevronDown, ChevronUp, Table2 } from 'lucide-react';
+import { listMeetingSeries, listMeetings, Meeting, MeetingSeries } from '../../meetings/lib/meetingsService';
+import { projectTeamCoordination } from '../lib/teamCoordination';
+import { Pin, Search, Megaphone, RefreshCw, CheckCircle2, ChevronDown, ChevronUp, Table2, CalendarClock } from 'lucide-react';
 
 interface AnnouncementBoardViewProps {
-  resident: { id: string; name: string; category: string };
+  resident: { id: string; name: string; category: string; tenant_id?: string };
   // Optional — deep-links a roster-published announcement to the Full
   // Roster view. Uses the announcement's EXISTING `category` field
   // ('Roster') to decide when to show the action, so this needed no
@@ -28,6 +30,9 @@ const CATEGORY_STYLES: Record<AnnouncementCategory, string> = {
 export const AnnouncementBoardView: React.FC<AnnouncementBoardViewProps> = ({ resident, onViewFullRoster }) => {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  const [meetingSeries, setMeetingSeries] = useState<MeetingSeries[]>([]);
+  const [meetingsBySeriesId, setMeetingsBySeriesId] = useState<Record<string, Meeting[]>>({});
+  const [meetingsUnavailable, setMeetingsUnavailable] = useState(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [categoryFilter, setCategoryFilter] = useState<AnnouncementCategory | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -37,12 +42,26 @@ export const AnnouncementBoardView: React.FC<AnnouncementBoardViewProps> = ({ re
     async function load() {
       setIsLoading(true);
       try {
+        const tenantId = resident.tenant_id;
+        if (!tenantId) throw new Error('Tenant context is unavailable for announcements.');
         const [list, reads] = await Promise.all([
-          databaseService.getAnnouncements(),
+          databaseService.getAnnouncements(tenantId),
           databaseService.getAnnouncementReadsForWorkforce(resident.id),
         ]);
         setAnnouncements(list);
         setReadIds(new Set(reads.map(r => r.announcement_id)));
+        try {
+          const series = await listMeetingSeries({ tenantId });
+          const meetingPairs = await Promise.all(series.map(async (seriesRow) => [seriesRow.id, await listMeetings(seriesRow.id)] as const));
+          setMeetingSeries(series);
+          setMeetingsBySeriesId(Object.fromEntries(meetingPairs));
+          setMeetingsUnavailable(false);
+        } catch (meetingErr) {
+          console.warn('Failed to load tenant meetings:', meetingErr);
+          setMeetingSeries([]);
+          setMeetingsBySeriesId({});
+          setMeetingsUnavailable(true);
+        }
       } catch (err) {
         console.warn('Failed to load announcements:', err);
       } finally {
@@ -50,7 +69,7 @@ export const AnnouncementBoardView: React.FC<AnnouncementBoardViewProps> = ({ re
       }
     }
     load();
-  }, [resident.id]);
+  }, [resident.id, resident.tenant_id]);
 
   const handleExpand = async (announcement: Announcement) => {
     const isOpening = expandedId !== announcement.id;
@@ -77,6 +96,17 @@ export const AnnouncementBoardView: React.FC<AnnouncementBoardViewProps> = ({ re
 
   const pinned = filtered.filter(a => a.pinned);
   const regular = filtered.filter(a => !a.pinned);
+  const coordination = useMemo(
+    () => projectTeamCoordination({
+      announcements,
+      readAnnouncementIds: readIds,
+      meetingSeries,
+      meetingsBySeriesId,
+      nowIso: new Date().toISOString(),
+      role: 'member',
+    }),
+    [announcements, readIds, meetingSeries, meetingsBySeriesId]
+  );
 
   const renderCard = (announcement: Announcement) => {
     const isExpanded = expandedId === announcement.id;
@@ -150,11 +180,37 @@ export const AnnouncementBoardView: React.FC<AnnouncementBoardViewProps> = ({ re
   };
 
   return (
-    <div className="max-w-3xl mx-auto my-8 px-4 space-y-6">
+    <div className="max-w-4xl mx-auto my-8 px-4 space-y-6">
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-        <div className="flex items-center space-x-2 mb-4">
-          <Megaphone className="text-slate-500" size={18} />
-          <h2 className="font-bold text-slate-900 text-lg tracking-tight">Department Announcements</h2>
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+          <div className="space-y-1">
+            <div className="flex items-center space-x-2">
+              <Megaphone className="text-slate-500" size={18} />
+              <h2 className="font-bold text-slate-900 text-lg tracking-tight">Team Coordination</h2>
+            </div>
+            <p className="text-xs text-slate-500">Tenant announcements and persisted meeting schedule for {resident.name}.</p>
+          </div>
+          <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border bg-slate-100 text-slate-600 border-slate-200">
+            {coordination.nextActionLabel}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active announcements</p>
+            <p className="text-xl font-bold text-slate-900">{coordination.activeAnnouncements.length}</p>
+            <p className="text-[11px] text-slate-500">{coordination.pinnedAnnouncements.length} pinned</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Upcoming meetings</p>
+            <p className="text-xl font-bold text-slate-900">{coordination.upcomingMeetings.length}</p>
+            <p className="text-[11px] text-slate-500">{meetingsUnavailable ? 'Meeting schedule unavailable' : 'Persisted scheduled meetings only'}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Lifecycle</p>
+            <p className="text-sm font-bold text-slate-900">Active / pinned</p>
+            <p className="text-[11px] text-slate-500">No scheduled, expired, archived, or draft announcement state exists.</p>
+          </div>
         </div>
 
         {/* Search */}
@@ -192,6 +248,27 @@ export const AnnouncementBoardView: React.FC<AnnouncementBoardViewProps> = ({ re
           ))}
         </div>
       </div>
+
+      {!isLoading && coordination.upcomingMeetings.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+          <div className="flex items-center space-x-2">
+            <CalendarClock className="text-slate-500" size={16} />
+            <h3 className="font-bold text-slate-900 text-sm">Upcoming Meetings</h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {coordination.upcomingMeetings.slice(0, 4).map((meeting) => (
+              <div key={meeting.id} className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+                <p className="text-sm font-bold text-slate-900">{meeting.title}</p>
+                <p className="text-[11px] text-slate-500">{meeting.seriesName}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mt-1">
+                  {meeting.scheduledAt ? new Date(meeting.scheduledAt).toLocaleString() : 'No date set'} • {meeting.status}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-400">No meeting location or external link is shown because no persisted field exists for it.</p>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-center py-12 bg-white border border-slate-200 rounded-2xl">

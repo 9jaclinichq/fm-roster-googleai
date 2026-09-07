@@ -19,6 +19,7 @@ import { ClinicalWritingPanel } from '../../clinical-writing/components/Clinical
 import { AgentRegistryPanel } from './dashboard/AgentRegistryPanel';
 import { ActivityLogPanel } from './dashboard/ActivityLogPanel';
 import { MemberRecordModal } from '../../shared/ui/MemberRecordModal';
+import { computeReconciliationIssues } from '../../roster-engine/lib/rosterReconciliation';
 
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
 // only needed when the Chief actually opens the Knowledge Packs tab.
@@ -41,9 +42,9 @@ const TenantCustomizationView = lazy(() =>
 const TemplateManagerView = lazy(() =>
   import('./dashboard/TemplateManagerView').then(m => ({ default: m.TemplateManagerView }))
 );
-import { Collection, WorkforceMember, SubmissionWithWorkforce, Submission, Announcement, AnnouncementCategory, DelegatedRole, OrgGroup, WorkforceCategory } from '../../../types';
+import { Collection, WorkforceMember, SubmissionWithWorkforce, Submission, Announcement, AnnouncementCategory, DelegatedRole, OrgGroup, WorkforceCategory, CombinedMasterRoster, Rotation } from '../../../types';
 import { useTerminology } from '../../shared/terminology';
-import { CheckCircle, X, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle, RefreshCw, X } from 'lucide-react';
 
 interface ChiefDashboardViewProps {
   onLogout: () => void;
@@ -68,6 +69,8 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
   // view. Keyed by workforce_id; value is null when no email is on file.
   const [memberContacts, setMemberContacts] = useState<Record<string, string | null>>({});
   const [submissions, setSubmissions] = useState<SubmissionWithWorkforce[]>([]);
+  const [masterRoster, setMasterRoster] = useState<CombinedMasterRoster | null>(null);
+  const [rotations, setRotations] = useState<Rotation[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'submissions' | 'pending' | 'workforce' | 'announcements' | 'roles' | 'knowledge' | 'roster' | 'customization' | 'templates' | 'forms' | 'integrations' | 'categories' | 'scheduling' | 'meetings' | 'clinical-writing' | 'agents' | 'activity' | 'settings'>('submissions');
 
@@ -191,6 +194,8 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
       // 1. Get settings
       const settings = await databaseService.getSettings(tid);
+      const tenantRotations = await databaseService.getRotations();
+      setRotations(tenantRotations);
 
       // 2. Get collections
       const collectionsList = await databaseService.getCollections(tid);
@@ -202,10 +207,15 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
       if (activeColl) {
         setChangeDeadlineValue(activeColl.deadline.substring(0, 16));
         // 3. Get submissions for active collection
-        const subs = await databaseService.getSubmissions(activeColl.id, tid);
+        const [subs, roster] = await Promise.all([
+          databaseService.getSubmissions(activeColl.id, tid),
+          databaseService.getMasterRosterForCollection(activeColl.id),
+        ]);
         setSubmissions(subs);
+        setMasterRoster(roster);
       } else {
         setSubmissions([]);
+        setMasterRoster(null);
       }
 
       // 4. Get workforce (codes are fetched separately via a privileged RPC)
@@ -840,6 +850,28 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
   // Calculate if active collection deadline passed
   const isPastDeadline = collection ? (new Date(collection.deadline).getTime() < Date.now()) : false;
+  const collectionState = !collection
+    ? 'No current collection'
+    : collection.status !== 'open'
+      ? 'Locked'
+      : isPastDeadline
+        ? 'Overdue'
+        : 'Open';
+  const rosterState = masterRoster?.status === 'published'
+    ? `Published${masterRoster.published_at ? ` ${new Date(masterRoster.published_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : ''}`
+    : masterRoster
+      ? masterRoster.status.replace('_', ' ')
+      : 'Not started';
+  const reconciliationWarnings = computeReconciliationIssues(submissions, activeWorkforce, rotations, masterRoster);
+  const nextChiefAction = (() => {
+    if (!collection) return { label: 'Create a collection', tab: 'settings' as const };
+    if (collection.status !== 'open') return { label: 'Review or open collection settings', tab: 'settings' as const };
+    if (pendingCount > 0 && isPastDeadline) return { label: `Follow up ${pendingCount} overdue ${t('members', 'residents').toLowerCase()}`, tab: 'pending' as const };
+    if (pendingCount > 0) return { label: `Check ${pendingCount} pending ${t('members', 'residents').toLowerCase()}`, tab: 'pending' as const };
+    if (masterRoster?.status !== 'published') return { label: 'Prepare or publish roster', tab: 'roster' as const };
+    if (reconciliationWarnings.length > 0) return { label: 'Review reconciliation warnings', tab: 'roster' as const };
+    return { label: 'Review submitted forms', tab: 'submissions' as const };
+  })();
 
   if (isLoading) {
     return (
@@ -881,6 +913,51 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
         >
           Exit Dashboard
         </button>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+          <div>
+            <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">Daily Command Centre</p>
+            <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">Current collection and roster state</h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab(nextChiefAction.tab)}
+            className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-sm transition cursor-pointer"
+          >
+            {nextChiefAction.label}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Collection</p>
+            <p className="text-sm font-bold text-slate-900 truncate mt-1" title={collection?.title ?? undefined}>{collection?.title ?? 'None selected'}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">State</p>
+            <p className={`text-sm font-bold mt-1 ${collectionState === 'Overdue' ? 'text-rose-700' : collectionState === 'Open' ? 'text-emerald-700' : 'text-slate-800'}`}>{collectionState}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Submitted</p>
+            <p className="text-sm font-bold text-emerald-700 mt-1">{submittedCount} of {totalWorkforceCount}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Pending</p>
+            <p className={`text-sm font-bold mt-1 ${pendingCount > 0 ? 'text-amber-700' : 'text-slate-800'}`}>{pendingCount}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Roster</p>
+            <p className="text-sm font-bold text-slate-900 capitalize mt-1">{rosterState}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Warnings</p>
+            <p className={`text-sm font-bold mt-1 flex items-center gap-1 ${reconciliationWarnings.length > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+              {reconciliationWarnings.length > 0 && <AlertTriangle size={13} />}
+              <span>{reconciliationWarnings.length}</span>
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* KPI Dashboard Cards */}

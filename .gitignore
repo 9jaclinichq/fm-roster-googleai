@@ -21,3 +21,18 @@ supabase/.temp/
 # notes.jsonl, findings.jsonl, decisions.jsonl); a crash mid-write could
 # otherwise leave one of these visible as an untracked file.
 .workspc-engineering/.*.tmp-*
+
+# OE-003A Active Agent Nudge Bridge — generated runtime state only. The
+# queued message files embed live agent session identifiers (pid, cwd,
+# sessionId) and both files are rewritten on every delivery attempt: this
+# is runtime state, not source. The bridge's code, verifier and README are
+# committed; only these generated paths are ignored.
+.workspc-engineering/agent-nudge-bridge/messages/
+.workspc-engineering/agent-nudge-bridge/events.jsonl
+
+# Workspc Orchestrator V5 — runtime state only. The kernel source, docs and
+# tests are tracked infrastructure (human decision, Activation Phase 2); this
+# directory holds live process state: supervisor.pid, the append-only event
+# log, health/cycle snapshots and their .bak copies. Same split already applied
+# to the agent-nudge-bridge above.
+.workspc-engineering/orchestrator-v5/state/

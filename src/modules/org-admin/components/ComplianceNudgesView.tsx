@@ -27,6 +27,9 @@ interface ComplianceNudgesViewProps {
   // both type it as plain `string`), so this stays `string[]` rather than
   // inventing one.
   excludeNudgeTypes?: string[];
+  // Optional compact empty copy for callers that already surface a blocking
+  // action elsewhere in the same view.
+  emptyMessage?: string;
 }
 
 const SEVERITY_ORDER: Record<NudgeSeverity, number> = { high: 0, medium: 1, info: 2 };
@@ -161,7 +164,7 @@ async function deriveNudges(workforceId: string, tenantId: string | undefined): 
   return nudges;
 }
 
-export const ComplianceNudgesView: React.FC<ComplianceNudgesViewProps> = ({ resident, compact = false, excludeNudgeTypes = [] }) => {
+export const ComplianceNudgesView: React.FC<ComplianceNudgesViewProps> = ({ resident, compact = false, excludeNudgeTypes = [], emptyMessage }) => {
   const navigate = useNavigate();
   const [nudges, setNudges] = useState<ComplianceNudge[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -211,7 +214,7 @@ export const ComplianceNudgesView: React.FC<ComplianceNudgesViewProps> = ({ resi
     return (
       <div className="flex items-center space-x-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
         <CheckCircle2 size={15} />
-        <span>You're all caught up — no outstanding compliance items.</span>
+        <span>{emptyMessage ?? 'You\'re all caught up - no outstanding compliance items.'}</span>
       </div>
     );
   }

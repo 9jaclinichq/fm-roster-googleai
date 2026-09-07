@@ -1,5 +1,6 @@
 import React from 'react';
 import { Announcement, AnnouncementCategory } from '../../../../types';
+import { projectTeamCoordination } from '../../../announcements/lib/teamCoordination';
 import { Megaphone, Pin, Plus, AlertTriangle } from 'lucide-react';
 
 const ANNOUNCEMENT_CATEGORIES: AnnouncementCategory[] = ['Roster', 'Exam', 'CME', 'Admin'];
@@ -37,8 +38,53 @@ export const AnnouncementsAdminPanel: React.FC<AnnouncementsAdminPanelProps> = (
   isPostingAnnouncement,
   handleCreateAnnouncement,
 }) => {
+  const coordination = projectTeamCoordination({
+    announcements,
+    meetingSeries: [],
+    meetingsBySeriesId: {},
+    nowIso: new Date().toISOString(),
+    role: 'admin',
+  });
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="space-y-6">
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="space-y-1">
+            <div className="flex items-center space-x-2">
+              <Megaphone className="text-slate-500" size={16} />
+              <h3 className="font-bold text-slate-800 text-sm md:text-base">Team Coordination</h3>
+            </div>
+            <p className="text-xs text-slate-500">Tenant announcements are active once posted. Scheduling, expiry, archive, and draft announcement states are not modeled.</p>
+          </div>
+          <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border bg-slate-100 text-slate-600 border-slate-200">
+            {coordination.nextActionLabel}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active</p>
+            <p className="text-xl font-bold text-slate-900">{coordination.activeAnnouncements.length}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Pinned</p>
+            <p className="text-xl font-bold text-slate-900">{coordination.pinnedAnnouncements.length}</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Upcoming meetings</p>
+            <p className="text-xl font-bold text-slate-900">Meetings tab</p>
+            <p className="text-[11px] text-slate-500">Persisted meeting CRUD is managed separately.</p>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Unsupported</p>
+            <p className="text-sm font-bold text-slate-900">No archive/expiry</p>
+            <p className="text-[11px] text-slate-500">Not fabricated as lifecycle state.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* List of existing announcements */}
       <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-6 space-y-4">
         <div className="pb-3 border-b border-slate-100 flex items-center space-x-2">
@@ -154,6 +200,7 @@ export const AnnouncementsAdminPanel: React.FC<AnnouncementsAdminPanelProps> = (
             {isPostingAnnouncement ? 'Posting...' : 'Post Announcement'}
           </button>
         </form>
+      </div>
       </div>
     </div>
   );

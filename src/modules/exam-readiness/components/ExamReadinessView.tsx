@@ -1,52 +1,60 @@
-import React, { useState, useEffect } from 'react';
-import { databaseService } from '../../../lib/databaseService';
-import { Dissertation, DissertationMilestone, CaseReport, ExamReadiness, Collection, Submission } from '../../../types';
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
+import { CaseReport, Collection, Dissertation, DissertationMilestone, ExamReadiness, KnowledgePack, Submission, VivaSimulation } from '../../../types';
 import {
-  Gauge,
   AlertTriangle,
-  CheckCircle2,
+  ArrowRight,
+  BookOpen,
+  Gauge,
   GraduationCap,
-  ClipboardList,
-  CalendarCheck,
-  BookOpenCheck,
+  Library,
+  Mic,
   RefreshCw,
   Save,
+  ShieldCheck,
 } from 'lucide-react';
+import { LearningCapabilityStatus, projectLearningAssessmentCommandCentre } from '../lib/learningAssessmentCommandCentre';
 
 interface ExamReadinessViewProps {
-  resident: { id: string; name: string; category: string };
+  resident: { id: string; name: string; category: string; tenant_id?: string };
 }
 
-interface Pillar {
-  key: string;
-  label: string;
-  score: number;
-  icon: React.ReactNode;
-  detail: string;
-}
-
-const scoreColor = (score: number) => {
-  if (score >= 80) return 'text-emerald-600';
-  if (score >= 50) return 'text-amber-600';
-  return 'text-rose-600';
+const STATUS_LABEL: Record<LearningCapabilityStatus, string> = {
+  working: 'Working',
+  partial: 'Partial',
+  scaffolded: 'Scaffolded',
+  absent: 'Absent',
 };
 
-const scoreRing = (score: number) => {
-  if (score >= 80) return 'stroke-emerald-500';
-  if (score >= 50) return 'stroke-amber-500';
-  return 'stroke-rose-500';
+const STATUS_CLASS: Record<LearningCapabilityStatus, string> = {
+  working: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  partial: 'bg-amber-50 text-amber-700 border-amber-200',
+  scaffolded: 'bg-slate-50 text-slate-600 border-slate-200',
+  absent: 'bg-rose-50 text-rose-700 border-rose-200',
+};
+
+const LANE_ICON = {
+  exam: Gauge,
+  viva: Mic,
+  library: Library,
+  review: ShieldCheck,
+  record: GraduationCap,
 };
 
 export const ExamReadinessView: React.FC<ExamReadinessViewProps> = ({ resident }) => {
+  const navigate = useNavigate();
+  const tenantId = resident.tenant_id ?? DEFAULT_TENANT_ID;
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [dissertation, setDissertation] = useState<Dissertation | null>(null);
   const [milestones, setMilestones] = useState<DissertationMilestone[]>([]);
   const [caseReports, setCaseReports] = useState<CaseReport[]>([]);
   const [readiness, setReadiness] = useState<ExamReadiness | null>(null);
+  const [vivaSimulations, setVivaSimulations] = useState<VivaSimulation[]>([]);
+  const [knowledgePacks, setKnowledgePacks] = useState<KnowledgePack[]>([]);
   const [currentCollection, setCurrentCollection] = useState<Collection | null>(null);
   const [currentSubmission, setCurrentSubmission] = useState<Submission | null>(null);
 
-  // Editable fields
   const [evidemyCompleted, setEvidemyCompleted] = useState<number>(0);
   const [evidemyRequired, setEvidemyRequired] = useState<number>(0);
   const [logbookVerified, setLogbookVerified] = useState<boolean>(false);
@@ -58,20 +66,23 @@ export const ExamReadinessView: React.FC<ExamReadinessViewProps> = ({ resident }
   const load = async () => {
     setIsLoading(true);
     try {
-      const [diss, reports, ready, settings, collections] = await Promise.all([
+      const [diss, reports, ready, settings, collections, vivaHistory, packs] = await Promise.all([
         databaseService.getDissertationForWorkforce(resident.id),
         databaseService.getCaseReports(resident.id),
         databaseService.getOrCreateExamReadiness(resident.id),
-        databaseService.getSettings(),
-        databaseService.getCollections(),
+        databaseService.getSettings(tenantId),
+        databaseService.getCollections(tenantId),
+        databaseService.getVivaSimulations(resident.id),
+        databaseService.getKnowledgePacks(undefined, tenantId),
       ]);
 
       setDissertation(diss);
-      if (diss) {
-        setMilestones(await databaseService.getDissertationMilestones(diss.id));
-      }
+      const dissertationMilestones = diss ? await databaseService.getDissertationMilestones(diss.id) : [];
+      setMilestones(dissertationMilestones);
       setCaseReports(reports);
       setReadiness(ready);
+      setVivaSimulations(vivaHistory);
+      setKnowledgePacks(packs);
       setEvidemyCompleted(ready.evidemy_completed_count);
       setEvidemyRequired(ready.evidemy_total_required);
       setLogbookVerified(ready.physical_logbook_verified);
@@ -80,11 +91,9 @@ export const ExamReadinessView: React.FC<ExamReadinessViewProps> = ({ resident }
 
       const activeColl = collections.find(c => c.id === settings.current_collection_id) || null;
       setCurrentCollection(activeColl);
-      if (activeColl) {
-        setCurrentSubmission(await databaseService.getSubmissionForWorkforceAndCollection(resident.id, activeColl.id));
-      }
+      setCurrentSubmission(activeColl ? await databaseService.getSubmissionForWorkforceAndCollection(resident.id, activeColl.id) : null);
     } catch (err) {
-      console.warn('Failed to load exam readiness data:', err);
+      console.warn('Failed to load learning and assessment data:', err);
     } finally {
       setIsLoading(false);
     }
@@ -93,7 +102,7 @@ export const ExamReadinessView: React.FC<ExamReadinessViewProps> = ({ resident }
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resident.id]);
+  }, [resident.id, tenantId]);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -121,159 +130,94 @@ export const ExamReadinessView: React.FC<ExamReadinessViewProps> = ({ resident }
     return (
       <div className="max-w-3xl mx-auto my-12 p-8 text-center bg-white border border-slate-200 rounded-2xl shadow-sm">
         <RefreshCw size={32} className="text-slate-500 animate-spin mx-auto mb-3" />
-        <p className="text-sm font-medium text-slate-600">Calculating exam readiness...</p>
+        <p className="text-sm font-medium text-slate-600">Loading learning and assessment...</p>
       </div>
     );
   }
 
-  // --- Pillar 1: Proposal & Ethics ---
-  const proposalMilestone = milestones.find(m => m.stage === 'Proposal Development');
-  const ethicsMilestone = milestones.find(m => m.stage === 'Ethical Clearance');
-  const milestoneScore = (status?: string) => (status === 'approved' ? 100 : status === 'in_review' ? 50 : 0);
-  const dissertationScore = dissertation
-    ? Math.round((milestoneScore(proposalMilestone?.status) + milestoneScore(ethicsMilestone?.status)) / 2)
-    : 0;
-
-  // --- Pillar 2: Casebook ---
-  const casebookCompleted = caseReports.filter(r => r.status === 'pending_supervisor' || r.status === 'approved').length;
-  const casebookScore = Math.round((casebookCompleted / 15) * 100);
-
-  // --- Pillar 3: Roster compliance ---
-  const rosterScore = !currentCollection ? 100 : currentSubmission ? 100 : 0;
-
-  // --- Pillar 4: Evidemy / logistics ---
-  const evidemyScore = evidemyRequired > 0 ? Math.round((evidemyCompleted / evidemyRequired) * 100) : 100;
-  const logisticsScore = Math.round(
-    (evidemyScore + (logbookVerified ? 100 : 0) + (feesPaid ? 100 : 0) + (formsSubmitted ? 100 : 0)) / 4
-  );
-
-  const overallScore = Math.round((dissertationScore + casebookScore + rosterScore + logisticsScore) / 4);
-
-  const pillars: Pillar[] = [
-    {
-      key: 'dissertation',
-      label: 'Proposal & Ethics',
-      score: dissertationScore,
-      icon: <GraduationCap size={16} />,
-      detail: dissertation ? `${dissertation.stage}` : 'Not started',
-    },
-    {
-      key: 'casebook',
-      label: '15-Casebook Completion',
-      score: casebookScore,
-      icon: <ClipboardList size={16} />,
-      detail: `${casebookCompleted} / 15 submitted`,
-    },
-    {
-      key: 'roster',
-      label: 'Roster Compliance',
-      score: rosterScore,
-      icon: <CalendarCheck size={16} />,
-      detail: currentCollection ? (currentSubmission ? 'Current month submitted' : 'Current month pending') : 'No active collection',
-    },
-    {
-      key: 'logistics',
-      label: 'Evidemy & Logistics',
-      score: logisticsScore,
-      icon: <BookOpenCheck size={16} />,
-      detail: `${evidemyCompleted}/${evidemyRequired || '—'} modules`,
-    },
-  ];
-
-  // Dynamic alerts
-  const alerts: string[] = [];
-  if (!dissertation) {
-    alerts.push('Dissertation not yet started — no proposal or ethics milestone on record.');
-  } else {
-    if (proposalMilestone?.status !== 'approved') alerts.push('Proposal Development milestone is not yet approved.');
-    if (ethicsMilestone?.status !== 'approved') alerts.push('Ethical Clearance milestone is not yet approved.');
-  }
-  if (casebookCompleted < 15) {
-    alerts.push(`Missing ${15 - casebookCompleted} Case Report${15 - casebookCompleted === 1 ? '' : 's'} for Part 2 Exam Eligibility.`);
-  }
-  if (currentCollection && !currentSubmission) {
-    alerts.push(`Roster submission pending for "${currentCollection.title}".`);
-  }
-  if (evidemyRequired > 0 && evidemyCompleted < evidemyRequired) {
-    alerts.push(`${evidemyRequired - evidemyCompleted} Evidemy module${evidemyRequired - evidemyCompleted === 1 ? '' : 's'} remaining.`);
-  }
-  if (!logbookVerified) alerts.push('Physical logbook has not been verified.');
-  if (!feesPaid) alerts.push('Exam fees are not yet marked as paid.');
-  if (!formsSubmitted) alerts.push('College forms have not been submitted.');
-
-  const circumference = 2 * Math.PI * 54;
+  const projection = projectLearningAssessmentCommandCentre({
+    readiness,
+    dissertation,
+    milestones,
+    caseReports,
+    vivaSimulations,
+    knowledgePacks,
+    currentCollection,
+    currentSubmission,
+  });
 
   return (
-    <div className="max-w-4xl mx-auto my-8 px-4 space-y-6">
-      {/* Score header */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 flex flex-col sm:flex-row items-center gap-6">
-        <div className="relative h-32 w-32 shrink-0">
-          <svg className="h-32 w-32 -rotate-90" viewBox="0 0 120 120">
-            <circle cx="60" cy="60" r="54" fill="none" stroke="#e2e8f0" strokeWidth="10" />
-            <circle
-              cx="60" cy="60" r="54" fill="none" strokeWidth="10" strokeLinecap="round"
-              className={scoreRing(overallScore)}
-              strokeDasharray={circumference}
-              strokeDashoffset={circumference - (overallScore / 100) * circumference}
-            />
-          </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className={`text-2xl font-extrabold ${scoreColor(overallScore)}`}>{overallScore}%</span>
-            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Ready</span>
+    <div className="max-w-5xl mx-auto my-8 px-4 space-y-6">
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="space-y-1">
+            <div className="flex items-center space-x-2">
+              <BookOpen className="text-slate-500" size={18} />
+              <h2 className="font-bold text-slate-900 text-lg tracking-tight">Learning and Assessment</h2>
+            </div>
+            <p className="text-xs text-slate-500 max-w-2xl">
+              A resident-owned view of existing exam readiness, viva practice, library resources, review workflow, and professional record continuity.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(projection.nextActionRoute)}
+            className="inline-flex items-center space-x-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-sm transition cursor-pointer"
+          >
+            <ArrowRight size={14} />
+            <span>{projection.nextActionLabel}</span>
+          </button>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Recent activity</p>
+            <p className="text-sm font-bold text-slate-900 mt-1">{projection.recentActivity}</p>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Next action</p>
+            <p className="text-sm font-bold text-slate-900 mt-1">{projection.nextActionDetail}</p>
           </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
+        {projection.lanes.map((lane) => {
+          const Icon = LANE_ICON[lane.key];
+          return (
+            <div key={lane.key} className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex flex-col">
+              <div className="flex items-start gap-2">
+                <Icon size={16} className="text-slate-500 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <h3 className="font-bold text-slate-900 text-sm">{lane.title}</h3>
+                  <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">{lane.role}</p>
+                </div>
+              </div>
+              <span className={`mt-3 w-fit inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${STATUS_CLASS[lane.status]}`}>
+                {STATUS_LABEL[lane.status]}
+              </span>
+              <p className="text-xs text-slate-700 mt-3 leading-relaxed min-h-[54px]">{lane.summary}</p>
+              <p className="text-[11px] text-slate-500 mt-2">Updated: {lane.recentActivity}</p>
+              <button
+                type="button"
+                onClick={() => navigate(lane.route)}
+                className="mt-auto w-full inline-flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 border border-slate-200 hover:border-slate-300 text-slate-800 rounded-lg text-xs font-bold transition cursor-pointer"
+              >
+                <span>{lane.actionLabel}</span>
+                <ArrowRight size={13} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-4">
         <div>
-          <div className="flex items-center space-x-2 mb-1">
-            <Gauge className="text-slate-500" size={18} />
-            <h2 className="font-bold text-slate-900 text-lg tracking-tight">Exam Readiness Scorecard</h2>
-          </div>
-          <p className="text-xs text-slate-500 max-w-md">
-            Consolidated score across dissertation progress, casebook completion, roster compliance, and Evidemy/logistics sign-off.
+          <h3 className="font-bold text-slate-800 text-sm">Update Tracked Exam Items</h3>
+          <p className="text-xs text-slate-500 mt-1">
+            These are explicit resident-maintained fields. Unsupported readiness scores, completion percentages, exam dates, supervisor approvals, and recommendations are not inferred.
           </p>
         </div>
-      </div>
-
-      {/* Pillar cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {pillars.map(p => (
-          <div key={p.key} className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex items-start justify-between">
-            <div className="flex items-start space-x-3">
-              <div className="bg-slate-100 text-slate-600 p-2 rounded-lg">{p.icon}</div>
-              <div>
-                <div className="text-xs font-bold text-slate-700">{p.label}</div>
-                <div className="text-[10px] text-slate-400 mt-0.5">{p.detail}</div>
-              </div>
-            </div>
-            <span className={`font-extrabold text-lg ${scoreColor(p.score)}`}>{p.score}%</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Alerts */}
-      {alerts.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-2">
-          <div className="flex items-center space-x-2 mb-1">
-            <AlertTriangle className="text-amber-500" size={16} />
-            <h3 className="font-bold text-slate-800 text-sm">Outstanding Requirements</h3>
-          </div>
-          {alerts.map((a, i) => (
-            <div key={i} className="flex items-start space-x-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
-              <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-              <span>{a}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {alerts.length === 0 && (
-        <div className="flex items-center space-x-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-          <CheckCircle2 size={15} />
-          <span>All tracked requirements are complete.</span>
-        </div>
-      )}
-
-      {/* Editable self-report fields */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-4">
-        <h3 className="font-bold text-slate-800 text-sm">Update Evidemy & Logistics</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-700 uppercase">Evidemy Modules Completed</label>
@@ -325,14 +269,10 @@ export const ExamReadinessView: React.FC<ExamReadinessViewProps> = ({ resident }
         </div>
       </div>
 
-      {readiness?.oral_practice_score != null && (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex items-center justify-between">
-          <span className="text-xs font-bold text-slate-700">Average Mock Viva Score</span>
-          <span className={`font-extrabold text-lg ${scoreColor(readiness.oral_practice_score)}`}>
-            {readiness.oral_practice_score.toFixed(1)}%
-          </span>
-        </div>
-      )}
+      <div className="flex items-start space-x-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">
+        <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+        <span>{projection.privacyBoundary}</span>
+      </div>
     </div>
   );
 };

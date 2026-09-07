@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { databaseService } from '../../../lib/databaseService';
+import { databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
 import { KnowledgePack, KnowledgePackCategory } from '../../../types';
 import { Library, Search, Download, RefreshCw, FileText, BookOpen, ClipboardCheck, FileQuestion } from 'lucide-react';
 
@@ -10,18 +10,22 @@ const CATEGORIES: { value: KnowledgePackCategory; label: string; icon: React.Rea
   { value: 'past_questions', label: 'Past Questions', icon: <FileQuestion size={13} /> },
 ];
 
-export const KnowledgeLibraryView: React.FC = () => {
+interface KnowledgeLibraryViewProps {
+  tenantId?: string;
+}
+
+export const KnowledgeLibraryView: React.FC<KnowledgeLibraryViewProps> = ({ tenantId = DEFAULT_TENANT_ID }) => {
   const [packs, setPacks] = useState<KnowledgePack[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [categoryFilter, setCategoryFilter] = useState<KnowledgePackCategory | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   useEffect(() => {
-    databaseService.getKnowledgePacks()
+    databaseService.getKnowledgePacks(undefined, tenantId)
       .then(setPacks)
       .catch(err => console.warn('Failed to load knowledge packs:', err))
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [tenantId]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();

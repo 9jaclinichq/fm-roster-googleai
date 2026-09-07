@@ -3,18 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, X, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic,
   ShieldCheck, FlaskConical, Stethoscope, IdCard, Clock, CheckCircle2, ChevronRight,
-  AlertTriangle, CalendarCheck, Table2, Lock,
+  AlertTriangle, CalendarCheck, Table2, Lock, ArrowRight,
 } from 'lucide-react';
 import { supabase, databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
 import { getActiveInsights, dismissInsight, InsightRow, SUBMISSION_CHASER_AGENT_KEY } from '../lib/submissionChaserAgent';
 import { MEETING_ACTION_CHASER_AGENT_KEY } from '../lib/meetingActionAgent';
 import { resolveCurrentCollection } from '../lib/submissionStatus';
 import { useTerminology } from '../terminology';
-import { SubmissionReviewStatus } from '../../../types';
+import { Announcement, SubmissionReviewStatus } from '../../../types';
 import { ComplianceNudgesView } from '../../org-admin/components/ComplianceNudgesView';
 import { myAssignmentService, MyAssignmentResult } from '../../roster-engine/lib/myAssignmentService';
 import { rosterSectionPresentationService } from '../../roster-engine/lib/rosterSectionPresentationService';
 import { RosterSectionPresentation, GRID_LABEL_TO_SECTION_KEY, resolveRosterSectionPresentation } from '../../roster-engine/lib/rosterSectionPresentation';
+import { ProfessionalWorkContinuityPanel } from './ProfessionalWorkContinuityPanel';
 
 // Resident-facing "Intelligence Harness" home — the mobile-first productive
 // workspace landing screen this app didn't have before: every existing
@@ -123,6 +124,24 @@ interface TodaysFocusState {
   reviewStatus: SubmissionReviewStatus | null;
 }
 
+interface CommandAnnouncementState {
+  loading: boolean;
+  announcement: Announcement | null;
+  isUnread: boolean;
+}
+
+const DUE_SOON_MS = 3 * 24 * 60 * 60 * 1000;
+
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = ({ resident, accessCode, hasAuthenticatedSession }) => {
   const navigate = useNavigate();
   const { t } = useTerminology();
@@ -147,6 +166,11 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
   // render never briefly flashes "Roster not yet published" before the
   // authenticated-membership attempt below has even started.
   const [assignmentUnavailable, setAssignmentUnavailable] = useState<boolean>(!accessCode && !hasAuthenticatedSession);
+  const [commandAnnouncement, setCommandAnnouncement] = useState<CommandAnnouncementState>({
+    loading: true,
+    announcement: null,
+    isUnread: false,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -217,6 +241,36 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
       }
     })();
 
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, resident.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [announcements, reads] = await Promise.all([
+          databaseService.getAnnouncements(tenantId),
+          databaseService.getAnnouncementReadsForWorkforce(resident.id),
+        ]);
+        const readIds = new Set(reads.map((r) => r.announcement_id));
+        const unread = announcements.find((a) => !readIds.has(a.id));
+        const pinned = announcements.find((a) => a.pinned);
+        const latest = announcements[0] ?? null;
+        const selected = unread ?? pinned ?? latest;
+        if (!cancelled) {
+          setCommandAnnouncement({
+            loading: false,
+            announcement: selected,
+            isUnread: selected ? !readIds.has(selected.id) : false,
+          });
+        }
+      } catch (err) {
+        console.warn('IntelligenceHarnessHome: command announcement load failed (non-fatal)', err);
+        if (!cancelled) setCommandAnnouncement({ loading: false, announcement: null, isUnread: false });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -295,6 +349,57 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
     { label: 'Full Roster', icon: Table2, path: '/workspace/full-roster', accent: 'bg-lime-50 text-lime-700 border-lime-100' },
   ];
 
+  const now = Date.now();
+  const deadlineMs = focus.deadline ? new Date(focus.deadline).getTime() : null;
+  const isDueSoon = deadlineMs !== null && deadlineMs >= now && deadlineMs - now <= DUE_SOON_MS;
+  const primaryAction = (() => {
+    if (!focus.loading && focus.collectionTitle && !focus.hasSubmitted) {
+      return {
+        tone: focus.pastDeadline ? 'danger' : 'warning',
+        eyebrow: focus.pastDeadline ? 'Overdue required action' : isDueSoon ? 'Due soon' : 'Required action',
+        title: focus.pastDeadline
+          ? `Submit ${focus.collectionTitle} now`
+          : `Complete ${focus.collectionTitle}`,
+        detail: `Deadline: ${focus.deadline ? formatDateTime(focus.deadline) : 'not set'}`,
+        cta: 'Open Form',
+        path: '/workspace/form',
+      };
+    }
+    if (!assignmentLoading && assignment && assignment.status === 'published_with_assignment') {
+      return {
+        tone: 'info',
+        eyebrow: 'Current assignment',
+        title: assignment.assignments[0]?.assignment_detail || 'Your assignment is published',
+        detail: assignment.assignments[0]?.date_or_day || `${assignment.month ?? 'Current'} ${assignment.year ?? 'cycle'}`,
+        cta: 'View Assignment',
+        path: '/workspace/my-assignment',
+      };
+    }
+    if (!commandAnnouncement.loading && commandAnnouncement.announcement) {
+      return {
+        tone: commandAnnouncement.isUnread ? 'info' : 'neutral',
+        eyebrow: commandAnnouncement.isUnread ? 'Unread announcement' : 'Current announcement',
+        title: commandAnnouncement.announcement.title,
+        detail: commandAnnouncement.announcement.category,
+        cta: 'Open Announcements',
+        path: '/workspace/announcements',
+      };
+    }
+    return null;
+  })();
+
+  const deterministicInsights = [
+    !focus.loading && focus.collectionTitle && !focus.hasSubmitted
+      ? `${focus.pastDeadline ? 'Overdue' : isDueSoon ? 'Due soon' : 'Open'}: ${focus.collectionTitle} still needs your submission.`
+      : null,
+    !assignmentLoading && assignment?.status === 'published_with_assignment'
+      ? `Roster is published: your next assignment is available in My Assignment.`
+      : null,
+    !commandAnnouncement.loading && commandAnnouncement.announcement
+      ? `${commandAnnouncement.isUnread ? 'Unread' : 'Latest'} announcement: ${commandAnnouncement.announcement.title}`
+      : null,
+  ].filter((item): item is string => item !== null);
+
   return (
     <div className="max-w-5xl mx-auto my-6 px-4 space-y-5">
       {/* Greeting header */}
@@ -303,6 +408,68 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
         <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mt-0.5">{firstNameFor(resident.name)} 👋</h1>
         <p className="text-xs text-slate-500 mt-1">{resident.category} &bull; {t('member', 'Resident')}</p>
       </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">Daily Command Centre</p>
+            <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight mt-0.5">Your next useful action</h2>
+          </div>
+          {focus.collectionTitle && (
+            <span className={`px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wider ${
+              focus.hasSubmitted
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : focus.pastDeadline
+                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : 'bg-amber-50 text-amber-700 border-amber-200'
+            }`}>
+              {focus.hasSubmitted ? 'Form submitted' : focus.pastDeadline ? 'Overdue' : isDueSoon ? 'Due soon' : 'Open'}
+            </span>
+          )}
+        </div>
+        {focus.loading || assignmentLoading || commandAnnouncement.loading ? (
+          <p className="text-sm text-slate-400 mt-4">Loading current priorities&hellip;</p>
+        ) : primaryAction ? (
+          <div className={`mt-4 rounded-xl border p-4 ${
+            primaryAction.tone === 'danger'
+              ? 'bg-rose-50 border-rose-200'
+              : primaryAction.tone === 'warning'
+                ? 'bg-amber-50 border-amber-200'
+                : 'bg-blue-50 border-blue-200'
+          }`}>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{primaryAction.eyebrow}</p>
+            <div className="mt-1 flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-sm sm:text-base font-bold text-slate-900">{primaryAction.title}</p>
+                <p className="text-xs text-slate-600 mt-0.5">{primaryAction.detail}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(primaryAction.path)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:border-slate-300 text-slate-800 rounded-lg text-xs font-bold shadow-sm transition cursor-pointer"
+              >
+                <span>{primaryAction.cta}</span>
+                <ArrowRight size={13} />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 flex items-start gap-2 text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+            <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold">Nothing is blocking you right now.</p>
+              <p className="text-xs text-emerald-700 mt-0.5">Your current form cycle is clear and no published assignment or announcement needs immediate follow-up.</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <ProfessionalWorkContinuityPanel
+        owner={{ id: resident.id, name: resident.name, kind: 'workforce' }}
+        canOpenCaseCapture={hasAuthenticatedSession}
+        canUseInstitutionalReview
+        canUseLearningTools
+      />
 
       {/* Quick Access — mobile-first: 2 cols by default, scaling up with
           viewport width. horizontal-scroll on very small screens is avoided
@@ -342,7 +509,7 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
             <div className="space-y-2">
               <p className="text-sm font-semibold text-slate-800">{focus.collectionTitle}</p>
               <p className="text-xs text-slate-500">
-                Deadline: {new Date(focus.deadline as string).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                Deadline: {formatDateTime(focus.deadline as string)}
               </p>
               {focus.hasSubmitted ? (
                 focus.reviewStatus === 'reviewed' ? (
@@ -386,7 +553,18 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
             <h3 className="font-bold text-slate-900 text-sm">Insights</h3>
           </div>
           {insights.length === 0 ? (
-            <p className="text-sm text-slate-500">No open insights right now.</p>
+            deterministicInsights.length === 0 ? (
+              <p className="text-sm text-slate-500">No open insights right now.</p>
+            ) : (
+              <div className="space-y-2">
+                {deterministicInsights.map((insight) => (
+                  <div key={insight} className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                    <p className="text-xs font-semibold text-slate-800 leading-snug">{insight}</p>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mt-1">Deterministic</p>
+                  </div>
+                ))}
+              </div>
+            )
           ) : (
             <div className="space-y-2">
               {insights.map((insight) => (
@@ -494,7 +672,12 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
             <AlertTriangle size={16} className="text-amber-600" />
             <h3 className="font-bold text-slate-900 text-sm">Needs Attention</h3>
           </div>
-          <ComplianceNudgesView resident={resident} compact excludeNudgeTypes={['roster_pending']} />
+          <ComplianceNudgesView
+            resident={resident}
+            compact
+            excludeNudgeTypes={['roster_pending']}
+            emptyMessage={focus.collectionTitle && !focus.hasSubmitted ? 'No other outstanding compliance items.' : undefined}
+          />
         </div>
       </div>
     </div>

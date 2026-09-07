@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { databaseService, supabase } from '../../../lib/databaseService';
 import { loadAvailableTemplates, forkTemplate, editTemplate, TemplateEditPayload } from '../lib/templateEngine';
 import { validatePicoTitle, validateWordCap, validateCitationSyntax } from '../lib/rubricEngine';
 import { researchCopilot, DraftAuditResult, LiteratureMatrixResult, TableShellsResult, ResearchCopilotSource } from '../lib/researchCopilot';
+import { projectResearchEvidenceCommandCentre, RESEARCH_EVIDENCE_ROUTES } from '../lib/researchEvidenceCommandCentre';
 import { useWorkspaceQuota } from '../../billing/lib/useWorkspaceQuota';
 import { UpgradeCheckoutModal } from '../../billing/components/UpgradeCheckoutModal';
 import { RubricInstanceForm } from '../../shared/ui/RubricInstanceForm';
@@ -20,7 +22,7 @@ import {
 import {
   FolderKanban, BookOpen, ClipboardCheck, Sparkles, Plus, X, ChevronRight, ChevronDown,
   Folder, FileText, Calculator, Table2, RefreshCw, Save, CheckCircle2, AlertTriangle,
-  GitFork, Settings2, GraduationCap,
+  GitFork, Settings2, GraduationCap, Library, ShieldCheck, ArrowRight,
 } from 'lucide-react';
 
 // Since migration 25, this view serves two kinds of owner: an institutional
@@ -173,7 +175,14 @@ const SourceBadge: React.FC<{ source: ResearchCopilotSource }> = ({ source }) =>
   return <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${badge.className}`}>{badge.label}</span>;
 };
 
+const formatDate = (value: string): string => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Date unavailable';
+  return parsed.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
 export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ owner }) => {
+  const navigate = useNavigate();
   const [workspaces, setWorkspaces] = useState<ResearchWorkspace[]>([]);
   const [templates, setTemplates] = useState<ResearchTemplate[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -237,6 +246,14 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ ow
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId) || null;
   const activeTemplate = templates.find(t => t.id === activeWorkspace?.template_id) || null;
   const activeChapter = chapters.find(c => c.chapter_type === activeChapterType) || null;
+  const commandCentre = useMemo(
+    () => projectResearchEvidenceCommandCentre(workspaces, {
+      ownerId: owner.id,
+      ownerKind: owner.kind,
+      tenantId: owner.kind === 'workforce' ? owner.tenantId : null,
+    }),
+    [owner.id, owner.kind, owner.tenantId, workspaces]
+  );
 
   useEffect(() => {
     setIsLoading(true);
@@ -520,38 +537,97 @@ export const ResearchWorkspaceView: React.FC<ResearchWorkspaceViewProps> = ({ ow
   if (!activeWorkspace) {
     return (
       <div className="max-w-5xl mx-auto my-8 px-4 space-y-6">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center space-x-2">
-            <GraduationCap className="text-slate-500" size={18} />
-            <div>
-              <h2 className="font-bold text-slate-900 text-lg tracking-tight">Universal Research Engine</h2>
-              <p className="text-xs text-slate-500">Proposal & dissertation workspaces, template library, and correction tracking</p>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-5">
+          <div className="flex items-start justify-between flex-wrap gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center space-x-2">
+                <GraduationCap className="text-slate-500" size={18} />
+                <h2 className="font-bold text-slate-900 text-lg tracking-tight">Research & Evidence</h2>
+              </div>
+              <p className="text-xs text-slate-500">Start, resume, and review research work without merging dissertation, library, or review queues.</p>
+            </div>
+            <button
+              onClick={() => setShowNewWorkspaceModal(true)}
+              className="flex items-center space-x-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-sm transition cursor-pointer"
+            >
+              <Plus size={14} />
+              <span>New Research Workspace</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Visible workspaces</p>
+              <p className="text-xl font-bold text-slate-900">{commandCentre.visibleWorkspaces.length}</p>
+              <p className="text-[11px] text-slate-500">Scoped to the signed-in {owner.kind === 'workforce' ? 'workspace member' : 'doctor'}.</p>
+            </div>
+            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Most recent</p>
+              <p className="text-sm font-bold text-slate-900 truncate">{commandCentre.mostRecentWorkspace?.title ?? 'None yet'}</p>
+              <p className="text-[11px] text-slate-500">
+                {commandCentre.mostRecentWorkspace
+                  ? `${commandCentre.mostRecentWorkspace.statusLabel} • ${formatDate(commandCentre.mostRecentWorkspace.createdAt)}`
+                  : 'Create a workspace when ready.'}
+              </p>
+            </div>
+            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Next action</p>
+              <p className="text-sm font-bold text-slate-900">{commandCentre.nextActionLabel}</p>
+              <button
+                onClick={() => commandCentre.nextActionWorkspaceId ? setActiveWorkspaceId(commandCentre.nextActionWorkspaceId) : setShowNewWorkspaceModal(true)}
+                className="mt-2 inline-flex items-center space-x-1.5 px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 cursor-pointer"
+              >
+                <ArrowRight size={12} />
+                <span>{commandCentre.nextActionWorkspaceId ? 'Resume workspace' : 'Create workspace'}</span>
+              </button>
             </div>
           </div>
-          <button
-            onClick={() => setShowNewWorkspaceModal(true)}
-            className="flex items-center space-x-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-sm transition cursor-pointer"
-          >
-            <Plus size={14} />
-            <span>New Research Workspace</span>
-          </button>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {[
+              { label: 'Research Engine', description: 'Conduct research work', icon: GraduationCap, path: RESEARCH_EVIDENCE_ROUTES.research[owner.kind] },
+              { label: 'Library', description: 'Collect evidence', icon: Library, path: RESEARCH_EVIDENCE_ROUTES.library },
+              { label: 'Review Workspace', description: 'Appraise work', icon: ShieldCheck, path: RESEARCH_EVIDENCE_ROUTES.review },
+              { label: 'Dissertation', description: 'Formal milestones', icon: BookOpen, path: RESEARCH_EVIDENCE_ROUTES.dissertation },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.label}
+                  onClick={() => navigate(item.path)}
+                  className="flex items-center justify-between gap-2 border border-slate-200 hover:border-slate-300 rounded-xl p-3 bg-white text-left transition cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Icon size={14} className="text-slate-500 shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-bold text-slate-800 truncate">{item.label}</span>
+                      <span className="block text-[10px] text-slate-500 truncate">{item.description}</span>
+                    </span>
+                  </span>
+                  <ArrowRight size={12} className="text-slate-400 shrink-0" />
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {workspaces.length === 0 ? (
+        {commandCentre.visibleWorkspaces.length === 0 ? (
           <div className="text-center py-12 bg-white border border-dashed border-slate-300 rounded-2xl">
             <BookOpen size={28} className="text-slate-300 mx-auto mb-2" />
-            <p className="text-sm text-slate-500">No research workspaces yet — create one to get started.</p>
+            <p className="text-sm text-slate-500">{commandCentre.emptyStateLabel}</p>
+            <p className="text-xs text-slate-400 mt-1">Research documents, private URLs, notes, and participant details are not shown here.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {workspaces.map(w => (
+            {commandCentre.visibleWorkspaces.map(w => (
               <button
                 key={w.id}
                 onClick={() => setActiveWorkspaceId(w.id)}
                 className="bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-4 text-left shadow-sm transition cursor-pointer space-y-1"
               >
                 <span className="font-bold text-slate-900 text-sm">{w.title}</span>
-                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">{w.status.replace(/_/g, ' ')}</p>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">{w.statusLabel}</p>
+                <p className="text-[11px] text-slate-400">{w.studyDesignLabel} • created {formatDate(w.createdAt)}</p>
               </button>
             ))}
           </div>

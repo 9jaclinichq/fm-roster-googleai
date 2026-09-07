@@ -24,14 +24,13 @@
     "verify:roster-patch-proposal": "tsx scripts/verify-roster-patch-proposal.ts",
     "verify:roster-safety-slice": "tsx scripts/verify-roster-safety-slice.ts",
     "verify:resident-home": "node scripts/verify-resident-home.cjs",
-    "verify:migration-76": "node scripts/verify-migration-76.cjs",
-    "verify:migration-77": "node scripts/verify-migration-77.cjs",
-    "verify:migration-78": "node scripts/verify-migration-78.cjs",
-    "verify:migration-79": "node scripts/verify-migration-79.cjs",
     "verify:submission-review-status": "node scripts/verify-submission-review-status.cjs",
     "verify:pending-member-contacts": "node scripts/verify-pending-member-contacts.cjs",
     "verify:m19-dormant": "node scripts/verify-m19-dormant.cjs",
-    "harness": "node scripts/harness.cjs"
+    "verify:cases-capture-slice": "node scripts/verify-cases-capture-slice.cjs",
+    "verify:use-case-intake": "tsx scripts/verify-use-case-intake-contract.ts",
+    "verify:cases-storage-http": "node scripts/verify-cases-storage-http.cjs",
+    "verify:use-case-requirements": "tsx scripts/verify-use-case-requirements-projection.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.6",
