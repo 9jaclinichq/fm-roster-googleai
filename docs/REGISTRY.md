@@ -831,4 +831,18 @@ status: **new this pass — did not exist at the 43-snapshot.** Runs in two mode
 
 ---
 
+## 2026-09 Communication Hub V1 addendum
+
+### M20 Communication Hub
+layer: L4 capability module with L3 delivery/audit contracts
+face: authenticated workforce member, individual doctor, delegated coordinator/support member; capability administration inside the existing org-admin Roles tab
+path: `src/modules/communication/components/{CommunicationHubView,CapabilityDelegationPanel,CapabilityBadge}.tsx`, `src/modules/communication/lib/{communicationDomain,communicationService}.ts`; routes `/workspace/communication` and `/doctor/communication`; local schema `supabase/migrations/84_communication_hub_v1.sql`
+tenant scope: tenant-scoped for workforce conversations, invitations and delegations; doctor-owned contact/preferences and unassigned support tickets for independent doctors
+consumes: migration-81-era `workforce`, `settings`, `organisation_memberships`, `doctor_profiles`, `dissertations`/`dissertation_milestones`, and `research_workspaces`; it deliberately has no dependency on local-unapplied migrations 82 or 83
+emits: durable conversation/message/read state, support tickets, review invitations, explicit tenant-capability delegation history, provider-neutral verification requests, and deduplicated delivery outcome records
+gates: all new tables have RLS enabled with direct anon/authenticated privileges revoked and no direct policies; browser access is RPC-only. Workforce RPCs reverify either active authenticated membership/doctor linkage or the legacy access code, Chief mutations reverify the tenant admin code, participants are checked per conversation, and coordinator mutations check an active persisted capability.
+status: **local-only, migration 84 unapplied.** Migration 81 remains the last live-verified production ceiling; 82 and 83 remain unapplied. In-app messaging/support is implemented immediately once 84 is reviewed and applied. WhatsApp/Resend adapters remain absent and fail-closed, contact verification can only be `UNVERIFIED` or honestly `PENDING_VERIFICATION` in this slice, and review invitations remain `PENDING_OWNER_PERMISSION` because existing institutional artifact tables do not yet provide an owner-safe reviewer read seam. The PrivyDoc action opens the separate portal origin without query data or shared auth; linkage defaults to `ELIGIBLE`, never `LINKED`, without an evidence-backed row.
+
+Existing surfaces touched: `App.tsx` adds only the two authenticated routes; `IntelligenceHarnessHome.tsx` and `DoctorHomeView.tsx` add one Communication Hub entry each; `ChiefDashboardView.tsx` composes explicit capability administration under its existing Roles tab. Existing legacy group delegation and all Cases, Dissertation, Research, My Record, Team Coordination and Learning routes remain in place.
+
 *End of registry. Per spec §7/rule 12: update this file in the same change whenever you touch a component it describes.*

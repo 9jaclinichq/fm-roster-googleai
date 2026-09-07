@@ -30,6 +30,7 @@
     "verify:cases-capture-slice": "node scripts/verify-cases-capture-slice.cjs",
     "verify:use-case-intake": "tsx scripts/verify-use-case-intake-contract.ts",
     "verify:cases-storage-http": "node scripts/verify-cases-storage-http.cjs",
+    "verify:communication-hub": "tsx scripts/verify-communication-hub-v1.ts",
     "verify:use-case-requirements": "tsx scripts/verify-use-case-requirements-projection.ts"
   },
   "dependencies": {

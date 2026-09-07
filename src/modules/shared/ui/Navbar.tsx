@@ -58,13 +58,15 @@ interface NavbarProps {
     | 'resident-research'
     | 'resident-casebook-logbook'
     | 'resident-my-record'
+    | 'resident-communication'
     | 'chief'
     | 'resident-login'
     | 'chief-login'
     | 'auth-landing'
     | 'doctor-login'
     | 'doctor-register'
-    | 'doctor-home';
+    | 'doctor-home'
+    | 'doctor-communication';
 }
 
 const RESIDENT_VIEWS = [
@@ -82,6 +84,7 @@ const RESIDENT_VIEWS = [
   'resident-research',
   'resident-casebook-logbook',
   'resident-my-record',
+  'resident-communication',
 ];
 
 export const Navbar: React.FC<NavbarProps> = ({

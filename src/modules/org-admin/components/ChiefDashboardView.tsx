@@ -19,6 +19,7 @@ import { ClinicalWritingPanel } from '../../clinical-writing/components/Clinical
 import { AgentRegistryPanel } from './dashboard/AgentRegistryPanel';
 import { ActivityLogPanel } from './dashboard/ActivityLogPanel';
 import { MemberRecordModal } from '../../shared/ui/MemberRecordModal';
+import { CapabilityDelegationPanel } from '../../communication/components/CapabilityDelegationPanel';
 import { computeReconciliationIssues } from '../../roster-engine/lib/rosterReconciliation';
 
 // Lazy-loaded: this tab pulls in its own document-upload/search UI and is
@@ -1330,7 +1331,8 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
         {/* TAB 5: ROLE DELEGATION */}
         {activeTab === 'roles' && (
-          <RoleDelegationPanel
+          <div className="space-y-6">
+            <RoleDelegationPanel
             delegatedRoles={delegatedRoles}
             orgGroups={orgGroups}
             workforceCategories={workforceCategories}
@@ -1356,7 +1358,9 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
             newGroupError={newGroupError}
             isCreatingGroup={isCreatingGroup}
             handleCreateOrgGroup={handleCreateOrgGroup}
-          />
+            />
+            {adminCode && <CapabilityDelegationPanel adminCode={adminCode} workforce={workforce} />}
+          </div>
         )}
 
         {/* TAB 6: KNOWLEDGE PACKS */}

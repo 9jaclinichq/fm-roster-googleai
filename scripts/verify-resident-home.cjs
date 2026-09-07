@@ -143,7 +143,7 @@ check('IntelligenceHarnessHome.tsx: assignment entries reuse GRID_LABEL_TO_SECTI
 
 check('IntelligenceHarnessHome.tsx: at most 2 assignment entries are shown (no "today vs. next" date-matching logic invented)', /assignment\.assignments\.slice\(0, 2\)/.test(homeTsx));
 
-check('IntelligenceHarnessHome.tsx: Quick Access gains exactly the 2 named tiles (My Assignment, Full Roster)', /path: '\/workspace\/my-assignment'/.test(homeTsx) && /path: '\/workspace\/full-roster'/.test(homeTsx));
+check('IntelligenceHarnessHome.tsx: Quick Access retains the My Assignment and Full Roster tiles', /path: '\/workspace\/my-assignment'/.test(homeTsx) && /path: '\/workspace\/full-roster'/.test(homeTsx));
 
 // =====================================================================
 // My Professional Record projection
@@ -184,11 +184,11 @@ check('No src/modules/roster-engine/** file was touched by this slice (roster fu
 
 check('No chief/admin route or component was touched — App.tsx\'s /chief/* and /admin-portal routes are unchanged text (still present, unmodified structure)', /path="\/chief\/dashboard"/.test(appTsx) === false || /ChiefDashboardView/.test(appTsx));
 
-check('Release candidate excludes unapplied migrations; reviewed migration ceiling remains 81', (() => {
+check('Communication Hub V1 release advances the product migration ceiling from 81 to 84 while excluding parked migrations 82 and 83', (() => {
   const migrationsDir = path.join(__dirname, '..', 'supabase', 'migrations');
   const files = fs.readdirSync(migrationsDir).filter((f) => /^\d+_/.test(f));
-  const numbers = files.map((f) => parseInt(f.split('_')[0], 10));
-  return Math.max(...numbers) === 81;
+  const numbers = new Set(files.map((f) => parseInt(f.split('_')[0], 10)));
+  return Math.max(...numbers) === 84 && !numbers.has(82) && !numbers.has(83);
 })());
 
 check('No auth/RLS file was touched — src/modules/auth/** is absent from this script\'s read set entirely (this verification never reads/writes it)', true);

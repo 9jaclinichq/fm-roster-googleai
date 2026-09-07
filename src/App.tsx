@@ -70,6 +70,9 @@ const CasebookWorkspaceView = lazy(() =>
 const CasesLandingView = lazy(() =>
   import('./modules/cases/components/CasesLandingView').then(m => ({ default: m.CasesLandingView }))
 );
+const CommunicationHubView = lazy(() =>
+  import('./modules/communication/components/CommunicationHubView').then(m => ({ default: m.CommunicationHubView }))
+);
 // Public routes added by the SaaS multi-tenancy pass — neither is gated by
 // resident/chief session state. GuestReviewView is reachable by anyone
 // holding a review token (a capability URL); SaaSOperatorConsoleView
@@ -346,11 +349,13 @@ function MainAppContent() {
     if (path.startsWith('/workspace/research')) return 'resident-research';
     if (path.startsWith('/workspace/casebook-logbook')) return 'resident-casebook-logbook';
     if (path.startsWith('/workspace/my-record')) return 'resident-my-record';
+    if (path.startsWith('/workspace/communication')) return 'resident-communication';
     if (path.startsWith('/workspace/form')) return 'resident';
     if (path === '/login') return 'auth-landing';
     if (path.startsWith('/doctor/register')) return 'doctor-register';
     if (path.startsWith('/doctor/login')) return 'doctor-login';
     if (path.startsWith('/doctor/home')) return 'doctor-home';
+    if (path.startsWith('/doctor/communication')) return 'doctor-communication';
     return 'resident-login';
   };
 
@@ -653,6 +658,23 @@ function MainAppContent() {
             }
           />
 
+          <Route
+            path="/workspace/communication"
+            element={
+              currentResident ? (
+                <CommunicationHubView actor={{
+                  kind: 'WORKFORCE',
+                  id: currentResident.id,
+                  name: currentResident.name,
+                  tenantId: currentResident.tenant_id ?? DEFAULT_TENANT_ID,
+                  accessCode: residentAccessCode,
+                }} />
+              ) : (
+                <Navigate to="/workspace/login" replace />
+              )
+            }
+          />
+
           {/* My Assignment — member-facing view of their own current
               published roster assignment (migration 67's
               resident_get_current_assignment() RPC, migrated by migration
@@ -882,6 +904,24 @@ function MainAppContent() {
                 <Navigate to="/workspace/my-record" replace />
               ) : currentDoctor ? (
                 <UnifiedRecordView owner={{ id: currentDoctor.id, name: currentDoctor.fullName, kind: 'doctor', tenantId: DEFAULT_TENANT_ID }} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+          <Route
+            path="/doctor/communication"
+            element={
+              currentResident ? (
+                <Navigate to="/workspace/communication" replace />
+              ) : currentDoctor ? (
+                <CommunicationHubView actor={{
+                  kind: 'DOCTOR',
+                  id: currentDoctor.id,
+                  name: currentDoctor.fullName || currentDoctor.email,
+                  tenantId: null,
+                  accessCode: null,
+                }} />
               ) : (
                 <Navigate to="/login" replace />
               )

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, X, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic,
   ShieldCheck, FlaskConical, Stethoscope, IdCard, Clock, CheckCircle2, ChevronRight,
-  AlertTriangle, CalendarCheck, Table2, Lock, ArrowRight,
+  AlertTriangle, CalendarCheck, Table2, Lock, ArrowRight, MessageSquare,
 } from 'lucide-react';
 import { supabase, databaseService, DEFAULT_TENANT_ID } from '../../../lib/databaseService';
 import { getActiveInsights, dismissInsight, InsightRow, SUBMISSION_CHASER_AGENT_KEY } from '../lib/submissionChaserAgent';
@@ -336,6 +336,7 @@ export const IntelligenceHarnessHome: React.FC<IntelligenceHarnessHomeProps> = (
   const quickAccess: QuickAccessTile[] = [
     { label: t('form_label', 'My Form'), icon: FileText, path: '/workspace/form', accent: 'bg-blue-50 text-blue-600 border-blue-100' },
     { label: 'Announcements', icon: Megaphone, path: '/workspace/announcements', accent: 'bg-amber-50 text-amber-600 border-amber-100' },
+    { label: 'Communication Hub', icon: MessageSquare, path: '/workspace/communication', accent: 'bg-blue-50 text-blue-600 border-blue-100' },
     { label: 'Research Engine', icon: FlaskConical, path: '/workspace/research', accent: 'bg-violet-50 text-violet-600 border-violet-100' },
     { label: 'Casebook & Logbook', icon: Stethoscope, path: '/workspace/casebook-logbook', accent: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
     { label: 'Dissertation', icon: GraduationCap, path: '/workspace/dissertation', accent: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
