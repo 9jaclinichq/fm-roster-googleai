@@ -25,6 +25,7 @@ import {
   CommunicationConversation,
   CommunicationHubSnapshot,
   ContactChannel,
+  GatewayProviderStatus,
   NOTIFICATION_CHANNELS,
   NOTIFICATION_PURPOSES,
   NotificationChannel,
@@ -79,6 +80,8 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
   const [reply, setReply] = useState('');
   const [whatsApp, setWhatsApp] = useState('');
   const [email, setEmail] = useState('');
+  const [verificationCodes, setVerificationCodes] = useState<Record<ContactChannel, string>>({ WHATSAPP: '', EMAIL: '' });
+  const [gatewayStatus, setGatewayStatus] = useState<GatewayProviderStatus>({ gateway: 'DISABLED', email: 'DISABLED', whatsapp: 'DISABLED', flutterwave: 'DISABLED' });
   const [supportCategory, setSupportCategory] = useState<SupportCategory>('TECHNICAL_PROBLEM');
   const [supportSubject, setSupportSubject] = useState('');
   const [supportMessage, setSupportMessage] = useState('');
@@ -100,8 +103,12 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
     if (showSpinner) setLoading(true);
     setError('');
     try {
-      const next = await communicationService.getHub(actor, activeCode);
+      const [next, providerState] = await Promise.all([
+        communicationService.getHub(actor, activeCode),
+        communicationService.getGatewayStatus().catch(() => null),
+      ]);
       setSnapshot(next);
+      if (providerState) setGatewayStatus(providerState);
       setLoaded(true);
       setSelectedConversationId(current => current && next.conversations.some(item => item.id === current) ? current : next.conversations[0]?.id ?? null);
       if (next.capabilities.length > 0 && !next.capabilities.includes(coordinationCapability)) {
@@ -144,6 +151,22 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
     if (saved) {
       if (channel === 'WHATSAPP') setWhatsApp(''); else setEmail('');
     }
+  };
+
+  const requestVerification = async (channel: ContactChannel) => {
+    await run(
+      () => communicationService.requestContactVerification(actor, channel, activeCode),
+      `A short-lived verification code was sent to your masked ${channel === 'EMAIL' ? 'email address' : 'WhatsApp number'}.`,
+    );
+  };
+
+  const completeVerification = async (channel: ContactChannel) => {
+    const code = verificationCodes[channel];
+    const verified = await run(
+      () => communicationService.completeContactVerification(actor, channel, code),
+      `${channel === 'EMAIL' ? 'Email address' : 'WhatsApp number'} verified.`,
+    );
+    if (verified) setVerificationCodes(current => ({ ...current, [channel]: '' }));
   };
 
   const selectConversation = async (conversation: CommunicationConversation) => {
@@ -208,10 +231,16 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
                   <input type={channel === 'EMAIL' ? 'email' : 'tel'} value={value} onChange={event => channel === 'WHATSAPP' ? setWhatsApp(event.target.value) : setEmail(event.target.value)} placeholder={channel === 'WHATSAPP' ? 'International E.164 format' : 'you@example.com'} className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button type="button" onClick={() => saveContact(channel)} disabled={loading || !value.trim()} className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">Save</button>
-                    {contact && contact.verification_state === 'UNVERIFIED' && (
-                      <button type="button" onClick={() => run(() => communicationService.requestContactVerification(actor, channel, activeCode), 'Verification is pending; no message was sent because the provider is disabled.' )} disabled={loading} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Record pending verification</button>
+                    {contact && contact.verification_state !== 'VERIFIED' && (
+                      <button type="button" onClick={() => requestVerification(channel)} disabled={loading || gatewayStatus[channel === 'EMAIL' ? 'email' : 'whatsapp'] !== 'AVAILABLE'} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 disabled:opacity-50">Send verification code</button>
                     )}
                   </div>
+                  {contact && contact.verification_state === 'PENDING_VERIFICATION' && (
+                    <div className="mt-3 flex gap-2">
+                      <input aria-label={`${channel === 'EMAIL' ? 'Email' : 'WhatsApp'} verification code`} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={verificationCodes[channel]} onChange={event => setVerificationCodes(current => ({ ...current, [channel]: event.target.value.replace(/\D/g, '').slice(0, 6) }))} placeholder="6-digit code" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                      <button type="button" onClick={() => completeVerification(channel)} disabled={loading || verificationCodes[channel].length !== 6} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Verify</button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -227,7 +256,7 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
               ))}</tbody>
             </table>
           </div>
-          <p className="mt-3 text-[10px] leading-relaxed text-slate-500">Essential in-app account and safety notices may still appear. Product-feature releases are never treated as operational notices. Email and WhatsApp delivery are not yet activated.</p>
+          <p className="mt-3 text-[10px] leading-relaxed text-slate-500">Essential in-app account and safety notices may still appear. Product-feature releases are never treated as operational notices. External delivery requires a linked authenticated account, a verified contact and an enabled purpose/channel preference.</p>
         </div>
 
         <aside className="space-y-5">
@@ -239,8 +268,9 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
             <p className="mt-2 text-[10px] text-slate-400">Verified phone-based linking is unavailable until a separately reviewed identity contract exists.</p>
           </div>
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
-            <p className="font-bold">External delivery is dormant</p>
-            <p className="mt-1 leading-relaxed">Meta WhatsApp: disabled · Resend email: disabled. In-app delivery remains available. Disabled external outcomes are recorded without contact values or message bodies.</p>
+            <p className="font-bold">Secure delivery gateway</p>
+            <p className="mt-1 leading-relaxed">Meta WhatsApp: {gatewayStatus.whatsapp.toLowerCase()} · Resend email: {gatewayStatus.email.toLowerCase()}. In-app delivery remains available regardless. Provider outcomes are recorded without contact values or message bodies.</p>
+            <button type="button" onClick={() => run(() => communicationService.sendSelfTest(), 'The gateway processed one neutral self-test for your verified, enabled channels.')} disabled={loading || gatewayStatus.gateway !== 'AVAILABLE'} className="mt-3 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-bold text-amber-900 disabled:opacity-50">Send neutral self-test</button>
           </div>
         </aside>
       </section>

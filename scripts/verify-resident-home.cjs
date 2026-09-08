@@ -184,11 +184,11 @@ check('No src/modules/roster-engine/** file was touched by this slice (roster fu
 
 check('No chief/admin route or component was touched — App.tsx\'s /chief/* and /admin-portal routes are unchanged text (still present, unmodified structure)', /path="\/chief\/dashboard"/.test(appTsx) === false || /ChiefDashboardView/.test(appTsx));
 
-check('Communication Hub V1 release advances the product migration ceiling from 81 to 84 while excluding parked migrations 82 and 83', (() => {
+check('Secure Delivery Gateway V1 release advances the product migration ceiling to 85 while excluding parked migrations 82 and 83', (() => {
   const migrationsDir = path.join(__dirname, '..', 'supabase', 'migrations');
   const files = fs.readdirSync(migrationsDir).filter((f) => /^\d+_/.test(f));
   const numbers = new Set(files.map((f) => parseInt(f.split('_')[0], 10)));
-  return Math.max(...numbers) === 84 && !numbers.has(82) && !numbers.has(83);
+  return Math.max(...numbers) === 85 && !numbers.has(82) && !numbers.has(83);
 })());
 
 check('No auth/RLS file was touched — src/modules/auth/** is absent from this script\'s read set entirely (this verification never reads/writes it)', true);

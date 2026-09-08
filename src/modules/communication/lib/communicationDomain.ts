@@ -127,7 +127,7 @@ export interface EligibleMember {
 
 export interface DeliveryStatusSummary {
   channel: NotificationChannel;
-  outcome: 'PENDING' | 'SENT' | 'FAILED' | 'UNKNOWN';
+  outcome: 'PENDING' | 'SENT' | 'ACCEPTED' | 'DELIVERED' | 'FAILED' | 'UNKNOWN';
   failure_classification: string | null;
   updated_at: string;
 }
@@ -148,7 +148,14 @@ export interface CommunicationHubSnapshot {
   eligible_members: EligibleMember[];
   deliveries: DeliveryStatusSummary[];
   privydoc_linkage: PrivyDocLinkage;
-  external_delivery: { whatsapp: 'DISABLED'; email: 'DISABLED' };
+  external_delivery: { whatsapp: 'DISABLED' | 'GATEWAY_CONTROLLED'; email: 'DISABLED' | 'GATEWAY_CONTROLLED' };
+}
+
+export interface GatewayProviderStatus {
+  gateway: 'AVAILABLE' | 'DISABLED';
+  email: 'AVAILABLE' | 'DISABLED';
+  whatsapp: 'AVAILABLE' | 'DISABLED';
+  flutterwave: 'AVAILABLE' | 'DISABLED';
 }
 
 export const PURPOSE_LABELS: Record<NotificationPurpose, string> = {

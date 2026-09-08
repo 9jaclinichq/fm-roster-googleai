@@ -82,6 +82,13 @@ async function promoteTenantIfFreeSeeded(admin: any, tenantId: string): Promise<
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return textResponse({ error: 'Method not allowed' }, 405);
 
+  // SECURE GATEWAY CONTAINMENT (migration 85). The legacy receiver trusted
+  // provider metadata when no pending row existed and did not independently
+  // verify transaction amount/currency/reference with Flutterwave. All new
+  // Workspc payment traffic belongs to workspc-gateway; this endpoint must
+  // remain inert even if an old provider webhook registration still calls it.
+  return textResponse({ error: 'payment_webhook_moved_to_secure_gateway' }, 503);
+
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !serviceRoleKey) return textResponse({ error: 'Runtime env unavailable' }, 500);

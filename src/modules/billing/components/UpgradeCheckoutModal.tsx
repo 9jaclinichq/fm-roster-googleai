@@ -1,15 +1,14 @@
 import React, { useState } from 'react';
 import { databaseService } from '../../../lib/databaseService';
-import { WORKSPACE_TIERS, AI_QUOTA_WINDOW_DAYS, DEFAULT_PAYMENT_PROVIDER } from '../../shared/config/tiers';
+import { WORKSPACE_TIERS, AI_QUOTA_WINDOW_DAYS } from '../../shared/config/tiers';
 import { PaymentProvider } from '../../../types';
 import { X, Sparkles, CreditCard, RefreshCw, ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
 
 // Shown when a free-tier member exhausts the AI Copilot allowance (see
-// useWorkspaceQuota). Checkout is provider-hosted: the payment-checkout
-// Edge Function initializes a Paystack/Flutterwave transaction server-side
-// (the amount lives there, not here) and this modal opens the returned
-// authorization URL in a new tab. The payment-webhook Edge Function — not
-// anything in this client — is what activates the subscription, so after
+// useWorkspaceQuota). Checkout is provider-hosted: the authenticated
+// workspc-gateway Edge Function derives owner, payer, plan, amount and
+// currency server-side and this modal opens the returned Flutterwave URL.
+// A verified gateway webhook — not anything in this client — activates the subscription, so after
 // paying the member comes back and hits "I've completed payment" to
 // re-query their subscription state.
 
@@ -38,7 +37,6 @@ export const UpgradeCheckoutModal: React.FC<UpgradeCheckoutModalProps> = ({
   limit,
   onPaymentCompleted,
 }) => {
-  const [email, setEmail] = useState('');
   const [busyProvider, setBusyProvider] = useState<PaymentProvider | null>(null);
   const [checkoutOpened, setCheckoutOpened] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -49,14 +47,10 @@ export const UpgradeCheckoutModal: React.FC<UpgradeCheckoutModalProps> = ({
   const pro = WORKSPACE_TIERS.pro_unlimited;
 
   const handleCheckout = async (provider: PaymentProvider) => {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      setError('Enter a valid email address — the payment receipt goes there.');
-      return;
-    }
     setError('');
     setBusyProvider(provider);
     try {
-      const result = await databaseService.initiatePaymentCheckout(provider, workforceId, tenantId, email.trim());
+      const result = await databaseService.initiatePaymentCheckout(provider, workforceId, tenantId, '');
       window.open(result.checkout_url, '_blank', 'noopener');
       setCheckoutOpened(true);
     } catch (err) {
@@ -125,40 +119,18 @@ export const UpgradeCheckoutModal: React.FC<UpgradeCheckoutModalProps> = ({
 
           {!checkoutOpened ? (
             <>
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Email for receipt</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              {/* Provider ordering/prominence follows DEFAULT_PAYMENT_PROVIDER
-                  (src/modules/shared/config/tiers.ts) — currently Flutterwave-first, with
-                  the other provider as a low-key secondary option. */}
+              <p className="text-xs text-slate-500">The payer and receipt email come from your linked authenticated Workspc account. The secure gateway determines the plan, amount and currency.</p>
               <div className="space-y-2">
-                {(
-                  [
-                    DEFAULT_PAYMENT_PROVIDER,
-                    DEFAULT_PAYMENT_PROVIDER === 'flutterwave' ? 'paystack' : 'flutterwave',
-                  ] as PaymentProvider[]
-                ).map((provider, idx) => (
+                {(['flutterwave'] as PaymentProvider[]).map(provider => (
                   <button
                     key={provider}
                     onClick={() => handleCheckout(provider)}
                     disabled={busyProvider !== null}
-                    className={
-                      idx === 0
-                        ? 'w-full flex items-center justify-center space-x-1.5 px-3 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-xl text-sm font-bold transition cursor-pointer shadow-sm'
-                        : 'w-full flex items-center justify-center space-x-1.5 px-3 py-2 border border-slate-300 hover:bg-slate-50 disabled:opacity-50 text-slate-600 rounded-xl text-xs font-semibold transition cursor-pointer'
-                    }
+                    className="w-full flex items-center justify-center space-x-1.5 px-3 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-xl text-sm font-bold transition cursor-pointer shadow-sm"
                   >
                     {busyProvider === provider ? <RefreshCw size={13} className="animate-spin" /> : <CreditCard size={13} />}
                     <span>
-                      Pay with {provider === 'flutterwave' ? 'Flutterwave' : 'Paystack'}
-                      {idx === 0 ? ' — Recommended' : ' instead'}
+                      Continue to Flutterwave
                     </span>
                   </button>
                 ))}

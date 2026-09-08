@@ -1854,20 +1854,25 @@ export const databaseService = {
     return data || null;
   },
 
-  // Initializes a provider-hosted checkout via the payment-checkout Edge
+  // Initializes a provider-hosted checkout via the workspc-gateway Edge
   // Function (the charged amount lives server-side there — a forged client
   // can't change it) and returns the URL to open. The webhook, not the
   // client, is what activates the subscription afterwards.
   async initiatePaymentCheckout(
     provider: PaymentProvider,
-    workforceId: string,
-    tenantId: string,
-    email: string
+    _workforceId: string,
+    _tenantId: string,
+    _email: string
   ): Promise<PaymentCheckoutResult> {
     checkSupabase();
 
-    const { data, error } = await supabase!.functions.invoke('payment-checkout', {
-      body: { provider, scope: 'workforce', workforce_id: workforceId, tenant_id: tenantId, email },
+    if (provider !== 'flutterwave') throw new Error('Only the hardened Flutterwave checkout is available.');
+
+    const { data, error } = await supabase!.functions.invoke('workspc-gateway', {
+      // Ownership, tenant, plan, amount, currency and payer email are all
+      // derived server-side from the verified Auth session. The browser
+      // supplies no trusted billing field.
+      body: { operation: 'payment.initiate' },
     });
 
     if (error || !data?.checkout_url) {
@@ -1890,31 +1895,16 @@ export const databaseService = {
   // above (a resident's own per-resident AI Copilot allowance). Same
   // payment-checkout Edge Function, scope: 'tenant' instead. Activation —
   // including promoting tenants.plan_type — happens only in the
-  // payment-webhook Edge Function, never here.
+  // authenticated gateway webhook, never here.
   async initiateTenantPlanCheckout(
-    provider: PaymentProvider,
-    tenantId: string,
-    email: string
+    _provider: PaymentProvider,
+    _tenantId: string,
+    _email: string
   ): Promise<PaymentCheckoutResult> {
-    checkSupabase();
-
-    const { data, error } = await supabase!.functions.invoke('payment-checkout', {
-      body: { provider, scope: 'tenant', tenant_id: tenantId, email },
-    });
-
-    if (error || !data?.checkout_url) {
-      // E0 TRANSITIONAL (2026-08-20) — payment-checkout is under emergency
-      // containment (see docs/EMERGENCY_SLICE_E0_FINANCIAL_CONTAINMENT.md)
-      // and fails closed on every call while active. Deliberately not
-      // parsing data?.error/error?.message here: DISCOVER established the
-      // exact supabase-js non-2xx response shape is unverified, so any
-      // failure of this specific call is mapped to a fixed neutral message
-      // rather than risking a leaked/garbled internal string. Revert to
-      // surfacing the real provider/internal error once containment lifts.
-      console.warn('Error initiating tenant plan checkout:', error || data);
-      throw new Error('Payments are temporarily unavailable.');
-    }
-    return data as PaymentCheckoutResult;
+    // Current Chief sessions are code-based and cannot prove auth.uid().
+    // Keep tenant checkout closed until an authenticated tenant-admin owner
+    // contract exists; never fall back to caller-supplied tenant ownership.
+    throw new Error('Secure tenant checkout requires a linked authenticated administrator account.');
   },
 
   // --- SAAS OPERATOR (platform owner — separate identity from workforce) ---

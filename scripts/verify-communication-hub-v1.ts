@@ -19,6 +19,7 @@ import {
 const root = process.cwd();
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 const migration = read('supabase/migrations/84_communication_hub_v1.sql');
+const gatewayMigration = read('supabase/migrations/85_secure_delivery_gateway_v1.sql');
 const hub = read('src/modules/communication/components/CommunicationHubView.tsx');
 const service = read('src/modules/communication/lib/communicationService.ts');
 const admin = read('src/modules/communication/components/CapabilityDelegationPanel.tsx');
@@ -95,7 +96,8 @@ check(migration.includes("outcome <> 'UNKNOWN' OR retry_eligible = false"), 'UNK
 check(migration.includes('notification_delivery_dedup UNIQUE (event_key, recipient_owner_key, channel)'), 'delivery attempts are deduplicated per event/recipient/channel');
 check(migration.includes("p_event_key !~ '^[a-z_]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'"), 'delivery event keys use a strict purpose-and-UUID allowlist');
 check(migration.includes('REPLAY CONTRACT: this migration is intentionally non-idempotent'), 'migration replay behavior is explicit');
-check(migration.includes("'META_WHATSAPP_DISABLED'") && migration.includes("'RESEND_EMAIL_DISABLED'"), 'external adapters are explicitly disabled');
+check(migration.includes("'META_WHATSAPP_DISABLED'") && migration.includes("'RESEND_EMAIL_DISABLED'")
+  && gatewayMigration.includes("'META_WHATSAPP', 'RESEND_EMAIL'"), 'migration 84 fails closed and migration 85 activates only named gateway adapters');
 check(!/Deno\.env|getPublicUrl|service[_-]?role[_-]?key/i.test(service + hub), 'browser communication code contains no provider/service-role access or public URLs');
 check(migration.includes('REVOKE ALL ON TABLE %I FROM anon') && migration.includes('REVOKE ALL ON TABLE %I FROM authenticated'), 'new tables deny direct browser access');
 check(migration.includes("cp.access_revoked_at IS NULL") && migration.includes('Conversation access denied'), 'conversation reads and mutations require an active participant');
@@ -108,7 +110,7 @@ check(!/case_continuity_actions|case-source-restricted|storage\.objects/.test(mi
 check(app.includes('path="/workspace/communication"') && app.includes('path="/doctor/communication"'), 'authenticated member and doctor routes are wired');
 check(home.includes("path: '/workspace/communication'"), 'resident home exposes the Communication Hub');
 check(doctorHome.includes("navigate('/doctor/communication')"), 'independent doctor home exposes the Communication Hub');
-check(hub.includes('Email and WhatsApp delivery are not yet activated'), 'provider state is truthfully visible');
+check(hub.includes('gatewayStatus.whatsapp.toLowerCase()') && hub.includes('gatewayStatus.email.toLowerCase()'), 'provider state is truthfully derived from the gateway');
 check(hub.includes('does not accept or complete') || migration.includes('does not accept or complete'), 'opening an invitation is explicitly non-terminal');
 check(hub.includes('not an emergency or clinical consultation channel'), 'support boundary is visible');
 check(hub.includes('No conversations yet.') && hub.includes('could not be loaded'), 'empty and error states are graceful');
@@ -117,6 +119,6 @@ check(!/Olanipekun|\bUCH\b|@gmail|080[0-9]{8}/i.test(hub + service + admin + mig
 
 const migrationNumbers = readdirSync(resolve(root, 'supabase/migrations'))
   .filter(name => /^\d+_/.test(name)).map(name => Number(name.split('_')[0]));
-check(Math.max(...migrationNumbers) === 84, 'local migration ceiling is 84');
+check(Math.max(...migrationNumbers) === 85, 'local migration ceiling is 85');
 
 console.log(`communication hub v1 verifier passed (${checks} checks)`);

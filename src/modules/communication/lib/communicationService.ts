@@ -4,6 +4,7 @@ import {
   CommunicationActor,
   CommunicationHubSnapshot,
   ContactChannel,
+  GatewayProviderStatus,
   InvitationStatus,
   NotificationChannel,
   NotificationPurpose,
@@ -36,6 +37,24 @@ async function rpc<T>(name: string, params: Record<string, unknown>): Promise<T>
   return data as T;
 }
 
+async function gateway<T>(body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await requireClient().functions.invoke('workspc-gateway', { body });
+  if (error || !data) {
+    console.warn('Workspc gateway operation failed.');
+    throw new Error('This secure delivery operation is unavailable. Sign in with your linked account and try again.');
+  }
+  return data as T;
+}
+
+async function dispatchBestEffort(safeMessageReference: string): Promise<void> {
+  try {
+    await gateway({ operation: 'delivery.dispatch', safe_message_reference: safeMessageReference });
+  } catch {
+    // In-app communication is authoritative and must not fail because an
+    // optional external provider or authenticated delivery session is absent.
+  }
+}
+
 export interface AdminCommunicationSnapshot {
   delegations: CapabilityDelegation[];
   member_delivery_eligibility: Array<{
@@ -60,11 +79,21 @@ export const communicationService = {
     });
   },
 
-  async requestContactVerification(actor: CommunicationActor, channel: ContactChannel, accessCode?: string | null): Promise<void> {
-    await rpc('communication_request_verification', {
-      ...actorParams(actor, accessCode),
-      p_channel: channel,
-    });
+  async getGatewayStatus(): Promise<GatewayProviderStatus> {
+    return gateway<GatewayProviderStatus>({ operation: 'status' });
+  },
+
+  async requestContactVerification(_actor: CommunicationActor, channel: ContactChannel, _accessCode?: string | null): Promise<void> {
+    await gateway({ operation: 'verification.request', channel });
+  },
+
+  async completeContactVerification(_actor: CommunicationActor, channel: ContactChannel, code: string): Promise<void> {
+    const result = await gateway<{ state: string }>({ operation: 'verification.complete', channel, code });
+    if (result.state !== 'VERIFIED') throw new Error('The verification code was not accepted.');
+  },
+
+  async sendSelfTest(): Promise<void> {
+    await gateway({ operation: 'delivery.self_test' });
   },
 
   async setPreference(
@@ -89,12 +118,14 @@ export const communicationService = {
     message: string,
     accessCode?: string | null,
   ): Promise<string> {
-    return rpc<string>('communication_start_support', {
+    const conversationId = await rpc<string>('communication_start_support', {
       ...actorParams(actor, accessCode),
       p_category: category,
       p_subject: subject.trim(),
       p_message: message.trim(),
     });
+    await dispatchBestEffort(`conversation:${conversationId}`);
+    return conversationId;
   },
 
   async reply(actor: CommunicationActor, conversationId: string, message: string, accessCode?: string | null): Promise<void> {
@@ -103,6 +134,7 @@ export const communicationService = {
       p_conversation_id: conversationId,
       p_message: message.trim(),
     });
+    await dispatchBestEffort(`conversation:${conversationId}`);
   },
 
   async markRead(actor: CommunicationActor, conversationId: string, accessCode?: string | null): Promise<void> {
@@ -127,13 +159,15 @@ export const communicationService = {
     dueDate: string | null,
     accessCode?: string | null,
   ): Promise<string> {
-    return rpc<string>('communication_create_review_invitation', {
+    const invitationId = await rpc<string>('communication_create_review_invitation', {
       ...actorParams(actor, accessCode),
       p_invitee_workforce_id: inviteeWorkforceId,
       p_artifact_type: artifactType,
       p_artifact_id: artifactId,
       p_due_date: dueDate || null,
     });
+    await dispatchBestEffort(`review_invitation:${invitationId}`);
+    return invitationId;
   },
 
   async respondToInvitation(
@@ -157,13 +191,15 @@ export const communicationService = {
     message: string,
     accessCode?: string | null,
   ): Promise<string> {
-    return rpc<string>('communication_start_coordination', {
+    const conversationId = await rpc<string>('communication_start_coordination', {
       ...actorParams(actor, accessCode),
       p_target_workforce_id: targetWorkforceId,
       p_capability: capability,
       p_subject: subject.trim(),
       p_message: message.trim(),
     });
+    await dispatchBestEffort(`conversation:${conversationId}`);
+    return conversationId;
   },
 
   async getAdminSnapshot(adminCode: string): Promise<AdminCommunicationSnapshot> {
