@@ -93,6 +93,8 @@ check(!/communication_get_hub[\s\S]*UPDATE review_invitations[\s\S]*Contact and 
 check(migration.includes("outcome IN ('PENDING', 'SENT', 'FAILED', 'UNKNOWN')"), 'durable delivery outcomes are constrained');
 check(migration.includes("outcome <> 'UNKNOWN' OR retry_eligible = false"), 'UNKNOWN is never silently retryable');
 check(migration.includes('notification_delivery_dedup UNIQUE (event_key, recipient_owner_key, channel)'), 'delivery attempts are deduplicated per event/recipient/channel');
+check(migration.includes("p_event_key !~ '^[a-z_]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'"), 'delivery event keys use a strict purpose-and-UUID allowlist');
+check(migration.includes('REPLAY CONTRACT: this migration is intentionally non-idempotent'), 'migration replay behavior is explicit');
 check(migration.includes("'META_WHATSAPP_DISABLED'") && migration.includes("'RESEND_EMAIL_DISABLED'"), 'external adapters are explicitly disabled');
 check(!/Deno\.env|getPublicUrl|service[_-]?role[_-]?key/i.test(service + hub), 'browser communication code contains no provider/service-role access or public URLs');
 check(migration.includes('REVOKE ALL ON TABLE %I FROM anon') && migration.includes('REVOKE ALL ON TABLE %I FROM authenticated'), 'new tables deny direct browser access');

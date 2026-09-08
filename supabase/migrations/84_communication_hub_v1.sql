@@ -384,10 +384,10 @@ DECLARE
   v_channel text;
   v_contact_verified boolean;
 BEGIN
-  IF p_event_key IS NULL OR p_event_key = '' OR p_event_key ~* '(https?://|@|\+?[0-9][0-9 ()-]{7,})' THEN
+  IF p_event_key IS NULL OR p_event_key !~ '^[a-z_]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
     RAISE EXCEPTION 'Unsafe delivery event key';
   END IF;
-  IF p_safe_message_reference IS NULL OR p_safe_message_reference !~ '^[a-z_]+:[0-9a-f-]{36}$' THEN
+  IF p_safe_message_reference IS NULL OR p_safe_message_reference !~ '^[a-z_]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
     RAISE EXCEPTION 'Unsafe message reference';
   END IF;
   FOR v_channel IN
@@ -1085,6 +1085,9 @@ GRANT EXECUTE ON FUNCTION public.chief_revoke_tenant_capability(text, uuid) TO a
 -- matrix proves cross-tenant, participant, grant/revoke, deduplication and
 -- provider-disabled behavior. Do not configure Meta or Resend as part of
 -- applying this migration; there is no sending adapter in this file.
+-- REPLAY CONTRACT: this migration is intentionally non-idempotent. A second
+-- application must stop at the first existing CREATE TABLE; never interpret
+-- that expected collision as permission to continue or repair history.
 --
 -- ROLLBACK BEFORE REAL DATA: drop the public RPCs above, then internal
 -- helpers, then the eleven new tables in reverse dependency order. After
