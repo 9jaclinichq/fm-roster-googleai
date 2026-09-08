@@ -46,6 +46,16 @@ async function gateway<T>(body: Record<string, unknown>): Promise<T> {
   return data as T;
 }
 
+const GATEWAY_SESSION_REQUIRED_MESSAGE =
+  'Email and WhatsApp verification require a linked account session. Sign in through Doctor Login with the account linked to this Workspc profile, then return and try again. Your saved contact is unchanged.';
+
+async function requireGatewaySession(): Promise<void> {
+  const { data, error } = await requireClient().auth.getSession();
+  if (error || !data.session?.access_token) {
+    throw new Error(GATEWAY_SESSION_REQUIRED_MESSAGE);
+  }
+}
+
 async function dispatchBestEffort(safeMessageReference: string): Promise<void> {
   try {
     await gateway({ operation: 'delivery.dispatch', safe_message_reference: safeMessageReference });
@@ -84,15 +94,18 @@ export const communicationService = {
   },
 
   async requestContactVerification(_actor: CommunicationActor, channel: ContactChannel, _accessCode?: string | null): Promise<void> {
+    await requireGatewaySession();
     await gateway({ operation: 'verification.request', channel });
   },
 
   async completeContactVerification(_actor: CommunicationActor, channel: ContactChannel, code: string): Promise<void> {
+    await requireGatewaySession();
     const result = await gateway<{ state: string }>({ operation: 'verification.complete', channel, code });
     if (result.state !== 'VERIFIED') throw new Error('The verification code was not accepted.');
   },
 
   async sendSelfTest(): Promise<void> {
+    await requireGatewaySession();
     await gateway({ operation: 'delivery.self_test' });
   },
 

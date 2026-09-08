@@ -102,6 +102,19 @@ check(migration.includes("REPLAY CONTRACT: migration 85 is intentionally non-ide
 
 check(gateway.indexOf('authenticatedUser(req)') < gateway.indexOf("case 'verification.request'"), 'browser gateway operations authenticate through the server entrypoints');
 check(gateway.includes('auth.getUser(token)') && gateway.includes("workspc_gateway_resolve_actor"), 'JWT and owner resolution are server-side');
+check(gateway.includes("case 'verification.request': return await requestVerification(req, body, admin)")
+  && gateway.includes("case 'verification.complete': return await completeVerification(req, body, admin)")
+  && gateway.includes("case 'delivery.dispatch': return await dispatch(req, body, admin, false)"),
+  'async browser failures remain inside the gateway error boundary instead of escaping as HTTP 500');
+check(gateway.includes('if (provider) return await providerWebhook(req, provider, rawBody, admin)'),
+  'async provider webhook failures remain inside the gateway error boundary');
+check(communicationClient.includes('async function requireGatewaySession(): Promise<void>')
+  && communicationClient.includes('auth.getSession()')
+  && communicationClient.includes('Your saved contact is unchanged.')
+  && /requestContactVerification[\s\S]*?await requireGatewaySession\(\);[\s\S]*?verification\.request/.test(communicationClient),
+  'verification preflights the linked Supabase session and gives legacy-code users actionable feedback');
+check(!/verification\.request[^}]*resident_code|verification\.request[^}]*accessCode/s.test(communicationClient),
+  'session repair does not forward legacy access codes or weaken server-derived identity');
 check(gateway.includes("body: { operation: 'payment.initiate' }") || client.includes("body: { operation: 'payment.initiate' }"), 'browser payment request contains only an allow-listed operation');
 check(!/body:\s*\{[^}]*amount[^}]*\}/s.test(client) && !/body:\s*\{[^}]*tenant_id[^}]*\}/s.test(client.slice(client.indexOf('initiatePaymentCheckout'), client.indexOf('initiateTenantPlanCheckout'))), 'browser does not supply trusted payment amount or tenant');
 check(gateway.includes("amount: '12000.00'") && gateway.includes("currency: 'NGN'") && gateway.includes('customer: { email: user.email }'), 'gateway constructs Flutterwave amount, currency and payer');

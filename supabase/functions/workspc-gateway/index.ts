@@ -584,7 +584,7 @@ Deno.serve(async (req: Request) => {
     const admin = serviceClient();
     const rawBody = await req.text();
     if (rawBody.length > 64_000) return json(req, { error: 'request_too_large' }, 413);
-    if (provider) return providerWebhook(req, provider, rawBody, admin);
+    if (provider) return await providerWebhook(req, provider, rawBody, admin);
     let body: Json;
     try { body = JSON.parse(rawBody) as Json; } catch { throw new GatewayHttpError(400, 'invalid_json'); }
     switch (body.operation) {
@@ -595,11 +595,11 @@ Deno.serve(async (req: Request) => {
           whatsapp: META_ENABLED && META_ACCESS_TOKEN && META_PHONE_NUMBER_ID ? 'AVAILABLE' : 'DISABLED',
           flutterwave: FLUTTERWAVE_ENABLED && FLUTTERWAVE_SECRET_KEY && FLUTTERWAVE_WEBHOOK_HASH ? 'AVAILABLE' : 'DISABLED',
         });
-      case 'verification.request': return requestVerification(req, body, admin);
-      case 'verification.complete': return completeVerification(req, body, admin);
-      case 'delivery.dispatch': return dispatch(req, body, admin, false);
-      case 'delivery.self_test': return dispatch(req, body, admin, true);
-      case 'payment.initiate': return initiatePayment(req, body, admin);
+      case 'verification.request': return await requestVerification(req, body, admin);
+      case 'verification.complete': return await completeVerification(req, body, admin);
+      case 'delivery.dispatch': return await dispatch(req, body, admin, false);
+      case 'delivery.self_test': return await dispatch(req, body, admin, true);
+      case 'payment.initiate': return await initiatePayment(req, body, admin);
       default: throw new GatewayHttpError(400, 'operation_not_allowed');
     }
   } catch (error) {
