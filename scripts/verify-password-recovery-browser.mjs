@@ -15,6 +15,7 @@ await new Promise((resolve, reject) => {
 let sequence = 0;
 const pending = new Map();
 const browserMessages = [];
+let recoveryRequests = 0;
 socket.onmessage = event => {
   const message = JSON.parse(event.data);
   if (message.id && pending.has(message.id)) {
@@ -24,6 +25,9 @@ socket.onmessage = event => {
   }
   if (message.method === 'Runtime.consoleAPICalled' || message.method === 'Log.entryAdded') {
     browserMessages.push(JSON.stringify(message.params));
+  }
+  if (message.method === 'Network.requestWillBeSent' && message.params?.request?.method === 'POST' && message.params?.request?.url?.includes('/auth/v1/recover')) {
+    recoveryRequests += 1;
   }
 };
 
@@ -92,8 +96,51 @@ await evaluate("[...document.querySelectorAll('button')].find(button => button.t
 await waitFor("location.hash === '#/doctor/login'", 'fresh personal sign-in route');
 assert.ok(await evaluate("document.body.innerText.toLowerCase().includes('personal password')"), 'ordinary personal sign-in is restored after recovery');
 
+const recoveryButtonExpression = "document.querySelector('button[aria-label=\"Request personal password reset\"]')";
+const desktopControl = await evaluate(`(() => { const button = ${recoveryButtonExpression}; const rect = button.getBoundingClientRect(); return { disabled: button.disabled, tabIndex: button.tabIndex, width: rect.width, height: rect.height, name: button.textContent.trim() }; })()`);
+assert.equal(desktopControl.disabled, false, 'recovery action remains enabled when email is empty so it can explain the requirement');
+assert.ok(desktopControl.tabIndex >= 0 && desktopControl.height >= 44, 'desktop recovery action is keyboard reachable with an adequate target');
+
+await evaluate(`(${recoveryButtonExpression}).focus()`);
+assert.ok(await evaluate("document.activeElement?.textContent.includes('Forgot personal password')"), 'recovery action receives keyboard focus');
+await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+await send('Input.dispatchKeyEvent', { type: 'char', key: 'Enter', code: 'Enter', text: '\r', unmodifiedText: '\r' });
+await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+await waitFor("document.body.innerText.includes('Enter your personal account email first.')", 'keyboard missing-email feedback');
+assert.equal(recoveryRequests, 0, 'missing email does not call Auth recovery');
+
+const setEmail = value => evaluate(`(() => { const field = document.querySelector('#doctor-account-email'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(field, ${JSON.stringify(value)}); field.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+const clickRecovery = async () => {
+  const center = await evaluate(`(() => { const rect = (${recoveryButtonExpression}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: center.x, y: center.y, button: 'left', clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: center.x, y: center.y, button: 'left', clickCount: 1 });
+};
+
+await setEmail('not-an-email');
+await clickRecovery();
+await waitFor("document.body.innerText.includes('Enter a valid personal account email')", 'invalid-email feedback');
+assert.equal(recoveryRequests, 0, 'invalid email does not call Auth recovery');
+
+await setEmail('synthetic@example.invalid');
+await clickRecovery();
+await waitFor("document.body.innerText.includes('If a personal account exists for this email')", 'non-enumerating recovery result');
+assert.equal(recoveryRequests, 1, 'one valid mouse activation creates exactly one recovery request');
+assert.ok(await evaluate(`(${recoveryButtonExpression}).disabled && (${recoveryButtonExpression}).textContent.includes('Reset available in')`), 'cooldown is visible and disables duplicate activation');
+await evaluate(`(${recoveryButtonExpression}).click()`);
+await new Promise(resolve => setTimeout(resolve, 300));
+assert.equal(recoveryRequests, 1, 'cooldown prevents a duplicate recovery request');
+
+await send('Emulation.setDeviceMetricsOverride', { width: 500, height: 900, deviceScaleFactor: 1, mobile: true });
+await send('Page.navigate', { url: 'about:blank' });
+await waitFor("location.href === 'about:blank'", 'mobile blank test document');
+await send('Page.navigate', { url: `${appBase}/#/doctor/login` });
+await waitFor(`Boolean(${recoveryButtonExpression})`, 'mobile recovery control');
+const mobileControl = await evaluate(`(() => { const button = ${recoveryButtonExpression}; const rect = button.getBoundingClientRect(); return { disabled: button.disabled, tabIndex: button.tabIndex, top: rect.top, bottom: rect.bottom, height: rect.height }; })()`);
+assert.equal(mobileControl.disabled, false, 'mobile recovery action remains interactive before email entry');
+assert.ok(mobileControl.tabIndex >= 0 && mobileControl.height >= 44 && mobileControl.top >= 0 && mobileControl.bottom <= 900, '500px recovery action is reachable with an adequate target');
+
 const emitted = browserMessages.join('\n');
 assert.ok(!emitted.includes('synthetic-access') && !emitted.includes('synthetic-refresh') && !emitted.includes('synthetic-new-password'), 'browser logs contain no recovery credentials or password');
 
 socket.close();
-console.log('synthetic password recovery browser journey passed (10 checks)');
+console.log('synthetic password recovery browser journey passed (23 checks)');

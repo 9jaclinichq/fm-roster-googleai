@@ -1,6 +1,15 @@
 export const PERSONAL_PASSWORD_MIN_LENGTH = 6;
 export const AUTH_EMAIL_COOLDOWN_SECONDS = 60;
 
+export function validatePersonalEmail(email: string): string | null {
+  const normalized = email.trim();
+  if (!normalized) return 'Enter your personal account email first.';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    return 'Enter a valid personal account email, such as name@example.com.';
+  }
+  return null;
+}
+
 export function validatePersonalPassword(password: string): string | null {
   if (password.length < PERSONAL_PASSWORD_MIN_LENGTH) {
     return `Password must be at least ${PERSONAL_PASSWORD_MIN_LENGTH} characters.`;

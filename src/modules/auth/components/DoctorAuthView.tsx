@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Stethoscope, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { databaseService } from '../../../lib/databaseService';
@@ -6,6 +6,7 @@ import {
   AUTH_EMAIL_COOLDOWN_SECONDS,
   loginFailureMessage,
   registrationNextStepMessage,
+  validatePersonalEmail,
   validatePersonalPassword,
 } from '../lib/authJourney';
 
@@ -25,9 +26,11 @@ export const DoctorAuthView: React.FC = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [emailAction, setEmailAction] = useState<'recovery' | 'confirmation' | null>(null);
   const [error, setError] = useState('');
   const [confirmationNotice, setConfirmationNotice] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
+  const emailActionInFlight = useRef(false);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -103,8 +106,11 @@ export const DoctorAuthView: React.FC = () => {
   const requestPasswordReset = async () => {
     setError('');
     setConfirmationNotice('');
-    if (!email.trim()) return setError('Enter your personal account email first.');
-    setIsSubmitting(true);
+    const emailError = validatePersonalEmail(email);
+    if (emailError) return setError(emailError);
+    if (emailActionInFlight.current || resendCooldown > 0) return;
+    emailActionInFlight.current = true;
+    setEmailAction('recovery');
     try {
       await databaseService.requestDoctorPasswordReset(email);
       setConfirmationNotice('If a personal account exists for this email, a password-reset message has been requested. Check your inbox and spam folder.');
@@ -112,14 +118,19 @@ export const DoctorAuthView: React.FC = () => {
     } catch (err) {
       setError(loginFailureMessage(err));
     } finally {
-      setIsSubmitting(false);
+      emailActionInFlight.current = false;
+      setEmailAction(null);
     }
   };
 
   const resendConfirmation = async () => {
     setError('');
-    if (!email.trim()) return setError('Enter your personal account email first.');
-    setIsSubmitting(true);
+    setConfirmationNotice('');
+    const emailError = validatePersonalEmail(email);
+    if (emailError) return setError(emailError);
+    if (emailActionInFlight.current || resendCooldown > 0) return;
+    emailActionInFlight.current = true;
+    setEmailAction('confirmation');
     try {
       await databaseService.resendDoctorConfirmation(email);
       setConfirmationNotice('If this email has an unconfirmed personal account, a new confirmation message has been requested. Check your inbox and spam folder.');
@@ -127,7 +138,8 @@ export const DoctorAuthView: React.FC = () => {
     } catch (err) {
       setError(loginFailureMessage(err));
     } finally {
-      setIsSubmitting(false);
+      emailActionInFlight.current = false;
+      setEmailAction(null);
     }
   };
 
@@ -167,13 +179,13 @@ export const DoctorAuthView: React.FC = () => {
 
         <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-4">
           {confirmationNotice && (
-            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-3.5 flex items-start space-x-2 text-xs sm:text-sm">
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-3.5 flex items-start space-x-2 text-xs sm:text-sm" role="status">
               <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
               <span>{confirmationNotice}</span>
             </div>
           )}
           {error && (
-            <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3.5 flex items-start space-x-2 text-xs sm:text-sm animate-shake">
+            <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3.5 flex items-start space-x-2 text-xs sm:text-sm animate-shake" role="alert">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
@@ -193,8 +205,9 @@ export const DoctorAuthView: React.FC = () => {
           )}
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Email</label>
+            <label htmlFor="doctor-account-email" className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Email</label>
             <input
+              id="doctor-account-email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -234,19 +247,35 @@ export const DoctorAuthView: React.FC = () => {
 
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || emailAction !== null}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500 text-white rounded-xl text-sm font-bold shadow-sm transition transform active:scale-[0.98] cursor-pointer"
           >
             {isSubmitting ? 'Please wait...' : mode === 'register' ? 'Create Account' : 'Log In'}
           </button>
           {mode === 'login' && (
-            <div className="flex flex-col gap-2 text-center sm:flex-row sm:justify-center">
-              <button type="button" onClick={requestPasswordReset} disabled={isSubmitting || !email.trim() || resendCooldown > 0} className="text-xs font-bold text-blue-700 disabled:text-slate-400">
-                {resendCooldown > 0 ? `Email available in ${resendCooldown}s` : 'Forgot personal password?'}
-              </button>
-              <button type="button" onClick={resendConfirmation} disabled={isSubmitting || !email.trim() || resendCooldown > 0} className="text-xs font-bold text-blue-700 disabled:text-slate-400">
-                Resend confirmation
-              </button>
+            <div className="space-y-2 text-center">
+              <p id="doctor-email-recovery-help" className="text-[11px] leading-relaxed text-slate-500">Enter your personal account email above before requesting a password reset or confirmation resend.</p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
+                <button
+                  type="button"
+                  onClick={requestPasswordReset}
+                  disabled={isSubmitting || emailAction !== null || resendCooldown > 0}
+                  aria-label="Request personal password reset"
+                  aria-describedby="doctor-email-recovery-help"
+                  className="min-h-11 rounded-lg px-3 text-xs font-bold text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:text-slate-500"
+                >
+                  {emailAction === 'recovery' ? 'Requesting reset…' : resendCooldown > 0 ? `Reset available in ${resendCooldown}s` : 'Forgot personal password?'}
+                </button>
+                <button
+                  type="button"
+                  onClick={resendConfirmation}
+                  disabled={isSubmitting || emailAction !== null || resendCooldown > 0}
+                  aria-describedby="doctor-email-recovery-help"
+                  className="min-h-11 rounded-lg px-3 text-xs font-bold text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:text-slate-500"
+                >
+                  {emailAction === 'confirmation' ? 'Resending confirmation…' : resendCooldown > 0 ? `Confirmation available in ${resendCooldown}s` : 'Resend confirmation'}
+                </button>
+              </div>
             </div>
           )}
         </form>

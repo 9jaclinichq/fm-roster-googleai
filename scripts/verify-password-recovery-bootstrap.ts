@@ -6,6 +6,7 @@ import {
   recoveryFailureMessage,
   recoveryFailureReason,
 } from '../src/modules/auth/lib/passwordRecovery';
+import { validatePersonalEmail } from '../src/modules/auth/lib/authJourney';
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8');
 const app = read('src/App.tsx');
@@ -36,6 +37,9 @@ check(inspectRecoveryLocation('https://workspace.privydoc.com.ng/#/doctor/reset-
 check(inspectRecoveryLocation('https://workspace.privydoc.com.ng/#/doctor/login').kind === 'none', 'ordinary login is not treated as recovery');
 check(recoveryFailureMessage('expired_or_used').includes('expired or was already used'), 'expired/used state has a precise safe action');
 check(recoveryFailureMessage('session_missing').includes('valid password-recovery session'), 'direct or mismatched access cannot update a password');
+check(validatePersonalEmail('') === 'Enter your personal account email first.', 'missing recovery email receives clear feedback');
+check(validatePersonalEmail('not-an-email')?.includes('valid personal account email'), 'invalid recovery email receives clear feedback');
+check(validatePersonalEmail('synthetic@example.invalid') === null, 'synthetic valid email passes client validation');
 
 check(service.includes("flowType: 'implicit'") && service.includes('detectSessionInUrl: true'), 'Supabase client explicitly uses the configured implicit flow');
 check(!service.includes('exchangeCodeForSession'), 'application does not combine PKCE exchange with implicit recovery');
@@ -55,6 +59,13 @@ check(view.includes("recovery.status !== 'ready'") && view.includes('Return to p
 check(view.includes('The recovery session is closed') && view.includes('Continue to personal sign-in'), 'successful update truthfully routes through a fresh sign-in');
 check(app.includes("navigate('/doctor/login', { replace: true })") && app.includes("linkedWorkforce ? '/workspace/home' : '/doctor/home'"), 'fresh sign-in preserves institutional-link continuation');
 check(authView.includes('loginDoctor') && authView.includes('registerDoctor'), 'ordinary login and registration remain wired');
+check(authView.includes('onClick={requestPasswordReset}') && authView.includes('Forgot personal password?'), 'password recovery is a real button with the existing request handler');
+check(authView.includes('aria-label="Request personal password reset"'), 'password recovery has a stable accessible name across loading and cooldown states');
+check(!authView.includes('!email.trim() || resendCooldown'), 'missing email no longer makes the recovery control inert');
+check(authView.includes('min-h-11') && authView.includes('focus-visible:ring-2'), 'recovery controls have adequate targets and visible keyboard focus');
+check(authView.includes("emailAction === 'recovery' ? 'Requesting reset…'") && authView.includes('disabled={isSubmitting || emailAction !== null || resendCooldown > 0}'), 'recovery control exposes loading/cooldown and blocks duplicate submission');
+check(authView.includes('emailActionInFlight.current') && authView.includes('useRef(false)'), 'same-tick recovery activations are guarded before React rerenders');
+check(authView.includes('If a personal account exists for this email'), 'recovery result remains non-enumerating');
 
 for (const [source, label] of [
   [linking, 'account link'],
