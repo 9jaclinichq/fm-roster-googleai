@@ -9,6 +9,8 @@ import { OfflineBanner } from './modules/shared/ui/OfflineBanner';
 import { ResidentLoginView } from './modules/auth/components/ResidentLoginView';
 import { PostLoginEmailPrompt } from './modules/auth/components/PostLoginEmailPrompt';
 import { LinkInstitutionalAccessPrompt } from './modules/auth/components/LinkInstitutionalAccessPrompt';
+import { InstitutionalAccountLinkInvitationView } from './modules/auth/components/InstitutionalAccountLinkInvitationView';
+import { organisationMembershipService } from './modules/auth/lib/organisationMembershipService';
 import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
 import { MyAssignmentView } from './modules/roster-engine/components/MyAssignmentView';
@@ -281,7 +283,11 @@ function MainAppContent() {
         // row, populate currentResident from it exactly as a code-based
         // login would — every existing resident view/route/nav-tab needs no
         // changes to work for a doctor-linked resident.
-        const linkedWorkforce = await databaseService.getLinkedWorkforceForDoctor(profile.id);
+        const memberships = await organisationMembershipService.getCurrentUserMemberships();
+        const canonical = memberships.find((membership) => membership.status === 'active' && membership.workforce_id);
+        const linkedWorkforce = canonical?.workforce_id
+          ? await databaseService.getWorkforceMemberById(canonical.workforce_id)
+          : await databaseService.getLinkedWorkforceForDoctor(profile.id);
         if (linkedWorkforce) {
           const session: ResidentSession = {
             id: linkedWorkforce.id,
@@ -301,7 +307,7 @@ function MainAppContent() {
 
         // Only redirect on an actual fresh login, never on a page-reload
         // restore (which would otherwise clobber a deep-linked resident route).
-        if (event === 'SIGNED_IN') {
+        if (event === 'SIGNED_IN' && !window.location.hash.startsWith('#/workspace/link-account') && !window.location.hash.startsWith('#/workspace/')) {
           navigate(linkedWorkforce ? '/workspace/home' : '/doctor/home');
         }
       } catch (err) {
@@ -380,6 +386,22 @@ function MainAppContent() {
       localStorage.setItem('fm_session_resident', JSON.stringify(updated));
       return updated;
     });
+  };
+
+  const handleInvitationAccepted = async (workforceId: string) => {
+    const member = await databaseService.getWorkforceMemberById(workforceId);
+    if (!member) throw new Error('The linked institutional profile is no longer active.');
+    const session: ResidentSession = {
+      id: member.id,
+      name: member.full_name,
+      category: member.category,
+      tenant_id: member.tenant_id,
+      hasEmail: true,
+      subadminRoles: [],
+    };
+    setCurrentResident(session);
+    localStorage.setItem('fm_session_resident', JSON.stringify(session));
+    await refreshSubadminRoles(session);
   };
 
   const handleResidentLogout = () => {
@@ -501,10 +523,12 @@ function MainAppContent() {
           require or store the resident access code anywhere persistent;
           does not affect the legacy resident session on success or
           failure. */}
-      {currentDoctor && currentResident && (
+      {currentResident && (
         <LinkInstitutionalAccessPrompt
           workforceId={currentResident.id}
-          onLinked={() => {}}
+          accessCode={residentAccessCode}
+          hasAuthenticatedAccount={!!currentDoctor}
+          onLinked={() => setResidentAccessCode(null)}
         />
       )}
 
@@ -536,6 +560,11 @@ function MainAppContent() {
           />
 
           {/* Auth landing chooser (institutional vs. individual doctor) */}
+          <Route
+            path="/workspace/link-account"
+            element={<InstitutionalAccountLinkInvitationView authenticated={!!currentDoctor} onAccepted={handleInvitationAccepted} />}
+          />
+
           <Route
             path="/login"
             element={

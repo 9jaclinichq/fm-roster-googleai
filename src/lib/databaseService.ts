@@ -240,6 +240,24 @@ export const databaseService = {
     return row || null;
   },
 
+  // Migration 86: exact tenant + secret-code lookup. Unlike the legacy
+  // member-picker flow, this never returns a searchable workforce directory.
+  async verifyResidentLoginByCode(
+    tenantId: string,
+    code: string,
+    email?: string
+  ): Promise<{ id: string; full_name: string; category: string; has_email: boolean } | null> {
+    checkSupabase();
+    const { data, error } = await supabase!.rpc('verify_resident_login_by_code', {
+      p_tenant_id: tenantId,
+      p_code: code,
+      p_email: email?.trim() || null,
+    });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row || null;
+  },
+
   // Self-service email capture (migration 64) — the ONLY write path for
   // workforce.email; no raw column grant exists. Independently
   // reverifies workforce_id + resident_code server-side inside the RPC —
@@ -2027,6 +2045,18 @@ export const databaseService = {
       console.warn('Error fetching linked workforce for doctor:', error);
       throw error;
     }
+    return data;
+  },
+
+  async getWorkforceMemberById(workforceId: string): Promise<WorkforceMember | null> {
+    checkSupabase();
+    const { data, error } = await supabase!
+      .from('workforce')
+      .select(WORKFORCE_PUBLIC_COLUMNS)
+      .eq('id', workforceId)
+      .eq('active', true)
+      .maybeSingle();
+    if (error) throw error;
     return data;
   },
 

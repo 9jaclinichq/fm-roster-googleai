@@ -6,6 +6,7 @@ import { LoadingShell } from '../../shared/ui/LoadingShell';
 import { SubmissionsPanel } from './dashboard/SubmissionsPanel';
 import { PendingResidentsPanel } from './dashboard/PendingResidentsPanel';
 import { WorkforceRegistryPanel } from './dashboard/WorkforceRegistryPanel';
+import { AccountLinkingAdminPanel } from './dashboard/AccountLinkingAdminPanel';
 import { AnnouncementsAdminPanel } from './dashboard/AnnouncementsAdminPanel';
 import { RoleDelegationPanel } from './dashboard/RoleDelegationPanel';
 import { CollectionSettingsPanel } from './dashboard/CollectionSettingsPanel';
@@ -1277,6 +1278,7 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
 
         {/* TAB 3: WORKFORCE REGISTRY */}
         {activeTab === 'workforce' && (
+          <div className="space-y-6">
           <WorkforceRegistryPanel
             t={t}
             workforce={workforce}
@@ -1308,6 +1310,8 @@ export const ChiefDashboardView: React.FC<ChiefDashboardViewProps> = ({ onLogout
             newMemberError={newMemberError}
             handleAddWorkforceMember={handleAddWorkforceMember}
           />
+          <AccountLinkingAdminPanel workforce={workforce} />
+          </div>
         )}
 
         {/* TAB 4: ANNOUNCEMENTS ADMIN */}

@@ -51,6 +51,38 @@ export interface ClaimWorkforceMemberResult {
   claim_claimed_at: string | null;
 }
 
+export interface AccountLinkPreflight {
+  state: 'CONTACT_READY' | 'CONTACT_CONFIRMATION_REQUIRED';
+  tenant_name: string;
+  member_name: string;
+  masked_destination?: string;
+}
+
+export interface AccountLinkInvitation {
+  id: string;
+  workforce_id: string;
+  member_name: string;
+  masked_destination: string | null;
+  status: string;
+  expires_at: string;
+  send_count: number;
+  issued_by: string;
+}
+
+export interface AccountLinkAdminOverview {
+  tenant_id: string;
+  counts: { unlinked: number; invited: number; linked: number; blocked: number };
+  invitations: AccountLinkInvitation[];
+}
+
+async function gateway<T>(body: Record<string, unknown>): Promise<T> {
+  if (!supabase) throw new Error('Supabase client not configured');
+  const { data, error } = await supabase.functions.invoke('workspc-gateway', { body });
+  if (error) throw new Error('The secure account-link service could not complete this request.');
+  if (data?.error) throw new Error(String(data.error).replaceAll('_', ' '));
+  return data as T;
+}
+
 export const organisationMembershipService = {
   // Requires a live Supabase Auth session — returns [] (never throws) for
   // an unauthenticated caller, matching the RPC's own "unauthenticated
@@ -84,5 +116,52 @@ export const organisationMembershipService = {
     }
     const row = Array.isArray(data) ? data[0] : data;
     return row;
+  },
+
+  async preflight(workforceId: string, residentCode: string): Promise<AccountLinkPreflight> {
+    if (!supabase) throw new Error('Supabase client not configured');
+    const { data, error } = await supabase.rpc('workspc_account_link_preflight', {
+      p_workforce_id: workforceId, p_resident_code: residentCode,
+    });
+    if (error) throw new Error('Those institutional details could not be verified.');
+    return data as AccountLinkPreflight;
+  },
+
+  async emailMatches(workforceId: string, residentCode: string, email: string): Promise<boolean> {
+    if (!supabase) throw new Error('Supabase client not configured');
+    const { data, error } = await supabase.rpc('workspc_account_link_email_matches', {
+      p_workforce_id: workforceId, p_resident_code: residentCode, p_candidate_email: email,
+    });
+    if (error) throw new Error('The organization contact could not be checked.');
+    return data === true;
+  },
+
+  async requestAssistance(workforceId: string, residentCode: string): Promise<string> {
+    if (!supabase) throw new Error('Supabase client not configured');
+    const { data, error } = await supabase.rpc('workspc_account_link_request_assistance', {
+      p_workforce_id: workforceId, p_resident_code: residentCode,
+    });
+    if (error) throw new Error('The assistance request could not be recorded.');
+    return String((data as { state?: string })?.state ?? 'UNKNOWN');
+  },
+
+  async adminOverview(): Promise<AccountLinkAdminOverview> {
+    return gateway<AccountLinkAdminOverview>({ operation: 'account_link.admin.overview' });
+  },
+
+  async createInvitation(workforceId: string): Promise<{ state: string; masked_destination?: string; expires_at?: string }> {
+    return gateway({ operation: 'account_link.invitation.create', workforce_id: workforceId });
+  },
+
+  async revokeInvitation(invitationId: string): Promise<{ state: string }> {
+    return gateway({ operation: 'account_link.invitation.revoke', invitation_id: invitationId });
+  },
+
+  async acceptInvitation(token: string): Promise<{ state: string; workforce_id?: string }> {
+    return gateway({ operation: 'account_link.invitation.accept', token });
+  },
+
+  async rejectInvitation(token: string): Promise<{ state: string }> {
+    return gateway({ operation: 'account_link.invitation.reject', token });
   },
 };

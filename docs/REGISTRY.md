@@ -27,6 +27,18 @@ in the modularization pass; `fragmented` = still split across the old
 `src/components/` and new `src/modules/` trees, or doing one god-file's worth
 of unrelated things; `stub` = scaffolding exists but no real behavior yet.
 
+**Institutional Account Linking V1 candidate (2026-09-09)**: migration 86
+adds a minimal contact-fingerprint, single-use invitation and closed audit
+model over `organisation_memberships`. `ResidentLoginView` no longer exposes
+an anonymous workforce directory; `LinkInstitutionalAccessPrompt` separates
+the legacy institutional-code session from personally confirmed Supabase
+Auth; `InstitutionalAccountLinkInvitationView` provides explicit
+accept/reject; and `AccountLinkingAdminPanel` is embedded in the existing
+Workforce tab. Admin invitation operations require an active authenticated
+same-tenant admin membership through the existing `workspc-gateway`; the
+shared Chief code is not account-link authority. This entry records repository
+candidate state only until live migration/revision verification is completed.
+
 **Note on migration status (headers, not live verification)**: migrations
 32–35 each carry an explicit "NOT APPLIED LIVE — a human will review and
 apply the pending batch" header comment; migration 36 carries no such

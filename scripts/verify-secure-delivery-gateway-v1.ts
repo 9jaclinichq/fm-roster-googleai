@@ -133,6 +133,6 @@ check(paymentWebhook.indexOf('payment_webhook_moved_to_secure_gateway') < paymen
 
 const migrationNumbers = readdirSync(resolve(root, 'supabase/migrations'))
   .filter(name => /^\d+_/.test(name)).map(name => Number(name.split('_')[0]));
-check(Math.max(...migrationNumbers) === 85, 'local migration ceiling is exactly 85');
+check(Math.max(...migrationNumbers) === 86, 'local migration ceiling is exactly the reviewed additive migration 86');
 
 console.log(`secure delivery gateway v1 verifier passed (${checks} checks)`);

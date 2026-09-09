@@ -186,6 +186,29 @@ export function buildOperationalEmail(
   };
 }
 
+export function buildAccountLinkInvitationEmail(
+  from: string,
+  to: string,
+  token: string,
+  invitationId: string,
+): EmailRequest {
+  if (!isValidRecipient('EMAIL', to)) throw new Error('Invalid email recipient');
+  if (!/^[A-Za-z0-9_-]{40,100}$/.test(token)) throw new Error('Invalid account-link token');
+  if (!isUuid(invitationId)) throw new Error('Invalid invitation identifier');
+  const invitationUrl = `https://workspace.privydoc.com.ng/#/workspace/link-account?invitation=${encodeURIComponent(token)}`;
+  return {
+    from,
+    to: [to],
+    subject: 'Confirm your Workspc institutional account link',
+    html: emailFrame(
+      'Link your institutional Workspc access',
+      `<p>An administrator invited you to link an existing institutional profile to your personal Workspc account.</p><p><a href="${invitationUrl}">Review account link</a></p><p>This single-use invitation expires in 24 hours. If you did not expect it, reject or ignore it.</p>`,
+      'PrivyDoc Workspace · This message contains no clinical information.',
+    ),
+    headers: { 'X-Entity-Ref-ID': invitationId },
+  };
+}
+
 export function buildWhatsAppTemplateRequest(
   phoneNumberId: string,
   to: string,

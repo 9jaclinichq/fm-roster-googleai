@@ -1,172 +1,104 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, ChevronRight } from 'lucide-react';
-import { organisationMembershipService } from '../lib/organisationMembershipService';
+import { AlertCircle, ShieldCheck } from 'lucide-react';
+import { databaseService } from '../../../lib/databaseService';
+import { AccountLinkPreflight, organisationMembershipService } from '../lib/organisationMembershipService';
 
-interface LinkInstitutionalAccessPromptProps {
+interface Props {
   workforceId: string;
+  accessCode: string | null;
+  hasAuthenticatedAccount: boolean;
   onLinked: () => void;
 }
 
-// The Institutional Identity Slice 2a "minimal UI seam" — per the
-// reviewed "institutional identity slice 2 claim/link" design handoff
-// (WORKSPC, dated 2026-08-29)'s Section 11 and prompt1.txt's own "Minimal
-// UI seam" section. Mirrors PostLoginEmailPrompt.tsx's exact established
-// precedent (small, dismissible, non-blocking banner, mounted at the
-// App-shell level) rather than inventing a new UI pattern.
-//
-// Mounted by App.tsx ONLY when BOTH a real Supabase Auth session exists
-// (currentDoctor !== null — the only way any session currently gets one
-// in this app) AND a resident session is also active (currentResident)
-// — this is exactly the "authenticated Supabase user is also operating
-// in a resident context" precondition named in the reviewed handoff and
-// prompt1.txt, not a new convergence concept. This component itself then
-// checks (via current_user_organisation_memberships(), migration 76)
-// whether THIS specific workforce_id is already linked, and renders
-// nothing at all if so, or while that check is in flight — App.tsx's own
-// gating condition stays as simple/cheap as PostLoginEmailPrompt's.
-//
-// Explicitly does NOT: store the resident code anywhere persistent (the
-// input is local component state only, cleared on unmount/dismiss, never
-// written to localStorage); disable/invalidate the legacy resident
-// session on success OR failure (a failed claim leaves the existing
-// code-based session completely untouched); or add any second
-// authentication/account system (it calls the exact same
-// claim_workforce_member RPC via the same authenticated Supabase session
-// currentDoctor already established — no new signup/signin flow here).
-export const LinkInstitutionalAccessPrompt: React.FC<LinkInstitutionalAccessPromptProps> = ({ workforceId, onLinked }) => {
-  const [checking, setChecking] = useState(true);
-  const [alreadyLinked, setAlreadyLinked] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [enteredCode, setEnteredCode] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+// The legacy code only opens the already-issued institutional profile. The
+// independent proof step is a confirmed Supabase Auth email matched by the
+// database against the organization's pre-migration contact snapshot.
+export const LinkInstitutionalAccessPrompt: React.FC<Props> = ({ workforceId, accessCode, hasAuthenticatedAccount, onLinked }) => {
+  const [code, setCode] = useState(accessCode ?? '');
+  const [preflight, setPreflight] = useState<AccountLinkPreflight | null>(null);
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [email, setEmail] = useState('');
+  const [pin, setPin] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [succeeded, setSucceeded] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [alreadyLinked, setAlreadyLinked] = useState(false);
+  const [checkingMembership, setCheckingMembership] = useState(hasAuthenticatedAccount);
 
   useEffect(() => {
+    if (accessCode && !preflight) void inspect(accessCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessCode, workforceId]);
+
+  useEffect(() => {
+    if (!hasAuthenticatedAccount) { setCheckingMembership(false); return; }
     let cancelled = false;
-    (async () => {
-      try {
-        const memberships = await organisationMembershipService.getCurrentUserMemberships();
-        if (!cancelled) {
-          setAlreadyLinked(memberships.some((m) => m.workforce_id === workforceId));
-        }
-      } catch (err) {
-        // Non-fatal: if the check itself fails, default to NOT showing the
-        // prompt rather than risking a confusing/incorrect nudge — the
-        // legacy resident session is completely unaffected either way.
-        console.warn('LinkInstitutionalAccessPrompt: membership check failed (non-fatal)', err);
-        if (!cancelled) setAlreadyLinked(true);
-      } finally {
-        if (!cancelled) setChecking(false);
-      }
-    })();
+    organisationMembershipService.getCurrentUserMemberships()
+      .then((rows) => { if (!cancelled) setAlreadyLinked(rows.some((row) => row.status === 'active' && row.workforce_id === workforceId)); })
+      .catch(() => { /* keep the optional prompt available after a transient read failure */ })
+      .finally(() => { if (!cancelled) setCheckingMembership(false); });
     return () => { cancelled = true; };
-  }, [workforceId]);
+  }, [hasAuthenticatedAccount, workforceId]);
 
-  if (checking || alreadyLinked || dismissed) return null;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const inspect = async (value = code) => {
     setError('');
-    if (!enteredCode.trim()) {
-      setError('Enter your resident access code.');
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      await organisationMembershipService.claimWorkforceMember(workforceId, enteredCode.trim());
-      setSucceeded(true);
-      setEnteredCode('');
-      onLinked();
-    } catch (err) {
-      console.warn(err);
-      // The RPC's own error messages (invalid code / inactive workforce /
-      // already claimed elsewhere / conflict) are already clear and safe
-      // to show directly — same convention as PostLoginEmailPrompt.
-      setError(err instanceof Error ? err.message : 'Failed to link institutional access. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    if (!/^\d{6}$/.test(value)) return setError('Re-enter your 6-digit institutional code.');
+    setBusy(true);
+    try { setPreflight(await organisationMembershipService.preflight(workforceId, value)); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Institutional details could not be verified.'); }
+    finally { setBusy(false); }
   };
 
-  if (succeeded) {
-    return (
-      <div className="max-w-3xl mx-auto px-4 pt-4">
-        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center gap-3">
-          <div className="bg-emerald-100 text-emerald-700 p-1.5 rounded-lg shrink-0">
-            <ShieldCheck size={16} />
-          </div>
-          <p className="text-sm font-bold text-emerald-900">Institutional access linked to your account.</p>
-        </div>
-      </div>
-    );
-  }
+  const claim = async () => {
+    setBusy(true); setError('');
+    try {
+      await organisationMembershipService.claimWorkforceMember(workforceId, code);
+      setMessage('Institutional access is now linked to your personally signed-in account.');
+      setAlreadyLinked(true);
+      onLinked();
+    } catch (err) { setError(err instanceof Error ? err.message : 'The account link could not be completed.'); }
+    finally { setBusy(false); }
+  };
 
-  return (
-    <div className="max-w-3xl mx-auto px-4 pt-4">
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
-        <div className="flex items-start gap-3">
-          <div className="bg-blue-100 text-blue-700 p-1.5 rounded-lg shrink-0">
-            <ShieldCheck size={16} />
-          </div>
-          <div className="min-w-0 flex-grow">
-            <p className="text-sm font-bold text-blue-900">Link institutional access</p>
-            <p className="text-xs text-blue-800/80 mt-0.5">
-              Confirm your existing resident access code to link this signed-in account to your institutional record. Your current access code keeps working either way.
-            </p>
-          </div>
-        </div>
+  const authenticate = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError(''); setMessage('');
+    try {
+      if (!await organisationMembershipService.emailMatches(workforceId, code, email)) {
+        throw new Error('Use the email already held by your organization. The code alone cannot link an account.');
+      }
+      if (!/^\d{6}$/.test(pin)) throw new Error('Your personal account PIN must be exactly 6 digits.');
+      if (mode === 'register') {
+        if (!name.trim()) throw new Error('Enter your full name.');
+        const result = await databaseService.registerDoctor(email.trim(), pin, name.trim());
+        if (result.needsEmailConfirmation) {
+          setMessage('Account created. Confirm the email from your inbox, then return here and sign in to finish linking.');
+          setMode('login'); setPin(''); return;
+        }
+      } else {
+        await databaseService.loginDoctor(email.trim(), pin);
+      }
+      setMessage('Personally signed in. Select “Complete secure link” to finish.');
+    } catch (err) { setError(err instanceof Error ? err.message : 'Personal sign-in could not be completed.'); }
+    finally { setBusy(false); }
+  };
 
-        {!expanded ? (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setExpanded(true)}
-              className="inline-flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-sm transition cursor-pointer"
-            >
-              <span>Link institutional access</span>
-              <ChevronRight size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setDismissed(true)}
-              className="px-3 py-2 text-slate-500 hover:text-slate-700 text-xs font-bold cursor-pointer"
-            >
-              Not now
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-            <input
-              type="password"
-              inputMode="numeric"
-              autoFocus
-              value={enteredCode}
-              onChange={(e) => { setEnteredCode(e.target.value); setError(''); }}
-              placeholder="Confirm your resident access code"
-              className="flex-grow px-3 py-2 bg-white border border-blue-200 rounded-lg text-xs font-semibold text-slate-800 tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-200"
-            />
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="flex-1 sm:flex-none px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg text-xs font-bold shadow-sm transition cursor-pointer"
-              >
-                {isSubmitting ? 'Linking...' : 'Confirm'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setDismissed(true)}
-                className="flex-1 sm:flex-none px-3 py-2 text-slate-500 hover:text-slate-700 text-xs font-bold cursor-pointer"
-              >
-                Not now
-              </button>
-            </div>
-          </form>
-        )}
-        {error && <p className="text-xs text-rose-600">{error}</p>}
-      </div>
-    </div>
-  );
+  const requestHelp = async () => {
+    setBusy(true); setError('');
+    try {
+      await organisationMembershipService.requestAssistance(workforceId, code);
+      setMessage('Your organization has been asked to confirm a contact for this profile. No account was linked.');
+    } catch (err) { setError(err instanceof Error ? err.message : 'The assistance request could not be recorded.'); }
+    finally { setBusy(false); }
+  };
+
+  if (dismissed || checkingMembership || alreadyLinked) return null;
+  return <div className="max-w-3xl mx-auto px-4 pt-4"><div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+    <div className="flex gap-3"><ShieldCheck size={18} className="text-blue-700 shrink-0" /><div><p className="text-sm font-bold text-blue-900">Link this institutional profile to a personal account</p><p className="text-xs text-blue-800 mt-1">Institutional access and personal sign-in are separate. Linking preserves your current workspace while adding a durable, revocable identity.</p></div></div>
+    {!preflight && <div className="flex flex-col sm:flex-row gap-2"><input type="password" inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} placeholder="Re-enter institutional code" className="flex-1 px-3 py-2 bg-white border rounded-lg tracking-widest" /><button type="button" onClick={() => inspect()} disabled={busy} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold">Check linking options</button></div>}
+    {preflight?.state === 'CONTACT_CONFIRMATION_REQUIRED' && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900"><p className="font-bold">Organization contact confirmation required</p><p className="mt-1">This profile has no independently verified contact eligible for safe linking.</p><button type="button" onClick={requestHelp} disabled={busy} className="mt-2 px-3 py-2 bg-white border border-amber-300 rounded-lg font-bold">Request administrator help</button></div>}
+    {preflight?.state === 'CONTACT_READY' && <div className="space-y-3"><p className="text-xs text-blue-900">Organization contact: <strong>{preflight.masked_destination}</strong>. Your confirmed personal account must match it.</p>{hasAuthenticatedAccount ? <button type="button" onClick={claim} disabled={busy} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold">Complete secure link</button> : <form onSubmit={authenticate} className="grid sm:grid-cols-2 gap-2">{mode === 'register' && <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" className="px-3 py-2 bg-white border rounded-lg text-sm" />}<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Organization-held email" className="px-3 py-2 bg-white border rounded-lg text-sm" /><input type="password" inputMode="numeric" maxLength={6} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} placeholder="Personal 6-digit PIN" className="px-3 py-2 bg-white border rounded-lg text-sm" /><button disabled={busy} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold">{mode === 'register' ? 'Create personal account' : 'Sign in personally'}</button><button type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="text-xs font-bold text-blue-700 sm:col-span-2">{mode === 'login' ? 'Need a personal account? Create one' : 'Already have one? Sign in'}</button></form>}</div>}
+    {error && <p className="text-xs text-rose-700 flex gap-1"><AlertCircle size={14} />{error}</p>}{message && <p className="text-xs font-semibold text-emerald-800">{message}</p>}<button type="button" onClick={() => setDismissed(true)} className="text-xs font-bold text-slate-500">Not now</button>
+  </div></div>;
 };

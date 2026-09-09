@@ -6,6 +6,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import {
   buildOperationalEmail,
+  buildAccountLinkInvitationEmail,
   buildVerificationEmail,
   buildWhatsAppTemplateRequest,
   classifyProviderFailure,
@@ -124,7 +125,8 @@ async function rpc<T>(admin: SupabaseClient, name: string, params: Json): Promis
   if (error) {
     const message = String(error.message ?? '');
     if (/cooldown|rate limit|already open|already has an active/i.test(message)) throw new GatewayHttpError(429, 'rate_limited');
-    if (/not authorized|requires an active|no active|authentication/i.test(message)) throw new GatewayHttpError(403, 'owner_not_authorized');
+    if (/not authorized|requires an active|no active|authentication|administrator required/i.test(message)) throw new GatewayHttpError(403, 'owner_not_authorized');
+    if (/invalid invitation|no longer available|expired|ownership proof/i.test(message)) throw new GatewayHttpError(409, 'invitation_not_available');
     throw new Error(`Database contract failed: ${message}`);
   }
   return data as T;
@@ -308,6 +310,101 @@ async function completeVerification(req: Request, body: Json, admin: SupabaseCli
   const state = String(result.state ?? 'UNKNOWN');
   const status = state === 'VERIFIED' ? 200 : state === 'CODE_MISMATCH' ? 400 : state === 'ATTEMPTS_EXCEEDED' ? 429 : 409;
   return json(req, { state, attempts_remaining: result.attempts_remaining }, status);
+}
+
+function accountLinkToken(body: Json): string {
+  if (typeof body.token !== 'string' || !/^[A-Za-z0-9_-]{40,100}$/.test(body.token)) {
+    throw new GatewayHttpError(400, 'invalid_invitation');
+  }
+  return body.token;
+}
+
+async function accountLinkTokenDigest(token: string): Promise<string> {
+  if (!OTP_PEPPER) throw new GatewayHttpError(503, 'gateway_not_configured');
+  return hmacSha256Hex(OTP_PEPPER, `workspc-account-link-invitation-v1|${token}`);
+}
+
+function newAccountLinkToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '');
+}
+
+async function accountLinkAdminOverview(req: Request, body: Json, admin: SupabaseClient): Promise<Response> {
+  const user = await authenticatedUser(req);
+  const overview = await rpc<Json>(admin, 'workspc_account_link_admin_overview', {
+    p_auth_user_id: user.id,
+    p_membership_id: membershipId(body),
+  });
+  return json(req, overview);
+}
+
+async function createAccountLinkInvitation(req: Request, body: Json, admin: SupabaseClient): Promise<Response> {
+  if (!GATEWAY_ENABLED || !RESEND_ENABLED || !OTP_PEPPER) throw new GatewayHttpError(503, 'provider_disabled');
+  const user = await authenticatedUser(req);
+  if (!isUuid(body.workforce_id)) throw new GatewayHttpError(400, 'invalid_workforce');
+  const token = newAccountLinkToken();
+  const digest = await accountLinkTokenDigest(token);
+  const prepared = await rpc<Json>(admin, 'workspc_account_link_prepare_invitation', {
+    p_auth_user_id: user.id,
+    p_membership_id: membershipId(body),
+    p_workforce_id: body.workforce_id,
+    p_token_digest: digest,
+  });
+  if (prepared.state === 'CONTACT_CONFIRMATION_REQUIRED') {
+    return json(req, { state: prepared.state }, 409);
+  }
+  const invitationId = String(prepared.invitation_id ?? '');
+  const recipient = String(prepared.recipient ?? '').trim().toLowerCase();
+  if (!isUuid(invitationId) || !isValidRecipient('EMAIL', recipient)) {
+    throw new Error('Invitation preparation returned an invalid durable record');
+  }
+  await rpc(admin, 'workspc_account_link_begin_invitation_delivery', { p_invitation_id: invitationId });
+  const delivery = await sendResend(
+    buildAccountLinkInvitationEmail(RESEND_FROM, recipient, token, invitationId),
+    `workspc-account-link-${invitationId}`,
+  );
+  const finished = await rpc<Json>(admin, 'workspc_account_link_finish_invitation_delivery', {
+    p_invitation_id: invitationId,
+    p_outcome: delivery.outcome,
+    p_provider_message_id: delivery.providerMessageId,
+    p_failure_classification: delivery.failureClassification,
+  });
+  if (delivery.outcome !== 'ACCEPTED') {
+    throw new GatewayHttpError(delivery.outcome === 'FAILED' ? 502 : 504, 'invitation_delivery_unavailable');
+  }
+  return json(req, {
+    state: finished.state,
+    masked_destination: prepared.masked_destination,
+    expires_at: finished.expires_at,
+  });
+}
+
+async function actOnAccountLinkInvitation(
+  req: Request,
+  body: Json,
+  admin: SupabaseClient,
+  action: 'accept' | 'reject',
+): Promise<Response> {
+  const user = await authenticatedUser(req);
+  const digest = await accountLinkTokenDigest(accountLinkToken(body));
+  const result = await rpc<Json>(admin, `workspc_account_link_${action}_invitation`, {
+    p_auth_user_id: user.id,
+    p_token_digest: digest,
+  });
+  return json(req, result);
+}
+
+async function revokeAccountLinkInvitation(req: Request, body: Json, admin: SupabaseClient): Promise<Response> {
+  const user = await authenticatedUser(req);
+  if (!isUuid(body.invitation_id)) throw new GatewayHttpError(400, 'invalid_invitation');
+  const result = await rpc<Json>(admin, 'workspc_account_link_revoke_invitation', {
+    p_auth_user_id: user.id,
+    p_membership_id: membershipId(body),
+    p_invitation_id: body.invitation_id,
+  });
+  return json(req, result);
 }
 
 async function deliverClaimed(admin: SupabaseClient, rows: Json[]): Promise<{ accepted: number; failed: number; unknown: number }> {
@@ -599,6 +696,11 @@ Deno.serve(async (req: Request) => {
       case 'verification.complete': return await completeVerification(req, body, admin);
       case 'delivery.dispatch': return await dispatch(req, body, admin, false);
       case 'delivery.self_test': return await dispatch(req, body, admin, true);
+      case 'account_link.admin.overview': return await accountLinkAdminOverview(req, body, admin);
+      case 'account_link.invitation.create': return await createAccountLinkInvitation(req, body, admin);
+      case 'account_link.invitation.accept': return await actOnAccountLinkInvitation(req, body, admin, 'accept');
+      case 'account_link.invitation.reject': return await actOnAccountLinkInvitation(req, body, admin, 'reject');
+      case 'account_link.invitation.revoke': return await revokeAccountLinkInvitation(req, body, admin);
       case 'payment.initiate': return await initiatePayment(req, body, admin);
       default: throw new GatewayHttpError(400, 'operation_not_allowed');
     }
