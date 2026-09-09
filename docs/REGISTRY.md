@@ -39,7 +39,14 @@ same-tenant admin membership through the existing `workspc-gateway`; the
 shared Chief code is not account-link authority. Migration 86 is verified live
 with 25 pre-existing contact fingerprints and zero invitations/links created by
 the rollout; Cloud Run revision `privydoc-doc-workspace-linking-a929e83` serves
-the corresponding product surface.
+the corresponding product surface. The same-day Auth incident follow-up is
+live on Cloud Run revision `privydoc-doc-workspace-auth-bd9ffd5`: personal
+Supabase passwords are no longer labelled or constrained as institutional
+six-digit PINs, duplicate-signup responses use a non-enumerating recovery
+message, supported confirmation-resend/password-recovery controls are present,
+and the HashRouter handles `PASSWORD_RECOVERY` before returning the user to the
+existing linking continuation. Supabase Auth remains authoritative; no account
+was hand-linked, confirmed, or assigned a password by the rollout.
 
 **Note on migration status (headers, not live verification)**: migrations
 32–35 each carry an explicit "NOT APPLIED LIVE — a human will review and
@@ -217,13 +224,14 @@ status: stable
 ### F4 Individual Doctor Auth
 layer: L5
 face: landing
-path: `src/modules/auth/components/DoctorAuthView.tsx`
+path: `src/modules/auth/components/{DoctorAuthView,DoctorPasswordResetView}.tsx`
 owner engine: none
 tenant scope: individual
 consumes: Supabase Auth (real auth.users, migration 18)
 emits: none
 udr fields: none
-gates: none
+gates: hosted Supabase email confirmation; password recovery is accepted only
+from a valid Auth recovery session and updates through `auth.updateUser()`
 status: stable
 
 ### F5 Admin Portal Chooser
@@ -855,7 +863,7 @@ tenant scope: tenant-scoped for workforce conversations, invitations and delegat
 consumes: migration-81-era `workforce`, `settings`, `organisation_memberships`, `doctor_profiles`, `dissertations`/`dissertation_milestones`, and `research_workspaces`; it deliberately has no dependency on local-unapplied migrations 82 or 83
 emits: durable conversation/message/read state, support tickets, review invitations, explicit tenant-capability delegation history, hashed short-lived contact-verification evidence, provider acceptance/delivery transitions, sanitized idempotent webhook evidence, and server-verified workforce-plan payment/entitlement evidence
 gates: all communication/gateway tables have RLS enabled with direct anon/authenticated privileges revoked and no direct write policies; browser communication data access remains RPC-only. External operations additionally require a live Supabase JWT and resolve the active owner/membership server-side. Recipients come only from verified stored contacts, delivery work comes only from allow-listed durable event references, templates are fixed, and each provider defaults disabled independently. The Flutterwave path fixes purpose/plan/amount/currency server-side and activates only after signature plus server-to-server transaction verification; the legacy checkout and webhook remain contained.
-status: **implemented as an independently activatable secure-gateway slice.** Migration 84 is its required live baseline; migration 85 adds the challenge, provider-event and payment-verification state that migration 84 deliberately lacked, without depending on migrations 82 or 83. In-app messaging/support remains available regardless of optional-provider flags. Email, WhatsApp and Flutterwave stay fail-closed unless their own runtime readiness gates report available. Verification requires a linked Supabase account session: legacy access-code sessions receive actionable sign-in guidance without forwarding their code to the gateway, and awaited server handlers preserve typed authentication/authorization failures instead of surfacing them as generic runtime errors. Review invitations remain `PENDING_OWNER_PERMISSION` because existing institutional artifact tables do not yet provide an owner-safe reviewer read seam. The PrivyDoc action opens the separate portal origin without query data or shared auth; linkage defaults to `ELIGIBLE`, never `LINKED`, without an evidence-backed row.
+status: **implemented as an independently activatable secure-gateway slice.** Migration 84 is its required live baseline; migration 85 adds the challenge, provider-event and payment-verification state that migration 84 deliberately lacked, without depending on migrations 82 or 83. In-app messaging/support remains available regardless of optional-provider flags. Email, WhatsApp and Flutterwave stay fail-closed unless their own runtime readiness gates report available. Verification requires a linked Supabase account session: legacy access-code sessions receive actionable sign-in guidance without forwarding their code to the gateway, and awaited server handlers preserve typed authentication/authorization failures instead of surfacing them as generic runtime errors. Consequential contact replacement, conversation closure, review-invitation decisions, delivery self-tests, capability grant/revocation, and institutional link decisions now use the shared accessible in-app review dialog with masked context, cancel/pending/result states, and double-submit prevention. Review invitations remain `PENDING_OWNER_PERMISSION` because existing institutional artifact tables do not yet provide an owner-safe reviewer read seam. The PrivyDoc action opens the separate portal origin without query data or shared auth; linkage defaults to `ELIGIBLE`, never `LINKED`, without an evidence-backed row.
 
 Existing surfaces touched: `App.tsx` adds only the two authenticated routes; `IntelligenceHarnessHome.tsx` and `DoctorHomeView.tsx` add one Communication Hub entry each; `ChiefDashboardView.tsx` composes explicit capability administration under its existing Roles tab. Existing legacy group delegation and all Cases, Dissertation, Research, My Record, Team Coordination and Learning routes remain in place.
 
