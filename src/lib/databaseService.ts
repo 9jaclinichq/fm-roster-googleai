@@ -1974,6 +1974,41 @@ export const databaseService = {
     return { needsEmailConfirmation: !data.session };
   },
 
+  async resendDoctorConfirmation(email: string): Promise<void> {
+    checkSupabase();
+
+    const { error } = await supabase!.auth.resend({
+      type: 'signup',
+      email: email.trim().toLowerCase(),
+    });
+    if (error) {
+      console.warn('Error requesting doctor confirmation resend:', error);
+      throw error;
+    }
+  },
+
+  async requestDoctorPasswordReset(email: string): Promise<void> {
+    checkSupabase();
+
+    // No caller-supplied redirect is used. Hosted Auth sends recovery links to
+    // the project's verified Site URL, and App.tsx handles PASSWORD_RECOVERY.
+    const { error } = await supabase!.auth.resetPasswordForEmail(email.trim().toLowerCase());
+    if (error) {
+      console.warn('Error requesting doctor password reset:', error);
+      throw error;
+    }
+  },
+
+  async updateDoctorPassword(password: string): Promise<void> {
+    checkSupabase();
+
+    const { error } = await supabase!.auth.updateUser({ password });
+    if (error) {
+      console.warn('Error updating doctor password:', error);
+      throw error;
+    }
+  },
+
   async loginDoctor(email: string, password: string): Promise<void> {
     checkSupabase();
 

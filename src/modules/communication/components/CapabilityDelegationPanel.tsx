@@ -4,6 +4,7 @@ import { WorkforceMember } from '../../../types';
 import { communicationService, AdminCommunicationSnapshot } from '../lib/communicationService';
 import { CAPABILITY_BADGES, TENANT_CAPABILITIES, TenantCapability } from '../lib/communicationDomain';
 import { CapabilityBadge } from './CapabilityBadge';
+import { ConfirmationDialog } from '../../shared/ui/ConfirmationDialog';
 
 interface CapabilityDelegationPanelProps {
   adminCode: string;
@@ -18,6 +19,8 @@ export const CapabilityDelegationPanel: React.FC<CapabilityDelegationPanelProps>
   const [capability, setCapability] = useState<TenantCapability>('ROSTER_COORDINATE');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [pending, setPending] = useState<{ action: 'grant'; memberId: string; memberName: string; capability: TenantCapability } | { action: 'revoke'; delegationId: string; memberName: string; capability: TenantCapability } | null>(null);
 
   const activeDelegations = useMemo(
     () => snapshot.delegations.filter(delegation => delegation.status === 'ACTIVE'),
@@ -45,28 +48,35 @@ export const CapabilityDelegationPanel: React.FC<CapabilityDelegationPanelProps>
   const grant = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!memberId) return setError('Select a member.');
+    const member = workforce.find(item => item.id === memberId);
+    if (!member) return setError('Select an active member.');
+    setPending({ action: 'grant', memberId, memberName: member.full_name, capability });
+  };
+
+  const performPending = async () => {
+    if (!pending || busy) return;
     setBusy(true);
     setError('');
+    setSuccess('');
     try {
-      await communicationService.grantCapability(adminCode, memberId, capability);
+      if (pending.action === 'grant') {
+        await communicationService.grantCapability(adminCode, pending.memberId, pending.capability);
+        setMemberId('');
+        setSuccess('Capability granted. The member can use it on the next server-verified request.');
+      } else {
+        await communicationService.revokeCapability(adminCode, pending.delegationId);
+        setSuccess('Capability revoked. The change takes effect on the next server request.');
+      }
+      setPending(null);
       await load();
-      setMemberId('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not grant capability.');
+      setError(err instanceof Error ? err.message : 'Could not change the capability.');
       setBusy(false);
     }
   };
 
-  const revoke = async (delegationId: string) => {
-    setBusy(true);
-    setError('');
-    try {
-      await communicationService.revokeCapability(adminCode, delegationId);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not revoke capability.');
-      setBusy(false);
-    }
+  const revoke = (delegation: typeof snapshot.delegations[number]) => {
+    setPending({ action: 'revoke', delegationId: delegation.id, memberName: delegation.workforce_name, capability: delegation.capability });
   };
 
   return (
@@ -91,6 +101,7 @@ export const CapabilityDelegationPanel: React.FC<CapabilityDelegationPanelProps>
           <AlertTriangle size={14} className="mt-0.5 shrink-0" /> {error}
         </div>
       )}
+      {success && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800" role="status">{success}</div>}
 
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
         <form onSubmit={grant} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -137,14 +148,15 @@ export const CapabilityDelegationPanel: React.FC<CapabilityDelegationPanelProps>
                     )}
                   </div>
                 </div>
-                <button type="button" onClick={() => revoke(delegation.id)} disabled={busy} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">
-                  Revoke
+                <button type="button" onClick={() => revoke(delegation)} disabled={busy} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">
+                  Review revocation
                 </button>
               </div>
             );
           })}
         </div>
       </div>
+      <ConfirmationDialog open={pending !== null} title={pending?.action === 'grant' ? 'Grant this tenant capability?' : 'Revoke this tenant capability?'} description={pending?.action === 'grant' ? 'This permits the selected member to perform the named action within the current tenant. It does not grant tenant-admin authority.' : 'The member will lose this capability on their next server request. Their profile and other capabilities remain unchanged.'} details={[{ label: 'Member', value: pending?.memberName ?? 'Selected member' }, { label: 'Organization', value: 'Current organization' }, { label: 'Capability', value: pending ? CAPABILITY_BADGES[pending.capability].label : 'Selected capability' }]} confirmLabel={pending?.action === 'grant' ? 'Grant capability' : 'Revoke capability'} tone={pending?.action === 'revoke' ? 'danger' : 'primary'} busy={busy} onCancel={() => setPending(null)} onConfirm={performPending} />
     </section>
   );
 };

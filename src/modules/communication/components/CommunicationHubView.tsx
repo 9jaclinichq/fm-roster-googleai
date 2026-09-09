@@ -18,6 +18,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { CapabilityBadge } from './CapabilityBadge';
+import { ConfirmationDialog } from '../../shared/ui/ConfirmationDialog';
 import { communicationService } from '../lib/communicationService';
 import {
   CAPABILITY_BADGES,
@@ -43,6 +44,12 @@ import {
 interface CommunicationHubViewProps {
   actor: CommunicationActor;
 }
+
+type HubConfirmation =
+  | { kind: 'replace-contact'; channel: ContactChannel; maskedCurrent: string }
+  | { kind: 'close-conversation'; conversationId: string; subject: string }
+  | { kind: 'review-invitation'; invitationId: string; outcome: 'ACCEPTED' | 'DECLINED' | 'COMPLETED' | 'CANCELLED'; safeLabel: string; otherParty: string }
+  | { kind: 'self-test' };
 
 const EMPTY_SNAPSHOT: CommunicationHubSnapshot = {
   actor: { kind: 'WORKFORCE', id: '', name: '', tenant_id: null },
@@ -92,6 +99,7 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
   const [coordinationCapability, setCoordinationCapability] = useState<TenantCapability>('ROSTER_COORDINATE');
   const [coordinationSubject, setCoordinationSubject] = useState('');
   const [coordinationMessage, setCoordinationMessage] = useState('');
+  const [confirmation, setConfirmation] = useState<HubConfirmation | null>(null);
 
   const activeCode = actor.kind === 'WORKFORCE' ? (accessCode || null) : null;
   const preferenceMatrix = useMemo(() => buildPreferenceMatrix(snapshot.preferences), [snapshot.preferences]);
@@ -145,13 +153,61 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
     }
   };
 
-  const saveContact = async (channel: ContactChannel) => {
+  const persistContact = async (channel: ContactChannel) => {
     const value = channel === 'WHATSAPP' ? whatsApp : email;
     const saved = await run(() => communicationService.saveContact(actor, channel, value, activeCode), `${channel === 'WHATSAPP' ? 'WhatsApp number' : 'Email address'} saved as unverified.`);
     if (saved) {
       if (channel === 'WHATSAPP') setWhatsApp(''); else setEmail('');
     }
+    return saved;
   };
+
+  const saveContact = async (channel: ContactChannel) => {
+    const existing = snapshot.contacts.find(item => item.channel === channel);
+    if (existing) {
+      setConfirmation({ kind: 'replace-contact', channel, maskedCurrent: existing.masked_value });
+      return;
+    }
+    await persistContact(channel);
+  };
+
+  const performConfirmedAction = async () => {
+    if (!confirmation || loading) return;
+    let completed = false;
+    if (confirmation.kind === 'replace-contact') {
+      completed = await persistContact(confirmation.channel);
+    } else if (confirmation.kind === 'close-conversation') {
+      completed = await run(() => communicationService.closeConversation(actor, confirmation.conversationId, activeCode), 'Conversation closed.');
+    } else if (confirmation.kind === 'review-invitation') {
+      const messages = { ACCEPTED: 'Invitation accepted.', DECLINED: 'Invitation declined.', COMPLETED: 'Review explicitly marked complete.', CANCELLED: 'Invitation cancelled.' } as const;
+      completed = await run(() => communicationService.respondToInvitation(actor, confirmation.invitationId, confirmation.outcome, activeCode), messages[confirmation.outcome]);
+    } else {
+      completed = await run(() => communicationService.sendSelfTest(), 'The gateway processed one neutral self-test for your verified, enabled channels.');
+    }
+    if (completed) setConfirmation(null);
+  };
+
+  const confirmationCopy = (() => {
+    if (!confirmation) return { title: '', description: '', confirmLabel: '', tone: 'primary' as const, details: [] as Array<{ label: string; value: string }> };
+    if (confirmation.kind === 'replace-contact') return {
+      title: `Replace this ${confirmation.channel === 'EMAIL' ? 'email address' : 'WhatsApp number'}?`,
+      description: 'The current verified state will be cleared. The new contact remains unusable for external delivery until ownership is verified and preferences are explicitly enabled.',
+      confirmLabel: 'Replace contact', tone: 'danger' as const,
+      details: [{ label: 'Member', value: snapshot.actor.name || actor.name }, { label: 'Organization', value: 'Current organization' }, { label: 'Current contact', value: confirmation.maskedCurrent }],
+    };
+    if (confirmation.kind === 'close-conversation') return {
+      title: 'Close this conversation?', description: 'The conversation will stop accepting replies. Its existing messages and audit history remain available.', confirmLabel: 'Close conversation', tone: 'danger' as const,
+      details: [{ label: 'Account', value: snapshot.actor.name || actor.name }, { label: 'Organization', value: 'Current organization' }, { label: 'Conversation', value: confirmation.subject }],
+    };
+    if (confirmation.kind === 'review-invitation') return {
+      title: `${confirmation.outcome === 'ACCEPTED' ? 'Accept' : confirmation.outcome === 'DECLINED' ? 'Decline' : confirmation.outcome === 'COMPLETED' ? 'Complete' : 'Cancel'} this review invitation?`,
+      description: confirmation.outcome === 'ACCEPTED' ? 'Review access becomes available only through the existing owner-safe permission boundary.' : confirmation.outcome === 'COMPLETED' ? 'This records an explicit completion event; it does not alter the underlying work.' : 'This closes the pending invitation state without changing the underlying work.',
+      confirmLabel: confirmation.outcome === 'ACCEPTED' ? 'Accept invitation' : confirmation.outcome === 'DECLINED' ? 'Decline invitation' : confirmation.outcome === 'COMPLETED' ? 'Mark completed' : 'Cancel invitation',
+      tone: ['DECLINED', 'CANCELLED'].includes(confirmation.outcome) ? 'danger' as const : 'primary' as const,
+      details: [{ label: 'Account', value: snapshot.actor.name || actor.name }, { label: 'Organization', value: 'Current organization' }, { label: 'Invitation', value: `${confirmation.safeLabel} · ${confirmation.otherParty}` }],
+    };
+    return { title: 'Send a neutral delivery self-test?', description: 'Workspc will attempt one neutral message only on verified, explicitly enabled channels and will record the provider outcome.', confirmLabel: 'Send one self-test', tone: 'primary' as const, details: [{ label: 'Account', value: snapshot.actor.name || actor.name }, { label: 'Organization', value: 'Current organization' }, { label: 'Delivery', value: 'Verified and enabled channels only' }] };
+  })();
 
   const requestVerification = async (channel: ContactChannel) => {
     await run(
@@ -270,7 +326,7 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
             <p className="font-bold">Secure delivery gateway</p>
             <p className="mt-1 leading-relaxed">Meta WhatsApp: {gatewayStatus.whatsapp.toLowerCase()} · Resend email: {gatewayStatus.email.toLowerCase()}. In-app delivery remains available regardless. Provider outcomes are recorded without contact values or message bodies.</p>
-            <button type="button" onClick={() => run(() => communicationService.sendSelfTest(), 'The gateway processed one neutral self-test for your verified, enabled channels.')} disabled={loading || gatewayStatus.gateway !== 'AVAILABLE'} className="mt-3 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-bold text-amber-900 disabled:opacity-50">Send neutral self-test</button>
+            <button type="button" onClick={() => setConfirmation({ kind: 'self-test' })} disabled={loading || gatewayStatus.gateway !== 'AVAILABLE'} className="mt-3 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-bold text-amber-900 disabled:opacity-50">Review neutral self-test</button>
           </div>
         </aside>
       </section>
@@ -291,7 +347,7 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
           {!selectedConversation ? <p className="text-sm text-slate-500">Select a conversation to read it.</p> : (
             <div>
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3"><div><h3 className="text-sm font-bold text-slate-900">{selectedConversation.subject}</h3><p className="text-[10px] uppercase tracking-wider text-slate-500">{selectedConversation.kind} · {selectedConversation.status}</p></div>{selectedConversation.status === 'OPEN' && <button type="button" onClick={() => run(() => communicationService.closeConversation(actor, selectedConversation.id, activeCode), 'Conversation closed.')} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Close</button>}</div>
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3"><div><h3 className="text-sm font-bold text-slate-900">{selectedConversation.subject}</h3><p className="text-[10px] uppercase tracking-wider text-slate-500">{selectedConversation.kind} · {selectedConversation.status}</p></div>{selectedConversation.status === 'OPEN' && <button type="button" onClick={() => setConfirmation({ kind: 'close-conversation', conversationId: selectedConversation.id, subject: selectedConversation.subject })} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600">Review closure</button>}</div>
               <div className="mt-4 max-h-80 space-y-3 overflow-y-auto">
                 {selectedConversation.messages.map(message => <div key={message.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-bold text-slate-800">{message.sender_name}</p><time className="text-[10px] text-slate-400">{formatTimestamp(message.created_at)}</time></div><p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{message.body}</p>{message.safe_route && <button type="button" onClick={() => navigate(message.safe_route as string)} className="mt-2 text-xs font-bold text-blue-600">Open related Workspc surface</button>}</div>)}
               </div>
@@ -319,7 +375,7 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
             <label className="block text-xs font-semibold text-slate-600">Optional due date<input type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
             <button type="submit" disabled={loading || !artifactKey || !inviteeId} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Create invitation</button>
           </form>}
-          <div className="mt-4 space-y-2">{snapshot.invitations.map(invitation => <div key={invitation.id} className="rounded-xl border border-slate-200 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-bold text-slate-800">{invitation.safe_label}</p><span className="text-[10px] font-bold text-slate-500">{invitation.status}</span></div><p className="mt-1 text-[11px] text-slate-500">{invitation.viewer_role === 'INVITER' ? `Invited ${invitation.invitee_name}` : `From ${invitation.inviter_name}`} · Review access: {invitation.permission_state === 'AVAILABLE' ? 'available' : 'pending owner-safe permission seam'}</p><div className="mt-2 flex flex-wrap gap-2">{invitation.viewer_role === 'INVITEE' && invitation.status === 'PENDING' && <><button type="button" onClick={() => run(() => communicationService.respondToInvitation(actor, invitation.id, 'ACCEPTED', activeCode), 'Invitation accepted.')} className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white">Accept</button><button type="button" onClick={() => run(() => communicationService.respondToInvitation(actor, invitation.id, 'DECLINED', activeCode), 'Invitation declined.')} className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-bold text-slate-600">Decline</button></>}{invitation.viewer_role === 'INVITEE' && invitation.status === 'ACCEPTED' && invitation.permission_state === 'AVAILABLE' && <><button type="button" onClick={() => navigate(invitation.safe_route)} className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700">Open review surface</button><button type="button" onClick={() => run(() => communicationService.respondToInvitation(actor, invitation.id, 'COMPLETED', activeCode), 'Review explicitly marked complete.')} className="rounded-lg bg-slate-950 px-2.5 py-1 text-[11px] font-bold text-white">Mark completed</button></>}{invitation.viewer_role === 'INVITER' && ['PENDING', 'ACCEPTED'].includes(invitation.status) && <button type="button" onClick={() => run(() => communicationService.respondToInvitation(actor, invitation.id, 'CANCELLED', activeCode), 'Invitation cancelled.')} className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700">Cancel</button>}</div></div>)}</div>
+          <div className="mt-4 space-y-2">{snapshot.invitations.map(invitation => <div key={invitation.id} className="rounded-xl border border-slate-200 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-bold text-slate-800">{invitation.safe_label}</p><span className="text-[10px] font-bold text-slate-500">{invitation.status}</span></div><p className="mt-1 text-[11px] text-slate-500">{invitation.viewer_role === 'INVITER' ? `Invited ${invitation.invitee_name}` : `From ${invitation.inviter_name}`} · Review access: {invitation.permission_state === 'AVAILABLE' ? 'available' : 'pending owner-safe permission seam'}</p><div className="mt-2 flex flex-wrap gap-2">{invitation.viewer_role === 'INVITEE' && invitation.status === 'PENDING' && <><button type="button" onClick={() => setConfirmation({ kind: 'review-invitation', invitationId: invitation.id, outcome: 'ACCEPTED', safeLabel: invitation.safe_label, otherParty: `From ${invitation.inviter_name}` })} className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white">Review acceptance</button><button type="button" onClick={() => setConfirmation({ kind: 'review-invitation', invitationId: invitation.id, outcome: 'DECLINED', safeLabel: invitation.safe_label, otherParty: `From ${invitation.inviter_name}` })} className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-bold text-slate-600">Review decline</button></>}{invitation.viewer_role === 'INVITEE' && invitation.status === 'ACCEPTED' && invitation.permission_state === 'AVAILABLE' && <><button type="button" onClick={() => navigate(invitation.safe_route)} className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700">Open review surface</button><button type="button" onClick={() => setConfirmation({ kind: 'review-invitation', invitationId: invitation.id, outcome: 'COMPLETED', safeLabel: invitation.safe_label, otherParty: `From ${invitation.inviter_name}` })} className="rounded-lg bg-slate-950 px-2.5 py-1 text-[11px] font-bold text-white">Review completion</button></>}{invitation.viewer_role === 'INVITER' && ['PENDING', 'ACCEPTED'].includes(invitation.status) && <button type="button" onClick={() => setConfirmation({ kind: 'review-invitation', invitationId: invitation.id, outcome: 'CANCELLED', safeLabel: invitation.safe_label, otherParty: `Invited ${invitation.invitee_name}` })} className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700">Review cancellation</button>}</div></div>)}</div>
         </div>
       </section>
 
@@ -338,6 +394,7 @@ export const CommunicationHubView: React.FC<CommunicationHubViewProps> = ({ acto
       )}
 
       {snapshot.deliveries.length > 0 && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-bold text-slate-900">Recent delivery state</h3><div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">{snapshot.deliveries.map((delivery, index) => <div key={`${delivery.channel}:${delivery.updated_at}:${index}`} className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-800">{CHANNEL_LABELS[delivery.channel]} · {delivery.outcome}</p><p className="mt-1 text-[10px] text-slate-500">{delivery.failure_classification === 'PROVIDER_DISABLED' ? 'Delivery not yet activated' : 'Recorded without message body or contact detail'}</p></div>)}</div></section>}
+      <ConfirmationDialog open={confirmation !== null} title={confirmationCopy.title} description={confirmationCopy.description} details={confirmationCopy.details} confirmLabel={confirmationCopy.confirmLabel} tone={confirmationCopy.tone} busy={loading} onCancel={() => setConfirmation(null)} onConfirm={performConfirmedAction} />
     </div>
   );
 };

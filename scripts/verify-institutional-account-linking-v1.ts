@@ -48,8 +48,10 @@ check(!/return json\(req,\s*\{[^}]*token/s.test(gateway), 'gateway never returns
 check(!/console\.(log|warn|error)\([^\n]*(token|recipient)/i.test(gateway), 'gateway does not log token or recipient');
 check(residentLogin.includes('verifyResidentLoginByCode') && !residentLogin.includes('getWorkforce('), 'anonymous resident entry has no workforce directory');
 check(memberLink.includes('emailMatches') && memberLink.includes('claimWorkforceMember'), 'member flow separates contact proof from account link');
-check(memberLink.includes('Confirm the email from your inbox') && memberLink.includes('code alone cannot link'), 'member UI explains independent proof and confirmation');
-check(invitation.includes("action: 'accept' | 'reject'") && invitation.includes('authenticated'), 'recipient can accept or reject only after personal sign-in');
+check(memberLink.includes('registrationNextStepMessage') && memberLink.includes('code alone cannot link'), 'member UI explains independent proof and non-enumerating confirmation recovery');
+check(invitation.includes("useState<'accept' | 'reject' | null>") && invitation.includes('authenticated'), 'recipient can accept or reject only after personal sign-in');
+check(gateway.includes("case 'account_link.invitation.preview'") && gateway.includes('expectedFingerprint'), 'gateway exposes only an authenticated contact-matched invitation preview');
+check(memberLink.includes('<ConfirmationDialog') && invitation.includes('<ConfirmationDialog'), 'self-claim and invitation decisions require explicit in-app review');
 check(admin.includes('masked_destination') && !admin.includes('item.recipient'), 'admin UI exposes only masked destination');
 check(admin.includes('Personal tenant-admin sign-in is required'), 'shared chief code is not treated as invitation authority');
 check(app.includes('getCurrentUserMemberships') && app.indexOf('getCurrentUserMemberships') < app.indexOf('getLinkedWorkforceForDoctor(profile.id)'), 'app resolves canonical membership before legacy doctor link');

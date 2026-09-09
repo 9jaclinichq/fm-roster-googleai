@@ -71,8 +71,17 @@ export interface AccountLinkInvitation {
 
 export interface AccountLinkAdminOverview {
   tenant_id: string;
+  tenant_name: string;
   counts: { unlinked: number; invited: number; linked: number; blocked: number };
   invitations: AccountLinkInvitation[];
+}
+
+export interface AccountLinkInvitationPreview {
+  state: string;
+  member_name: string;
+  tenant_name: string;
+  masked_destination: string;
+  expires_at: string;
 }
 
 async function gateway<T>(body: Record<string, unknown>): Promise<T> {
@@ -151,6 +160,10 @@ export const organisationMembershipService = {
 
   async createInvitation(workforceId: string): Promise<{ state: string; masked_destination?: string; expires_at?: string }> {
     return gateway({ operation: 'account_link.invitation.create', workforce_id: workforceId });
+  },
+
+  async previewInvitation(token: string): Promise<AccountLinkInvitationPreview> {
+    return gateway({ operation: 'account_link.invitation.preview', token });
   },
 
   async revokeInvitation(invitationId: string): Promise<{ state: string }> {

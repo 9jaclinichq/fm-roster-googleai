@@ -90,7 +90,7 @@ function serviceClient(): SupabaseClient {
   });
 }
 
-async function authenticatedUser(req: Request): Promise<{ id: string; email: string | null }> {
+async function authenticatedUser(req: Request): Promise<{ id: string; email: string | null; emailConfirmedAt: string | null }> {
   const authorization = req.headers.get('authorization') ?? '';
   const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token || !SUPABASE_URL || !SUPABASE_ANON_KEY) throw new GatewayHttpError(401, 'authentication_required');
@@ -100,7 +100,11 @@ async function authenticatedUser(req: Request): Promise<{ id: string; email: str
   });
   const { data, error } = await authClient.auth.getUser(token);
   if (error || !data.user) throw new GatewayHttpError(401, 'authentication_required');
-  return { id: data.user.id, email: data.user.email?.trim().toLowerCase() ?? null };
+  return {
+    id: data.user.id,
+    email: data.user.email?.trim().toLowerCase() ?? null,
+    emailConfirmedAt: data.user.email_confirmed_at ?? null,
+  };
 }
 
 class GatewayHttpError extends Error {
@@ -324,6 +328,11 @@ async function accountLinkTokenDigest(token: string): Promise<string> {
   return hmacSha256Hex(OTP_PEPPER, `workspc-account-link-invitation-v1|${token}`);
 }
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function newAccountLinkToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   let binary = '';
@@ -337,7 +346,58 @@ async function accountLinkAdminOverview(req: Request, body: Json, admin: Supabas
     p_auth_user_id: user.id,
     p_membership_id: membershipId(body),
   });
-  return json(req, overview);
+  const tenantId = typeof overview.tenant_id === 'string' ? overview.tenant_id : '';
+  const { data: tenant } = tenantId
+    ? await admin.from('tenants').select('name').eq('id', tenantId).maybeSingle()
+    : { data: null };
+  return json(req, { ...overview, tenant_name: tenant?.name ?? 'Current organization' });
+}
+
+async function previewAccountLinkInvitation(req: Request, body: Json, admin: SupabaseClient): Promise<Response> {
+  const user = await authenticatedUser(req);
+  if (!user.email || !user.emailConfirmedAt) throw new GatewayHttpError(409, 'confirmed_email_required');
+  const digest = await accountLinkTokenDigest(accountLinkToken(body));
+  const { data: invitation, error: invitationError } = await admin
+    .from('institutional_account_link_invitations')
+    .select('id, workforce_id, tenant_id, contact_id, status, expires_at, accepted_by_auth_user_id')
+    .eq('token_digest', digest)
+    .maybeSingle();
+  if (invitationError) throw new Error(`Invitation preview lookup failed: ${invitationError.message}`);
+  if (!invitation) throw new GatewayHttpError(409, 'invitation_not_available');
+
+  const { data: contact, error: contactError } = await admin
+    .from('institutional_identity_contacts')
+    .select('workforce_id, tenant_id, value_fingerprint, masked_destination, status')
+    .eq('id', invitation.contact_id)
+    .maybeSingle();
+  if (contactError) throw new Error(`Invitation contact lookup failed: ${contactError.message}`);
+  const expectedFingerprint = await sha256Hex(`workspc-institutional-email-v1|${invitation.workforce_id}|${user.email}`);
+  if (!contact || contact.status !== 'ACTIVE'
+    || contact.workforce_id !== invitation.workforce_id
+    || contact.tenant_id !== invitation.tenant_id
+    || contact.value_fingerprint !== expectedFingerprint) {
+    throw new GatewayHttpError(409, 'invitation_not_available');
+  }
+
+  const [{ data: workforce, error: workforceError }, { data: tenant, error: tenantError }] = await Promise.all([
+    admin.from('workforce').select('full_name, active').eq('id', invitation.workforce_id).maybeSingle(),
+    admin.from('tenants').select('name, status').eq('id', invitation.tenant_id).maybeSingle(),
+  ]);
+  if (workforceError || tenantError) throw new Error('Invitation preview context lookup failed');
+  if (!workforce?.active || !tenant || tenant.status !== 'active') throw new GatewayHttpError(409, 'invitation_not_available');
+  const state = Date.parse(invitation.expires_at) <= Date.now() && !['ACCEPTED', 'REJECTED', 'REVOKED'].includes(invitation.status)
+    ? 'EXPIRED'
+    : invitation.status;
+  if (state === 'ACCEPTED' && invitation.accepted_by_auth_user_id !== user.id) {
+    throw new GatewayHttpError(409, 'invitation_not_available');
+  }
+  return json(req, {
+    state,
+    member_name: workforce.full_name,
+    tenant_name: tenant.name,
+    masked_destination: contact.masked_destination,
+    expires_at: invitation.expires_at,
+  });
 }
 
 async function createAccountLinkInvitation(req: Request, body: Json, admin: SupabaseClient): Promise<Response> {
@@ -697,6 +757,7 @@ Deno.serve(async (req: Request) => {
       case 'delivery.dispatch': return await dispatch(req, body, admin, false);
       case 'delivery.self_test': return await dispatch(req, body, admin, true);
       case 'account_link.admin.overview': return await accountLinkAdminOverview(req, body, admin);
+      case 'account_link.invitation.preview': return await previewAccountLinkInvitation(req, body, admin);
       case 'account_link.invitation.create': return await createAccountLinkInvitation(req, body, admin);
       case 'account_link.invitation.accept': return await actOnAccountLinkInvitation(req, body, admin, 'accept');
       case 'account_link.invitation.reject': return await actOnAccountLinkInvitation(req, body, admin, 'reject');

@@ -1,7 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Stethoscope, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { databaseService } from '../../../lib/databaseService';
+import {
+  AUTH_EMAIL_COOLDOWN_SECONDS,
+  loginFailureMessage,
+  registrationNextStepMessage,
+  validatePersonalPassword,
+} from '../lib/authJourney';
 
 // Self-service email+password login/register for individual doctors
 // (migration 18) — the first real-auth flow in this app. On success this
@@ -21,6 +27,13 @@ export const DoctorAuthView: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [confirmationNotice, setConfirmationNotice] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = window.setTimeout(() => setResendCooldown(value => Math.max(0, value - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [resendCooldown]);
 
   // User-initiated tab click: navigates so the URL/back-button stay
   // meaningful. NOT used for the post-registration confirmation-required
@@ -39,17 +52,13 @@ export const DoctorAuthView: React.FC = () => {
     setConfirmationNotice('');
 
     if (!email || !password) {
-      setError('Please enter your email and 6-digit PIN.');
+      setError('Please enter your email and personal password.');
       return;
     }
 
-    // PIN unification (migration 26): individual and institutional logins
-    // both present as "identify yourself, then a 6-digit PIN" now. Under
-    // the hood this is still a real Supabase Auth password — a 6-digit
-    // numeric string satisfies Supabase's default minimum password length,
-    // so no auth-mechanism change was needed to make the two feel the same.
-    if (!/^\d{6}$/.test(password)) {
-      setError('PIN must be exactly 6 digits.');
+    const passwordError = validatePersonalPassword(password);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
 
@@ -59,7 +68,7 @@ export const DoctorAuthView: React.FC = () => {
         return;
       }
       if (password !== confirmPassword) {
-        setError('PINs do not match.');
+        setError('Passwords do not match.');
         return;
       }
     }
@@ -75,7 +84,8 @@ export const DoctorAuthView: React.FC = () => {
           setMode('login');
           setPassword('');
           setConfirmPassword('');
-          setConfirmationNotice('Account created — check your email to confirm it, then log in.');
+          setConfirmationNotice(registrationNextStepMessage());
+          setResendCooldown(AUTH_EMAIL_COOLDOWN_SECONDS);
         }
         // If no confirmation is required, App.tsx's auth-state listener
         // picks up the session and routes away automatically.
@@ -84,7 +94,38 @@ export const DoctorAuthView: React.FC = () => {
       }
     } catch (err) {
       console.warn(err);
-      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+      setError(loginFailureMessage(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const requestPasswordReset = async () => {
+    setError('');
+    setConfirmationNotice('');
+    if (!email.trim()) return setError('Enter your personal account email first.');
+    setIsSubmitting(true);
+    try {
+      await databaseService.requestDoctorPasswordReset(email);
+      setConfirmationNotice('If a personal account exists for this email, a password-reset message has been requested. Check your inbox and spam folder.');
+      setResendCooldown(AUTH_EMAIL_COOLDOWN_SECONDS);
+    } catch (err) {
+      setError(loginFailureMessage(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const resendConfirmation = async () => {
+    setError('');
+    if (!email.trim()) return setError('Enter your personal account email first.');
+    setIsSubmitting(true);
+    try {
+      await databaseService.resendDoctorConfirmation(email);
+      setConfirmationNotice('If this email has an unconfirmed personal account, a new confirmation message has been requested. Check your inbox and spam folder.');
+      setResendCooldown(AUTH_EMAIL_COOLDOWN_SECONDS);
+    } catch (err) {
+      setError(loginFailureMessage(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -99,7 +140,7 @@ export const DoctorAuthView: React.FC = () => {
           </div>
           <h2 className="text-xl font-bold tracking-tight">Individual Doctor {mode === 'register' ? 'Registration' : 'Login'}</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            {mode === 'register' ? 'Create your own PrivyDoc account' : 'Sign in with your email and 6-digit PIN'}
+            {mode === 'register' ? 'Create your own PrivyDoc account' : 'Sign in with your email and personal password'}
           </p>
         </div>
 
@@ -163,30 +204,29 @@ export const DoctorAuthView: React.FC = () => {
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">6-Digit PIN</label>
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Personal password</label>
             <input
               type="password"
-              maxLength={6}
-              pattern="\d*"
-              inputMode="numeric"
+              minLength={6}
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
               value={password}
-              onChange={(e) => setPassword(e.target.value.replace(/\D/g, ''))}
-              placeholder={mode === 'register' ? 'Choose a 6-digit PIN' : 'Enter your 6-digit PIN'}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={mode === 'register' ? 'Choose a personal password' : 'Enter your personal password'}
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition placeholder:font-normal placeholder:tracking-normal"
             />
+            <p className="text-[11px] leading-relaxed text-slate-500">At least 6 characters. This is not your institution&apos;s six-digit access code; a longer unique password is safer.</p>
           </div>
 
           {mode === 'register' && (
             <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Confirm PIN</label>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Confirm password</label>
               <input
                 type="password"
-                maxLength={6}
-                pattern="\d*"
-                inputMode="numeric"
+                minLength={6}
+                autoComplete="new-password"
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value.replace(/\D/g, ''))}
-                placeholder="Re-enter your 6-digit PIN"
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter your personal password"
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition placeholder:font-normal placeholder:tracking-normal"
               />
             </div>
@@ -199,6 +239,16 @@ export const DoctorAuthView: React.FC = () => {
           >
             {isSubmitting ? 'Please wait...' : mode === 'register' ? 'Create Account' : 'Log In'}
           </button>
+          {mode === 'login' && (
+            <div className="flex flex-col gap-2 text-center sm:flex-row sm:justify-center">
+              <button type="button" onClick={requestPasswordReset} disabled={isSubmitting || !email.trim() || resendCooldown > 0} className="text-xs font-bold text-blue-700 disabled:text-slate-400">
+                {resendCooldown > 0 ? `Email available in ${resendCooldown}s` : 'Forgot personal password?'}
+              </button>
+              <button type="button" onClick={resendConfirmation} disabled={isSubmitting || !email.trim() || resendCooldown > 0} className="text-xs font-bold text-blue-700 disabled:text-slate-400">
+                Resend confirmation
+              </button>
+            </div>
+          )}
         </form>
 
         <div className="bg-slate-50 border-t border-slate-100 p-4 text-center">

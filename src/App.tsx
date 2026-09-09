@@ -18,6 +18,7 @@ import { FullRosterView } from './modules/roster-engine/components/FullRosterVie
 import { AuthLandingView } from './modules/auth/components/AuthLandingView';
 import { TenantSelectorView } from './modules/auth/components/TenantSelectorView';
 import { DoctorAuthView } from './modules/auth/components/DoctorAuthView';
+import { DoctorPasswordResetView } from './modules/auth/components/DoctorPasswordResetView';
 import { DoctorHomeView } from './modules/doctors/components/DoctorHomeView';
 import { AdminPortalChooserView } from './modules/auth/components/AdminPortalChooserView';
 import { CreateOrganizationView } from './modules/doctors/components/CreateOrganizationView';
@@ -192,6 +193,7 @@ function MainAppContent() {
   const [currentResident, setCurrentResident] = useState<ResidentSession | null>(readInitialResidentSession);
   const [isChiefAuthenticated, setIsChiefAuthenticated] = useState<boolean>(readInitialChiefAuthenticated);
   const [currentDoctor, setCurrentDoctor] = useState<DoctorSession | null>(null);
+  const [authRecoveryActive, setAuthRecoveryActive] = useState(() => /(?:^|[&#])type=recovery(?:&|$)/.test(window.location.hash));
 
   // Footer-only brand — reflects who's actually signed in (org vs.
   // personal), not just the domain. See getFooterBrand's doc comment.
@@ -270,6 +272,10 @@ function MainAppContent() {
   // any, event 'INITIAL_SESSION') and again on every subsequent sign-in/out.
   useEffect(() => {
     const unsubscribe = databaseService.onDoctorAuthStateChange(async (event, userId) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setAuthRecoveryActive(true);
+        navigate('/doctor/reset-password', { replace: true });
+      }
       if (!userId) {
         setCurrentDoctor(null);
         return;
@@ -360,6 +366,7 @@ function MainAppContent() {
     if (path === '/login') return 'auth-landing';
     if (path.startsWith('/doctor/register')) return 'doctor-register';
     if (path.startsWith('/doctor/login')) return 'doctor-login';
+    if (path.startsWith('/doctor/reset-password')) return 'doctor-login';
     if (path.startsWith('/doctor/home')) return 'doctor-home';
     if (path.startsWith('/doctor/communication')) return 'doctor-communication';
     return 'resident-login';
@@ -589,6 +596,19 @@ function MainAppContent() {
             path="/doctor/register"
             element={
               currentDoctor ? <Navigate to="/doctor/home" replace /> : <DoctorAuthView />
+            }
+          />
+          <Route
+            path="/doctor/reset-password"
+            element={
+              authRecoveryActive ? (
+                <DoctorPasswordResetView onComplete={() => {
+                  setAuthRecoveryActive(false);
+                  navigate(currentResident ? '/workspace/home' : '/doctor/home', { replace: true });
+                }} />
+              ) : (
+                <Navigate to="/doctor/login" replace />
+              )
             }
           />
           <Route
