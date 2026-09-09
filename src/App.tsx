@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Navbar } from './modules/shared/ui/Navbar';
 import { UnifiedRecordView } from './modules/shared/ui/UnifiedRecordView';
@@ -10,7 +10,11 @@ import { ResidentLoginView } from './modules/auth/components/ResidentLoginView';
 import { PostLoginEmailPrompt } from './modules/auth/components/PostLoginEmailPrompt';
 import { LinkInstitutionalAccessPrompt } from './modules/auth/components/LinkInstitutionalAccessPrompt';
 import { InstitutionalAccountLinkInvitationView } from './modules/auth/components/InstitutionalAccountLinkInvitationView';
-import { organisationMembershipService } from './modules/auth/lib/organisationMembershipService';
+import { ClaimWorkforceMemberResult, organisationMembershipService } from './modules/auth/lib/organisationMembershipService';
+import {
+  initialOrganisationMembershipProjection,
+  resolveOrganisationMembershipProjection,
+} from './modules/auth/lib/membershipProjection';
 import { ResidentFormView } from './modules/form/components/ResidentFormView';
 import { AnnouncementBoardView } from './modules/announcements/components/AnnouncementBoardView';
 import { MyAssignmentView } from './modules/roster-engine/components/MyAssignmentView';
@@ -205,6 +209,8 @@ function MainAppContent({
   const [currentResident, setCurrentResident] = useState<ResidentSession | null>(readInitialResidentSession);
   const [isChiefAuthenticated, setIsChiefAuthenticated] = useState<boolean>(readInitialChiefAuthenticated);
   const [currentDoctor, setCurrentDoctor] = useState<DoctorSession | null>(null);
+  const [membershipProjection, setMembershipProjection] = useState(initialOrganisationMembershipProjection);
+  const [postLinkNotice, setPostLinkNotice] = useState('');
 
   // Footer-only brand — reflects who's actually signed in (org vs.
   // personal), not just the domain. See getFooterBrand's doc comment.
@@ -258,6 +264,10 @@ function MainAppContent({
   // keeps the prompt from reappearing on every page reload — see
   // PostLoginEmailPrompt's own render guard below.
   const [residentAccessCode, setResidentAccessCode] = useState<string | null>(null);
+  const currentResidentRef = useRef(currentResident);
+  const residentAccessCodeRef = useRef(residentAccessCode);
+  currentResidentRef.current = currentResident;
+  residentAccessCodeRef.current = residentAccessCode;
 
   // DevHelper Preset triggers
   const [presetResident, setPresetResident] = useState<WorkforceMember | null>(null);
@@ -289,11 +299,17 @@ function MainAppContent({
       }
       if (!userId) {
         setCurrentDoctor(null);
+        setPostLinkNotice('');
+        setMembershipProjection({ state: 'signed-out', workforceMembership: null, tenantAdminMembership: null });
         return;
       }
+      setMembershipProjection(initialOrganisationMembershipProjection());
       try {
         const profile = await databaseService.getDoctorProfile(userId);
-        if (!profile) return;
+        if (!profile) {
+          setMembershipProjection({ state: 'error', workforceMembership: null, tenantAdminMembership: null });
+          return;
+        }
         setCurrentDoctor({ id: profile.id, email: profile.email, fullName: profile.full_name });
 
         // The convergence point: once this doctor is linked to a workforce
@@ -301,10 +317,19 @@ function MainAppContent({
         // login would — every existing resident view/route/nav-tab needs no
         // changes to work for a doctor-linked resident.
         const memberships = await organisationMembershipService.getCurrentUserMemberships();
-        const canonical = memberships.find((membership) => membership.status === 'active' && membership.workforce_id);
-        const linkedWorkforce = canonical?.workforce_id
-          ? await databaseService.getWorkforceMemberById(canonical.workforce_id)
-          : await databaseService.getLinkedWorkforceForDoctor(profile.id);
+        const projection = resolveOrganisationMembershipProjection(
+          memberships,
+          currentResidentRef.current?.id ?? null,
+        );
+        setMembershipProjection(projection);
+
+        // A canonical row of any lifecycle state supersedes workforce.doctor_id.
+        // The legacy lookup is used only when no canonical membership exists.
+        const linkedWorkforce = projection.state === 'linked'
+          ? await databaseService.getWorkforceMemberById(projection.workforceMembership.workforce_id!)
+          : projection.state === 'unlinked' && memberships.length === 0
+          ? await databaseService.getLinkedWorkforceForDoctor(profile.id)
+          : null;
         if (linkedWorkforce) {
           const session: ResidentSession = {
             id: linkedWorkforce.id,
@@ -319,7 +344,19 @@ function MainAppContent({
             hasEmail: true,
           };
           setCurrentResident(session);
+          currentResidentRef.current = session;
+          localStorage.setItem('fm_session_resident', JSON.stringify(session));
           refreshSubadminRoles(session);
+        } else if (!residentAccessCodeRef.current) {
+          // Discard only a stale browser projection. An in-progress, freshly
+          // code-authenticated link flow retains its in-memory workforce and
+          // access code until the user confirms or leaves that flow.
+          setCurrentResident(null);
+          currentResidentRef.current = null;
+          localStorage.removeItem('fm_session_resident');
+          if (window.location.hash.startsWith('#/workspace/')) {
+            navigate('/doctor/home', { replace: true });
+          }
         }
 
         // Only redirect on an actual fresh login, never on a page-reload
@@ -329,6 +366,15 @@ function MainAppContent({
         }
       } catch (err) {
         console.warn('Failed to resolve doctor session:', err);
+        setMembershipProjection({ state: 'error', workforceMembership: null, tenantAdminMembership: null });
+        if (!residentAccessCodeRef.current) {
+          setCurrentResident(null);
+          currentResidentRef.current = null;
+          localStorage.removeItem('fm_session_resident');
+          if (window.location.hash.startsWith('#/workspace/')) {
+            navigate('/doctor/home', { replace: true });
+          }
+        }
       }
     });
     return unsubscribe;
@@ -387,10 +433,12 @@ function MainAppContent({
     const { accessCode, ...residentFields } = resident;
     const session: ResidentSession = { ...residentFields, subadminRoles: [] };
     setCurrentResident(session);
+    currentResidentRef.current = session;
     localStorage.setItem('fm_session_resident', JSON.stringify(session));
     // In-memory only — see residentAccessCode's own declaration comment.
     // Not included in the object persisted to localStorage above.
     setResidentAccessCode(accessCode);
+    residentAccessCodeRef.current = accessCode;
     navigate('/workspace/home');
     // Clear preset
     setPresetResident(null);
@@ -418,13 +466,19 @@ function MainAppContent({
       subadminRoles: [],
     };
     setCurrentResident(session);
+    currentResidentRef.current = session;
     localStorage.setItem('fm_session_resident', JSON.stringify(session));
     await refreshSubadminRoles(session);
+    const memberships = await organisationMembershipService.getCurrentUserMemberships();
+    setMembershipProjection(resolveOrganisationMembershipProjection(memberships, workforceId));
   };
 
   const handleResidentLogout = () => {
     setCurrentResident(null);
+    currentResidentRef.current = null;
     setResidentAccessCode(null);
+    residentAccessCodeRef.current = null;
+    setPostLinkNotice('');
     localStorage.removeItem('fm_session_resident');
     // No-op if this resident session didn't come from a doctor-link — but if
     // it did, this prevents the still-live Supabase Auth session from
@@ -437,6 +491,9 @@ function MainAppContent({
   const handleDoctorLogout = () => {
     setCurrentDoctor(null);
     setCurrentResident(null);
+    currentResidentRef.current = null;
+    setPostLinkNotice('');
+    setMembershipProjection({ state: 'signed-out', workforceMembership: null, tenantAdminMembership: null });
     databaseService.logoutDoctor();
     navigate('/login');
   };
@@ -542,12 +599,44 @@ function MainAppContent({
           does not affect the legacy resident session on success or
           failure. */}
       {currentResident && (
+        (!currentDoctor && membershipProjection.state === 'signed-out')
+        || (currentDoctor && membershipProjection.state === 'unlinked')
+      ) && (
         <LinkInstitutionalAccessPrompt
           workforceId={currentResident.id}
           accessCode={residentAccessCode}
           hasAuthenticatedAccount={!!currentDoctor}
-          onLinked={() => setResidentAccessCode(null)}
+          onLinked={(membership: ClaimWorkforceMemberResult) => {
+            setResidentAccessCode(null);
+            residentAccessCodeRef.current = null;
+            const workforceMembership = {
+              membership_id: membership.membership_id,
+              tenant_id: membership.claim_tenant_id,
+              tenant_name: '',
+              workforce_id: membership.claim_workforce_id,
+              workforce_full_name: currentResident.name,
+              is_workforce_member: membership.claim_is_workforce_member,
+              is_tenant_admin: membership.claim_is_tenant_admin,
+              status: membership.claim_status,
+              linked_at: null,
+              claimed_at: membership.claim_claimed_at,
+            };
+            setMembershipProjection({
+              state: 'linked',
+              workforceMembership,
+              tenantAdminMembership: membership.claim_is_tenant_admin ? workforceMembership : null,
+            });
+            setPostLinkNotice('Institutional access is linked to your personally signed-in account.');
+          }}
         />
+      )}
+
+      {postLinkNotice && currentResident && (
+        <div className="mx-auto w-full max-w-3xl px-4 pt-4">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900" role="status">
+            {postLinkNotice}
+          </div>
+        </div>
       )}
 
       {/* Dev helper panel — local development builds only. Never rendered
@@ -631,6 +720,20 @@ function MainAppContent({
               currentDoctor ? (
                 currentResident ? (
                   <Navigate to="/workspace/home" replace />
+                ) : membershipProjection.state === 'checking' ? (
+                  <LoadingShell />
+                ) : membershipProjection.state === 'error' ? (
+                  <div className="mx-auto my-12 max-w-lg rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900" role="alert">
+                    We could not refresh your organization membership. Refresh this page or sign out and sign in again; no relinking action has been started.
+                  </div>
+                ) : membershipProjection.state === 'inactive' ? (
+                  <div className="mx-auto my-12 max-w-lg rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900" role="alert">
+                    Your organization membership is not active. Ask your organization administrator to review it; do not create another link.
+                  </div>
+                ) : membershipProjection.state === 'ambiguous' ? (
+                  <div className="mx-auto my-12 max-w-lg rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900" role="alert">
+                    More than one active organization membership was found. Ask support to confirm which workspace you should open; no workspace was guessed.
+                  </div>
                 ) : (
                   <DoctorHomeView doctor={currentDoctor} onLogout={handleDoctorLogout} />
                 )
@@ -997,7 +1100,17 @@ function MainAppContent({
               low-key path rather than merged into this one. */}
           <Route
             path="/admin-portal"
-            element={isChiefAuthenticated ? <Navigate to="/chief/dashboard" replace /> : <AdminPortalChooserView />}
+            element={
+              membershipProjection.state === 'checking' ? (
+                <LoadingShell />
+              ) : currentDoctor && !membershipProjection.tenantAdminMembership ? (
+                <Navigate to={currentResident ? '/workspace/home' : '/doctor/home'} replace />
+              ) : isChiefAuthenticated ? (
+                <Navigate to="/chief/dashboard" replace />
+              ) : (
+                <AdminPortalChooserView />
+              )
+            }
           />
           <Route
             path="/organization/new"

@@ -36,6 +36,8 @@
     "verify:auth-journey": "tsx scripts/verify-auth-journey-recovery.ts",
     "verify:password-recovery": "tsx scripts/verify-password-recovery-bootstrap.ts",
     "verify:password-recovery-browser": "node scripts/verify-password-recovery-browser.mjs",
+    "verify:post-link-projection": "tsx scripts/verify-post-link-membership-projection.ts",
+    "verify:post-link-browser": "node scripts/verify-post-link-browser.mjs",
     "verify:use-case-requirements": "tsx scripts/verify-use-case-requirements-projection.ts"
   },
   "dependencies": {

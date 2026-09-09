@@ -8,13 +8,17 @@ import {
   registrationNextStepMessage,
   validatePersonalPassword,
 } from '../lib/authJourney';
-import { AccountLinkPreflight, organisationMembershipService } from '../lib/organisationMembershipService';
+import {
+  AccountLinkPreflight,
+  ClaimWorkforceMemberResult,
+  organisationMembershipService,
+} from '../lib/organisationMembershipService';
 
 interface Props {
   workforceId: string;
   accessCode: string | null;
   hasAuthenticatedAccount: boolean;
-  onLinked: () => void;
+  onLinked: (membership: ClaimWorkforceMemberResult) => void;
 }
 
 // The legacy code only opens the already-issued institutional profile. The
@@ -31,9 +35,7 @@ export const LinkInstitutionalAccessPrompt: React.FC<Props> = ({ workforceId, ac
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [dismissed, setDismissed] = useState(false);
-  const [alreadyLinked, setAlreadyLinked] = useState(false);
   const [linkedJustNow, setLinkedJustNow] = useState(false);
-  const [checkingMembership, setCheckingMembership] = useState(hasAuthenticatedAccount);
   const [confirmLink, setConfirmLink] = useState(false);
   const [emailCooldown, setEmailCooldown] = useState(0);
 
@@ -48,16 +50,6 @@ export const LinkInstitutionalAccessPrompt: React.FC<Props> = ({ workforceId, ac
     return () => window.clearTimeout(timer);
   }, [emailCooldown]);
 
-  useEffect(() => {
-    if (!hasAuthenticatedAccount) { setCheckingMembership(false); return; }
-    let cancelled = false;
-    organisationMembershipService.getCurrentUserMemberships()
-      .then(rows => { if (!cancelled) setAlreadyLinked(rows.some(row => row.status === 'active' && row.workforce_id === workforceId)); })
-      .catch(() => { /* keep the optional prompt available after a transient read failure */ })
-      .finally(() => { if (!cancelled) setCheckingMembership(false); });
-    return () => { cancelled = true; };
-  }, [hasAuthenticatedAccount, workforceId]);
-
   const inspect = async (value = code) => {
     setError('');
     if (!/^\d{6}$/.test(value)) return setError('Re-enter your six-digit institutional access code.');
@@ -71,12 +63,11 @@ export const LinkInstitutionalAccessPrompt: React.FC<Props> = ({ workforceId, ac
     if (busy) return;
     setBusy(true); setError('');
     try {
-      await organisationMembershipService.claimWorkforceMember(workforceId, code);
+      const membership = await organisationMembershipService.claimWorkforceMember(workforceId, code);
       setMessage('Institutional access is now linked to your personally signed-in account.');
       setLinkedJustNow(true);
-      setAlreadyLinked(true);
       setConfirmLink(false);
-      onLinked();
+      onLinked(membership);
     } catch (err) { setError(err instanceof Error ? err.message : 'The account link could not be completed.'); }
     finally { setBusy(false); }
   };
@@ -137,7 +128,7 @@ export const LinkInstitutionalAccessPrompt: React.FC<Props> = ({ workforceId, ac
     finally { setBusy(false); }
   };
 
-  if (dismissed || checkingMembership || (alreadyLinked && !linkedJustNow)) return null;
+  if (dismissed) return null;
   if (linkedJustNow) return <div className="mx-auto max-w-3xl px-4 pt-4"><div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900" role="status">{message}</div></div>;
 
   return <div className="mx-auto max-w-3xl px-4 pt-4"><div className="space-y-3 rounded-xl border border-blue-200 bg-blue-50 p-4">

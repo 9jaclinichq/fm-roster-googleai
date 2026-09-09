@@ -48,6 +48,17 @@ and the HashRouter handles `PASSWORD_RECOVERY` before returning the user to the
 existing linking continuation. Supabase Auth remains authoritative; no account
 was hand-linked, confirmed, or assigned a password by the rollout.
 
+**Post-link projection follow-up (2026-09-09)**: the authenticated shell now
+waits for the canonical `organisation_memberships` projection before deciding
+whether a doctor is linked, persists the server-resolved workforce projection
+for refresh/PWA continuity, and never falls back to legacy
+`workforce.doctor_id` when any canonical membership lifecycle row exists. A
+membership read failure, inactive row, or ambiguous multi-membership state is
+shown truthfully instead of offering another link. The legacy shared-code
+Chief portal entry is no longer shown to an authenticated personal account,
+and an authenticated account without server-derived tenant-admin capability is
+redirected away from `/admin-portal`; no role is inferred or changed.
+
 **Note on migration status (headers, not live verification)**: migrations
 32–35 each carry an explicit "NOT APPLIED LIVE — a human will review and
 apply the pending batch" header comment; migration 36 carries no such

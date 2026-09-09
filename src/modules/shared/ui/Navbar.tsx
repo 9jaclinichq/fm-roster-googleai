@@ -261,7 +261,11 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
-            {!isLoginScreen && !currentResident && (!isChiefAuthenticated || !currentView.startsWith('chief')) && (
+            {/* A personal Supabase session never inherits the legacy shared
+                Chief-code entry point. Canonical tenant-admin capability is
+                a separate, server-derived membership fact; unauthorised
+                doctors must not be presented with an admin action. */}
+            {!isLoginScreen && !currentResident && !currentDoctor && (!isChiefAuthenticated || !currentView.startsWith('chief')) && (
               <div className="flex items-center space-x-2">
                 {currentView.startsWith('chief') ? (
                   <button
