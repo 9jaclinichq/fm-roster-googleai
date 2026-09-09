@@ -26,6 +26,12 @@ import { databaseService, DEFAULT_TENANT_ID } from './lib/databaseService';
 import { TerminologyProvider } from './modules/shared/terminology';
 import { getActiveBrand, getFooterBrand } from './modules/shared/config/branding';
 import { WorkforceMember } from './types';
+import {
+  cleanRecoveryLocation,
+  getInitialRecoverySignal,
+  recoveryFailureReason,
+  type RecoveryAccessState,
+} from './modules/auth/lib/passwordRecovery';
 
 // Code-split the heavier resident views — each pulls its own weight in
 // icons/logic and is only needed once a resident actually navigates to it.
@@ -176,7 +182,13 @@ function readInitialChiefAuthenticated(): boolean {
   return localStorage.getItem('fm_session_chief') === 'true';
 }
 
-function MainAppContent() {
+function MainAppContent({
+  recovery,
+  setRecovery,
+}: {
+  recovery: RecoveryAccessState;
+  setRecovery: (state: RecoveryAccessState) => void;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const brand = getActiveBrand();
@@ -193,7 +205,6 @@ function MainAppContent() {
   const [currentResident, setCurrentResident] = useState<ResidentSession | null>(readInitialResidentSession);
   const [isChiefAuthenticated, setIsChiefAuthenticated] = useState<boolean>(readInitialChiefAuthenticated);
   const [currentDoctor, setCurrentDoctor] = useState<DoctorSession | null>(null);
-  const [authRecoveryActive, setAuthRecoveryActive] = useState(() => /(?:^|[&#])type=recovery(?:&|$)/.test(window.location.hash));
 
   // Footer-only brand — reflects who's actually signed in (org vs.
   // personal), not just the domain. See getFooterBrand's doc comment.
@@ -273,7 +284,7 @@ function MainAppContent() {
   useEffect(() => {
     const unsubscribe = databaseService.onDoctorAuthStateChange(async (event, userId) => {
       if (event === 'PASSWORD_RECOVERY') {
-        setAuthRecoveryActive(true);
+        setRecovery({ status: 'ready' });
         navigate('/doctor/reset-password', { replace: true });
       }
       if (!userId) {
@@ -601,14 +612,17 @@ function MainAppContent() {
           <Route
             path="/doctor/reset-password"
             element={
-              authRecoveryActive ? (
-                <DoctorPasswordResetView onComplete={() => {
-                  setAuthRecoveryActive(false);
-                  navigate(currentResident ? '/workspace/home' : '/doctor/home', { replace: true });
-                }} />
-              ) : (
-                <Navigate to="/doctor/login" replace />
-              )
+              <DoctorPasswordResetView
+                recovery={recovery}
+                onComplete={() => {
+                  setRecovery({ status: 'none' });
+                  navigate('/doctor/login', { replace: true });
+                }}
+                onReturnToSignIn={() => {
+                  setRecovery({ status: 'none' });
+                  navigate('/doctor/login', { replace: true });
+                }}
+              />
             }
           />
           <Route
@@ -1074,9 +1088,48 @@ function MainAppContent() {
 }
 
 export default function App() {
+  const signal = getInitialRecoverySignal();
+  const needsCallbackBootstrap = signal.kind === 'implicit' || signal.kind === 'pkce' || signal.kind === 'error';
+  const [recovery, setRecovery] = useState<RecoveryAccessState>(() => {
+    if (needsCallbackBootstrap) return { status: 'checking' };
+    if (signal.kind === 'route') return { status: 'invalid', reason: 'session_missing' };
+    return { status: 'none' };
+  });
+  const [recoveryBootstrapComplete, setRecoveryBootstrapComplete] = useState(!needsCallbackBootstrap);
+
+  useEffect(() => {
+    if (!needsCallbackBootstrap) return;
+    let active = true;
+    databaseService.prepareDoctorPasswordRecovery()
+      .then(result => {
+        if (!active) return;
+        cleanRecoveryLocation();
+        setRecovery(result);
+        setRecoveryBootstrapComplete(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        cleanRecoveryLocation();
+        setRecovery({ status: 'invalid', reason: recoveryFailureReason(signal) });
+        setRecoveryBootstrapComplete(true);
+      });
+    return () => { active = false; };
+  }, []);
+
+  // Do not mount HashRouter while its fragment contains Auth credentials.
+  // Supabase consumes the configured implicit callback first; only then is
+  // the sanitized dedicated route allowed to take ownership of the hash.
+  if (!recoveryBootstrapComplete) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <p className="rounded-xl border border-blue-200 bg-white p-5 text-sm text-slate-700 shadow-sm" role="status">Validating your secure password-reset link&hellip;</p>
+      </main>
+    );
+  }
+
   return (
     <Router>
-      <MainAppContent />
+      <MainAppContent recovery={recovery} setRecovery={setRecovery} />
     </Router>
   );
 }

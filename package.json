@@ -34,6 +34,8 @@
     "verify:secure-gateway": "tsx scripts/verify-secure-delivery-gateway-v1.ts",
     "verify:account-linking": "tsx scripts/verify-institutional-account-linking-v1.ts",
     "verify:auth-journey": "tsx scripts/verify-auth-journey-recovery.ts",
+    "verify:password-recovery": "tsx scripts/verify-password-recovery-bootstrap.ts",
+    "verify:password-recovery-browser": "node scripts/verify-password-recovery-browser.mjs",
     "verify:use-case-requirements": "tsx scripts/verify-use-case-requirements-projection.ts"
   },
   "dependencies": {

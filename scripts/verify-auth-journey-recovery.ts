@@ -42,8 +42,8 @@ check(doctorAuth.includes('registrationNextStepMessage()') && doctorAuth.include
 check(doctorAuth.includes('resendCooldown') && doctorAuth.includes('Resend confirmation'), 'confirmation resend is visibly cooldown-protected');
 check(memberLink.includes('Personal account password') && memberLink.includes('separate from the institutional access code'), 'linking auth distinguishes personal password from institutional code');
 check(memberLink.includes('requestDoctorPasswordReset') && memberLink.includes('resendDoctorConfirmation'), 'linking continuation preserves supported recovery paths');
-check(passwordReset.includes('updateDoctorPassword') && passwordReset.includes('does not change or replace'), 'recovery screen updates only the personal password');
-check(app.includes("event === 'PASSWORD_RECOVERY'") && app.includes("path=\"/doctor/reset-password\""), 'Auth recovery redirect is handled by the production HashRouter');
+check(passwordReset.includes('completeDoctorPasswordRecovery') && passwordReset.includes('does not change or replace'), 'recovery screen updates only the personal password');
+check(app.includes("event === 'PASSWORD_RECOVERY'") && app.includes("path=\"/doctor/reset-password\""), 'Auth recovery redirect is handled by the production route');
 check(!passwordReset.includes('localStorage') && !memberLink.includes('localStorage'), 'recovery and linking proof add no browser fallback identity state');
 
 check(gateway.includes("case 'account_link.invitation.preview'") && gateway.includes('previewAccountLinkInvitation'), 'existing gateway owns protected invitation preview');

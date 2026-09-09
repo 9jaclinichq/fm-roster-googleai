@@ -2,8 +2,13 @@ import React, { useState } from 'react';
 import { AlertCircle, KeyRound, ShieldCheck } from 'lucide-react';
 import { databaseService } from '../../../lib/databaseService';
 import { loginFailureMessage, validatePersonalPassword } from '../lib/authJourney';
+import { recoveryFailureMessage, type RecoveryAccessState } from '../lib/passwordRecovery';
 
-export const DoctorPasswordResetView: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
+export const DoctorPasswordResetView: React.FC<{
+  recovery: RecoveryAccessState;
+  onComplete: () => void;
+  onReturnToSignIn: () => void;
+}> = ({ recovery, onComplete, onReturnToSignIn }) => {
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [busy, setBusy] = useState(false);
@@ -18,7 +23,7 @@ export const DoctorPasswordResetView: React.FC<{ onComplete: () => void }> = ({ 
     if (password !== confirmation) return setError('Passwords do not match.');
     setBusy(true);
     try {
-      await databaseService.updateDoctorPassword(password);
+      await databaseService.completeDoctorPasswordRecovery(password);
       setPassword('');
       setConfirmation('');
       setComplete(true);
@@ -40,10 +45,17 @@ export const DoctorPasswordResetView: React.FC<{ onComplete: () => void }> = ({ 
           </div>
         </div>
 
-        {complete ? (
+        {recovery.status === 'checking' ? (
+          <p className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800" role="status">Validating this password-reset link&hellip;</p>
+        ) : recovery.status !== 'ready' && !complete ? (
+          <div className="mt-5 space-y-4">
+            <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800" role="alert"><AlertCircle size={17} className="mt-0.5 shrink-0" />{recoveryFailureMessage(recovery.status === 'invalid' ? recovery.reason : 'session_missing')}</p>
+            <button type="button" onClick={onReturnToSignIn} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-800">Return to personal sign-in</button>
+          </div>
+        ) : complete ? (
           <div className="mt-5 space-y-4" role="status">
-            <p className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><ShieldCheck size={17} className="mt-0.5 shrink-0" />Personal password updated. Your account is signed in; continue to the workspace to complete linking.</p>
-            <button type="button" onClick={onComplete} className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white">Continue securely</button>
+            <p className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><ShieldCheck size={17} className="mt-0.5 shrink-0" />Personal password updated. The recovery session is closed; sign in with your new password to continue securely.</p>
+            <button type="button" onClick={onComplete} className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white">Continue to personal sign-in</button>
           </div>
         ) : (
           <form onSubmit={submit} className="mt-5 space-y-4">

@@ -81,6 +81,11 @@ import { tenantService } from './services/tenantService';
 import { announcementService } from './services/announcementService';
 import { examReadinessService } from './services/examReadinessService';
 import { vivaSimulatorService } from './services/vivaSimulatorService';
+import {
+  getInitialRecoverySignal,
+  recoveryFailureReason,
+  type RecoveryAccessState,
+} from '../modules/auth/lib/passwordRecovery';
 
 // Read from import.meta.env
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -88,8 +93,17 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 // Initialize Supabase client
 export const supabase = supabaseUrl && supabaseAnonKey
-  ? createClient(supabaseUrl, supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        // Hosted Auth currently returns password recovery as an implicit
+        // fragment. Keep the client and callback handling on one flow.
+        detectSessionInUrl: true,
+        flowType: 'implicit',
+      },
+    })
   : null;
+
+let activeRecoveryUserId: string | null = null;
 
 console.log(`[PrivyDoc Workspace] Live Supabase service initialized. Connected: ${!!supabase}`);
 
@@ -1999,13 +2013,51 @@ export const databaseService = {
     }
   },
 
-  async updateDoctorPassword(password: string): Promise<void> {
+  async prepareDoctorPasswordRecovery(): Promise<RecoveryAccessState> {
+    checkSupabase();
+    const signal = getInitialRecoverySignal();
+    if (signal.kind !== 'implicit') {
+      // Await initialization even for rejected callbacks so URL cleanup never
+      // races Supabase's own callback parser.
+      await supabase!.auth.getSession();
+      return { status: 'invalid', reason: recoveryFailureReason(signal) };
+    }
+
+    const { data: sessionData, error: sessionError } = await supabase!.auth.getSession();
+    if (sessionError || !sessionData.session?.user?.id) {
+      return { status: 'invalid', reason: 'session_missing' };
+    }
+    const { data: userData, error: userError } = await supabase!.auth.getUser();
+    if (userError || !userData.user || userData.user.id !== sessionData.session.user.id) {
+      return { status: 'invalid', reason: 'session_missing' };
+    }
+    activeRecoveryUserId = userData.user.id;
+    return { status: 'ready' };
+  },
+
+  async completeDoctorPasswordRecovery(password: string): Promise<void> {
     checkSupabase();
 
+    if (!activeRecoveryUserId) throw new Error('recovery_session_required');
+    const { data: userData, error: userError } = await supabase!.auth.getUser();
+    if (userError || !userData.user || userData.user.id !== activeRecoveryUserId) {
+      activeRecoveryUserId = null;
+      throw new Error('recovery_session_required');
+    }
     const { error } = await supabase!.auth.updateUser({ password });
     if (error) {
       console.warn('Error updating doctor password:', error);
       throw error;
+    }
+    activeRecoveryUserId = null;
+    // Revoke the recovery refresh session after the password change. The
+    // callback URL has already been cleaned, and the original verification
+    // token is one-time, so reopening the link cannot update the password.
+    const { error: signOutError } = await supabase!.auth.signOut({ scope: 'global' });
+    if (signOutError) {
+      // Still clear this browser's session without misreporting the already
+      // successful password update.
+      await supabase!.auth.signOut({ scope: 'local' });
     }
   },
 
@@ -2037,6 +2089,9 @@ export const databaseService = {
   onDoctorAuthStateChange(callback: (event: string, userId: string | null) => void): () => void {
     if (!supabase) return () => {};
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY' && session?.user?.id) {
+        activeRecoveryUserId = session.user.id;
+      }
       callback(event, session?.user?.id ?? null);
     });
     return () => data.subscription.unsubscribe();

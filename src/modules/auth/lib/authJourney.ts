@@ -22,5 +22,8 @@ export function loginFailureMessage(error: unknown): string {
   if (code === 'invalid_credentials' || /invalid login credentials/i.test(message)) {
     return 'That email and personal password were not accepted. Do not use your institutional access code here; reset the personal password if you no longer know it.';
   }
+  if (message === 'recovery_session_required') {
+    return 'This password-recovery session is no longer valid. Return to personal sign-in and request one fresh reset email.';
+  }
   return message || 'Personal sign-in could not be completed. Please try again.';
 }
