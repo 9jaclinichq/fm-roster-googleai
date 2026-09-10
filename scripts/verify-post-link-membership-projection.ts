@@ -49,10 +49,11 @@ check(resolveOrganisationMembershipProjection([
 ], null).state === 'ambiguous', 'multiple memberships are not selected by array order');
 check(resolveOrganisationMembershipProjection([], null).state === 'unlinked', 'only absence of canonical rows produces unlinked state');
 
-check(app.includes("projection.state === 'linked'\n          ? await databaseService.getWorkforceMemberById"), 'App resolves canonical workforce before legacy projection');
+check(/projection\.state === 'linked'\s+\? await databaseService\.getWorkforceMemberById/.test(app), 'App resolves canonical workforce before legacy projection');
 check(app.includes("projection.state === 'unlinked' && memberships.length === 0"), 'legacy doctor_id lookup is forbidden once any canonical row exists');
 check(app.includes("localStorage.setItem('fm_session_resident', JSON.stringify(session))"), 'canonical workforce projection is persisted for refresh continuity');
-check(app.includes("membershipProjection.state === 'signed-out'") && app.includes("membershipProjection.state === 'unlinked'"), 'link prompt is limited to a proven signed-out code session or authenticated unlinked state');
+check(app.includes("currentResident && currentDoctor && membershipProjection.state === 'unlinked'"), 'link prompt requires an authenticated, authoritatively unlinked projection');
+check(!app.includes("!currentDoctor && membershipProjection.state === 'signed-out'"), 'signed-out and code-only sessions cannot infer that a durable membership is absent');
 check(!prompt.includes('getCurrentUserMemberships'), 'link prompt no longer races a second membership read');
 check(prompt.includes('onLinked(membership)'), 'successful claim immediately updates the authoritative parent projection');
 check(navbar.includes('!currentDoctor && (!isChiefAuthenticated'), 'personal accounts do not see the legacy Chief portal action');

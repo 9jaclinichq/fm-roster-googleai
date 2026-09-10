@@ -9,6 +9,7 @@ const membershipId = '20000000-0000-4000-8000-000000000001';
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const workforceId = '40000000-0000-4000-8000-000000000001';
 let membershipRequests = 0;
+let hasMembership = true;
 
 const json = (response, value, status = 200) => {
   response.writeHead(status, {
@@ -23,6 +24,10 @@ const json = (response, value, status = 200) => {
 const mockApi = http.createServer((request, response) => {
   if (request.method === 'OPTIONS') return json(response, {});
   const url = new URL(request.url, `http://127.0.0.1:${mockPort}`);
+  if (url.pathname === '/test/set-unlinked') {
+    hasMembership = false;
+    return json(response, { ok: true });
+  }
   if (url.pathname === '/auth/v1/user') return json(response, {
     id: userId,
     aud: 'authenticated',
@@ -39,7 +44,8 @@ const mockApi = http.createServer((request, response) => {
   });
   if (url.pathname === '/rest/v1/rpc/current_user_organisation_memberships') {
     membershipRequests += 1;
-    return json(response, [{
+    if (!hasMembership) return setTimeout(() => json(response, []), 500);
+    return setTimeout(() => json(response, [{
       membership_id: membershipId,
       tenant_id: tenantId,
       tenant_name: 'Synthetic Organization',
@@ -50,7 +56,7 @@ const mockApi = http.createServer((request, response) => {
       status: 'active',
       linked_at: null,
       claimed_at: '2026-09-09T00:00:00.000Z',
-    }]);
+    }]), 500);
   }
   if (url.pathname === '/rest/v1/workforce') return json(response, {
     id: workforceId,
@@ -120,6 +126,16 @@ try {
   await send('Page.navigate', { url: `${appBase}/#/doctor/login` });
   await waitFor("location.hash === '#/doctor/login'", 'initial app origin');
 
+  await evaluate(`(() => {
+    localStorage.setItem('fm_session_resident', JSON.stringify({ id: '${workforceId}', name: 'Synthetic Linked Member', category: 'Associate', tenant_id: '${tenantId}', hasEmail: true, subadminRoles: [] }));
+    location.hash = '#/workspace/home';
+    location.reload();
+  })()`);
+  await waitFor("location.hash === '#/workspace/home'", 'signed-out institutional restoration');
+  await waitFor("document.readyState === 'complete' && Boolean(document.body)", 'signed-out restoration readiness');
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.ok(!await evaluate("document.body.innerText.includes('Link this institutional profile to a personal account')"), 'signed-out/code-only restoration does not infer unlinked state or offer relinking');
+
   const now = Math.floor(Date.now() / 1000);
   const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
   const accessToken = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ aud: 'authenticated', exp: now + 3600, iat: now, sub: userId, role: 'authenticated' })}.synthetic`;
@@ -136,6 +152,9 @@ try {
     localStorage.setItem('sb-127-auth-token', ${JSON.stringify(JSON.stringify(session))});
     location.reload();
   })()`);
+
+  await waitFor("document.readyState === 'complete' && Boolean(document.body)", 'pending projection document readiness');
+  assert.ok(!await evaluate("document.body.innerText.includes('Link this institutional profile to a personal account')"), 'pending canonical resolution does not flash a relink prompt');
 
   await waitFor(`JSON.parse(localStorage.getItem('fm_session_resident') || '{}').id === '${workforceId}'`, 'canonical workforce projection');
   await waitFor("location.hash === '#/workspace/home'", 'linked workspace route');
@@ -155,7 +174,10 @@ try {
   assert.ok(!await evaluate("document.body.innerText.includes('Organizational Admin Portal')"), 'direct admin portal content is not rendered');
 
   await send('Emulation.setDeviceMetricsOverride', { width: 500, height: 900, deviceScaleFactor: 1, mobile: true });
-  await evaluate('location.reload()');
+  await evaluate(`(() => {
+    localStorage.setItem('fm_session_resident', JSON.stringify({ id: 'stale-mobile-workforce', name: 'Stale Mobile State', category: 'Registrar', tenant_id: 'stale-mobile-tenant', hasEmail: true, subadminRoles: [] }));
+    location.reload();
+  })()`);
   await waitFor(`JSON.parse(localStorage.getItem('fm_session_resident') || '{}').id === '${workforceId}'`, 'mobile canonical workforce projection');
   await waitFor("location.hash === '#/workspace/home'", 'mobile linked workspace route');
   await waitFor("document.readyState === 'complete' && Boolean(document.body)", 'mobile document readiness');
@@ -166,8 +188,17 @@ try {
   assert.ok(membershipRequests >= 2, 'hard refresh re-resolves canonical membership from the server');
   assert.ok(!browserMessages.join('\n').includes('synthetic-refresh-token'), 'browser logs do not expose session credentials');
 
+  await evaluate(`void fetch('http://127.0.0.1:${mockPort}/test/set-unlinked').then(() => {
+    localStorage.setItem('fm_session_resident', JSON.stringify({ id: '${workforceId}', name: 'Synthetic Unlinked Member', category: 'Associate', tenant_id: '${tenantId}', hasEmail: true, subadminRoles: [] }));
+    location.hash = '#/workspace/home';
+    location.reload();
+  })`);
+  await waitFor("document.body?.innerText.includes('Link this institutional profile to a personal account')", 'authenticated unlinked linking journey');
+  assert.ok(await evaluate("document.body.innerText.includes('Link this institutional profile to a personal account')"), 'a genuinely unlinked authenticated identity is still offered the linking journey');
+
   socket.close();
-  console.log('synthetic post-link browser projection passed (12 checks)');
+  console.log('synthetic post-link browser projection passed (13 checks)');
 } finally {
+  mockApi.closeAllConnections?.();
   await new Promise(resolve => mockApi.close(resolve));
 }

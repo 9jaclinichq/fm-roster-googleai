@@ -119,6 +119,6 @@ check(!/Olanipekun|\bUCH\b|@gmail|080[0-9]{8}/i.test(hub + service + admin + mig
 
 const migrationNumbers = readdirSync(resolve(root, 'supabase/migrations'))
   .filter(name => /^\d+_/.test(name)).map(name => Number(name.split('_')[0]));
-check(Math.max(...migrationNumbers) === 86, 'local migration ceiling is reviewed migration 86');
+check(Math.max(...migrationNumbers) === 87, 'local migration ceiling is deployed migration 87');
 
 console.log(`communication hub v1 verifier passed (${checks} checks)`);

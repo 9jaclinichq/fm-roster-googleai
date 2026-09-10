@@ -594,26 +594,19 @@ function MainAppContent({
       )}
 
       {/* Institutional Identity Slice 2a — "Link institutional access".
-          Shown ONLY when a real Supabase Auth session already exists
-          (currentDoctor !== null — the only way any session currently
-          gets one in this app) AND a resident session is ALSO active —
-          exactly the "authenticated Supabase user is also operating in a
-          resident context" precondition from the reviewed handoff/
-          prompt1.txt, not a new convergence concept. The component itself
-          checks whether this specific workforce_id is already linked
-          (migration 76's resolver) and renders nothing if so. Never
-          blocks any route below it — a banner, not a gate. Does not
-          require or store the resident access code anywhere persistent;
-          does not affect the legacy resident session on success or
-          failure. */}
-      {currentResident && (
-        (!currentDoctor && membershipProjection.state === 'signed-out')
-        || (currentDoctor && membershipProjection.state === 'unlinked')
-      ) && (
+          A link action is offered only after a personal Auth session has
+          resolved the canonical membership projection to an explicit
+          `unlinked` state. Signed-out/code-only sessions cannot establish
+          whether this person already has a durable membership, so they must
+          never infer "unlinked" from browser state or reopen the claim flow.
+          `checking`, `error`, `inactive`, and `ambiguous` also fail closed and
+          render their existing neutral/truthful states instead of flashing a
+          relink prompt. */}
+      {currentResident && currentDoctor && membershipProjection.state === 'unlinked' && (
         <LinkInstitutionalAccessPrompt
           workforceId={currentResident.id}
           accessCode={residentAccessCode}
-          hasAuthenticatedAccount={!!currentDoctor}
+          hasAuthenticatedAccount
           onLinked={(membership: ClaimWorkforceMemberResult) => {
             setResidentAccessCode(null);
             residentAccessCodeRef.current = null;
