@@ -14,5 +14,5 @@ dist
 supabase
 netlify.toml
 *.log
-.tmp-run-migration.cjs
+.tmp*
 branding.txt

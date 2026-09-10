@@ -1,0 +1,12 @@
+.gcloudignore
+.git
+.gitignore
+node_modules/
+dist/
+coverage/
+.env*
+!.env.example
+*.log
+.tmp*
+supabase/.temp/
+.claude/worktrees/
