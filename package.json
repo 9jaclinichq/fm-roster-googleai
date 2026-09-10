@@ -38,7 +38,9 @@
     "verify:password-recovery-browser": "node scripts/verify-password-recovery-browser.mjs",
     "verify:post-link-projection": "tsx scripts/verify-post-link-membership-projection.ts",
     "verify:post-link-browser": "node scripts/verify-post-link-browser.mjs",
-    "verify:use-case-requirements": "tsx scripts/verify-use-case-requirements-projection.ts"
+    "verify:use-case-requirements": "tsx scripts/verify-use-case-requirements-projection.ts",
+    "verify:tenant-admin-bootstrap": "tsx scripts/verify-tenant-admin-bootstrap-v1.ts",
+    "verify:tenant-admin-browser": "node scripts/verify-tenant-admin-browser.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.6",

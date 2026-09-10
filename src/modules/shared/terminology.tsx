@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { databaseService, DEFAULT_TENANT_ID } from '../../lib/databaseService';
+import { resolveTenantVocabulary, TENANT_VOCABULARY_DEFAULTS } from './tenantVocabulary';
 
 // Tenant-configurable vocabulary so the same underlying schema/UI can serve
 // a residency program, a university department, or another hierarchy
@@ -27,19 +28,7 @@ import { databaseService, DEFAULT_TENANT_ID } from '../../lib/databaseService';
 // tenant and confirming every retrofitted surface picked it up, then
 // reverting — see this pass's commit for the exact verification.
 
-export const TERMINOLOGY_DEFAULTS: Record<string, string> = {
-  org_name: 'Family Medicine, UCH Ibadan',
-  member: 'Resident',
-  members: 'Residents',
-  admin: 'Chief Resident',
-  senior_reviewer: 'Consultant',
-  senior_reviewers: 'Consultants',
-  rotation: 'Rotation',
-  dissertation: 'Dissertation',
-  case_report: 'Case Report',
-  viva: 'Viva',
-  collection_cycle: 'Collection Cycle',
-};
+export const TERMINOLOGY_DEFAULTS = TENANT_VOCABULARY_DEFAULTS;
 
 interface TerminologyContextValue {
   t: (key: keyof typeof TERMINOLOGY_DEFAULTS | string, fallback?: string) => string;
@@ -96,7 +85,16 @@ export const TerminologyProvider: React.FC<{ children: React.ReactNode; tenantId
     };
   }, [tenantId]);
 
-  const t = (key: string, fallback?: string) => overrides[key] || fallback || TERMINOLOGY_DEFAULTS[key] || key;
+  useEffect(() => {
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<{ tenantId: string; overrides: Record<string, string> }>).detail;
+      if (detail?.tenantId === tenantId) setOverrides(detail.overrides);
+    };
+    window.addEventListener('workspc:tenant-vocabulary-updated', update);
+    return () => window.removeEventListener('workspc:tenant-vocabulary-updated', update);
+  }, [tenantId]);
+
+  const t = (key: string, fallback?: string) => resolveTenantVocabulary(overrides, key, fallback);
 
   return (
     <TerminologyContext.Provider value={{ t, loading, tenantId: tenantId || DEFAULT_TENANT_ID }}>

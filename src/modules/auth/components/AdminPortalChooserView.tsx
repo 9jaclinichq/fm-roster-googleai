@@ -19,9 +19,9 @@ export const AdminPortalChooserView: React.FC = () => {
           <div className="mx-auto bg-white/10 text-white w-12 h-12 rounded-xl flex items-center justify-center mb-3 border border-white/10">
             <ShieldAlert size={20} />
           </div>
-          <h2 className="text-xl font-bold tracking-tight">Organizational Admin Portal</h2>
+          <h2 className="text-xl font-bold tracking-tight">Organisation Administration</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            Manage an existing organization, or set up a new one
+            Sign in personally to manage an organisation, or use a recovery path
           </p>
         </div>
 
@@ -34,8 +34,8 @@ export const AdminPortalChooserView: React.FC = () => {
             <span className="flex items-center space-x-3">
               <ShieldAlert size={18} className="text-blue-600 shrink-0" />
               <span>
-                <span className="block text-sm font-bold text-slate-800">Sign in to my organization's admin</span>
-                <span className="block text-[11px] text-slate-500 mt-0.5">Enter your existing admin access code</span>
+                <span className="block text-sm font-bold text-slate-800">Transitional recovery access</span>
+                <span className="block text-[11px] text-slate-500 mt-0.5">Use the existing shared code only when personal sign-in is unavailable</span>
               </span>
             </span>
             <ChevronRight size={16} className="text-slate-400 shrink-0" />
@@ -49,7 +49,7 @@ export const AdminPortalChooserView: React.FC = () => {
             <span className="flex items-center space-x-3">
               <Building2 size={18} className="text-blue-600 shrink-0" />
               <span>
-                <span className="block text-sm font-bold text-slate-800">Create a new organization</span>
+                <span className="block text-sm font-bold text-slate-800">Create a new organisation</span>
                 <span className="block text-[11px] text-slate-500 mt-0.5">Set up a fresh workspace with its own admin code</span>
               </span>
             </span>

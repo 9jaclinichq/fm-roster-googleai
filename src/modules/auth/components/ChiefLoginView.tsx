@@ -47,7 +47,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
     setError('');
 
     if (!adminCode) {
-      setError(`Please enter the ${t('admin', 'Chief Resident')} Access Code.`);
+      setError(`Please enter the ${t('admin', 'Organisation Administrator')} recovery access code.`);
       return;
     }
 
@@ -78,9 +78,9 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
           <div className="mx-auto bg-white/10 text-white w-12 h-12 rounded-xl flex items-center justify-center mb-3 border border-white/10">
             <ShieldAlert size={20} />
           </div>
-          <h2 className="text-xl font-bold tracking-tight">{t('admin', 'Chief Resident')} Portal</h2>
+          <h2 className="text-xl font-bold tracking-tight">Transitional administrator recovery</h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            Organizational administrative login & workspace management
+            Use personal sign-in for normal organisation administration
           </p>
         </div>
 
@@ -95,7 +95,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
           {/* Admin Code Input */}
           <div className="space-y-1.5">
             <label htmlFor="admin-code" className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-              {t('admin', 'Chief Resident')} Access Code
+              Recovery access code
             </label>
             <div className="relative">
               <input
@@ -106,12 +106,12 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
                   setAdminCode(e.target.value);
                   setError('');
                 }}
-                placeholder={`Enter ${t('admin', 'Chief Resident')} Access Code`}
+                placeholder="Enter recovery access code"
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400"
               />
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-              Input the {t('admin', 'Chief Resident').toLowerCase()} access code to access management grids, reset {t('member', 'resident').toLowerCase()} codes, export reports, and adjust deadlines.
+              This shared-code route is retained temporarily for recovery. It does not create or grant personal tenant-administrator authority.
             </p>
           </div>
 
@@ -127,7 +127,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
                 <span>Verifying admin level...</span>
               </>
             ) : (
-              <span>Verify {t('admin', 'Chief Resident')} Access</span>
+              <span>Verify recovery access</span>
             )}
           </button>
         </form>
@@ -145,7 +145,7 @@ export const ChiefLoginView: React.FC<ChiefLoginViewProps> = ({
             onClick={onNavigateToResident}
             className="font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
           >
-            Go to {t('member', 'Resident')} Dashboard &rarr;
+            Go to {t('member', 'Member')} Dashboard &rarr;
           </button>
         </div>
       </div>

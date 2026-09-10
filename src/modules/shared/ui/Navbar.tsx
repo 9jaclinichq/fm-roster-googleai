@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { databaseService } from '../../../lib/databaseService';
-import { getActiveBrand, B2B_UCH_BRAND, B2C_INDEPENDENT_BRAND } from '../config/branding';
+import { getActiveBrand, B2C_INDEPENDENT_BRAND } from '../config/branding';
 import { useTerminology } from '../terminology';
 import { Shield, Users, LogOut, Database, Wifi, FileText, Megaphone, GraduationCap, ClipboardList, Library, Gauge, Mic, ShieldCheck, FlaskConical, Stethoscope, Download, IdCard, Home, CalendarCheck, Table2 } from 'lucide-react';
 
@@ -14,12 +14,14 @@ interface BeforeInstallPromptEvent extends Event {
 interface NavbarProps {
   currentResident: { id: string; name: string; category: string } | null;
   isChiefAuthenticated: boolean;
+  hasAuthenticatedTenantAdmin: boolean;
   currentDoctor: { id: string; email: string; fullName: string } | null;
   onResidentLogout: () => void;
   onChiefLogout: () => void;
   onDoctorLogout: () => void;
   onNavigateToChief: () => void;
   onNavigateToResident: () => void;
+  onNavigateToMemberWorkspace: () => void;
   // Distinct from onNavigateToResident (which the "Resident Portal"
   // quick-switch button below still legitimately uses to jump straight to
   // /workspace/login from e.g. the Chief login screen). The brand logo/name
@@ -90,12 +92,14 @@ const RESIDENT_VIEWS = [
 export const Navbar: React.FC<NavbarProps> = ({
   currentResident,
   isChiefAuthenticated,
+  hasAuthenticatedTenantAdmin,
   currentDoctor,
   onResidentLogout,
   onChiefLogout,
   onDoctorLogout,
   onNavigateToChief,
   onNavigateToResident,
+  onNavigateToMemberWorkspace,
   onLogoClick,
   onNavigateToResidentForm,
   onNavigateToAnnouncements,
@@ -144,8 +148,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   // institutional label only appears after login to an institution."
   // Before that, there's no session to attribute it to, so it's hidden
   // rather than showing a guessed/default org name.
-  const orgLabel = currentResident || isChiefAuthenticated
-    ? B2B_UCH_BRAND.orgLabel
+  const orgLabel = currentResident || isChiefAuthenticated || hasAuthenticatedTenantAdmin
+    ? t('org_name', 'Organisation')
     : currentDoctor
     ? B2C_INDEPENDENT_BRAND.orgLabel
     : null;
@@ -215,7 +219,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <div className="hidden md:block text-right">
                   <div className="text-xs font-bold text-slate-800">{currentResident.name}</div>
                   <div className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">{currentResident.category}</div>
+                  {hasAuthenticatedTenantAdmin && <div className="text-[9px] text-blue-700 uppercase tracking-wider font-bold">{t('admin', 'Organisation Administrator')}</div>}
                 </div>
+                {hasAuthenticatedTenantAdmin && (
+                  <button
+                    onClick={currentView === 'chief' ? onNavigateToMemberWorkspace : onNavigateToChief}
+                    className="flex min-h-9 items-center space-x-1.5 px-3 py-1.5 border border-blue-300 hover:bg-blue-50 text-blue-800 rounded-md text-xs font-semibold shadow-sm transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                  >
+                    {currentView === 'chief' ? <Users size={13} /> : <ShieldCheck size={13} />}
+                    <span>{currentView === 'chief' ? 'Member Workspace' : 'Switch to Admin'}</span>
+                  </button>
+                )}
                 <button
                   onClick={onResidentLogout}
                   className="flex items-center space-x-1.5 px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md text-xs font-semibold shadow-sm transition cursor-pointer"
@@ -229,7 +243,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             {isChiefAuthenticated && currentView.startsWith('chief') && (
               <div className="flex items-center space-x-2">
                 <div className="hidden md:block text-right">
-                  <div className="text-xs font-bold text-slate-800 font-sans">{t('admin', 'Chief Resident')}</div>
+                  <div className="text-xs font-bold text-slate-800 font-sans">{t('admin', 'Organisation Administrator')}</div>
                   <div className="text-[9px] text-blue-600 uppercase tracking-wider font-bold">Admin Panel</div>
                 </div>
                 <button
@@ -251,6 +265,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <div className="text-xs font-bold text-slate-800">{currentDoctor.fullName || currentDoctor.email}</div>
                   <div className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">Individual Doctor</div>
                 </div>
+                {hasAuthenticatedTenantAdmin && (
+                  <button onClick={currentView === 'chief' ? onNavigateToMemberWorkspace : onNavigateToChief} className="flex min-h-9 items-center space-x-1.5 px-3 py-1.5 border border-blue-300 hover:bg-blue-50 text-blue-800 rounded-md text-xs font-semibold shadow-sm transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+                    <ShieldCheck size={13} /><span>{currentView === 'chief' ? 'Member Workspace' : 'Switch to Admin'}</span>
+                  </button>
+                )}
                 <button
                   onClick={onDoctorLogout}
                   className="flex items-center space-x-1.5 px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md text-xs font-semibold shadow-sm transition cursor-pointer"
@@ -273,7 +292,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     className="flex items-center space-x-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm transition cursor-pointer"
                   >
                     <Users size={13} />
-                    <span>{t('member', 'Resident')} Portal</span>
+                    <span>{t('member', 'Member')} Portal</span>
                   </button>
                 ) : (
                   <button
@@ -281,7 +300,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     className="flex items-center space-x-1.5 px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-md text-xs font-semibold shadow-sm transition cursor-pointer"
                   >
                     <Shield size={13} className="text-slate-500" />
-                    <span>{t('admin', 'Chief Resident')} Portal</span>
+                    <span>{t('admin', 'Organisation Administrator')} Portal</span>
                   </button>
                 )}
               </div>

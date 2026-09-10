@@ -52,6 +52,9 @@ const ChiefLoginView = lazy(() =>
 const ChiefDashboardView = lazy(() =>
   import('./modules/org-admin/components/ChiefDashboardView').then(m => ({ default: m.ChiefDashboardView }))
 );
+const AuthenticatedTenantAdminDashboardView = lazy(() =>
+  import('./modules/org-admin/components/AuthenticatedTenantAdminDashboardView').then(m => ({ default: m.AuthenticatedTenantAdminDashboardView }))
+);
 const DissertationAssistantView = lazy(() =>
   import('./modules/dissertation/components/DissertationAssistantView').then(m => ({ default: m.DissertationAssistantView }))
 );
@@ -251,8 +254,11 @@ function MainAppContent({
 
   const activeTenantId =
     currentResident?.tenant_id ||
+    membershipProjection.tenantAdminMembership?.tenant_id ||
     (isChiefAuthenticated ? localStorage.getItem('fm_chief_tenant_id') : null) ||
     incomingLoginTenantId;
+
+  const hasAuthenticatedTenantAdmin = !!currentDoctor && !!membershipProjection.tenantAdminMembership;
 
   // The resident's access code, held only in this component's in-memory
   // state — never persisted to localStorage, same pattern already used
@@ -547,12 +553,14 @@ function MainAppContent({
       <Navbar
         currentResident={currentResident}
         isChiefAuthenticated={isChiefAuthenticated}
+        hasAuthenticatedTenantAdmin={hasAuthenticatedTenantAdmin}
         currentDoctor={currentDoctor}
         onResidentLogout={handleResidentLogout}
         onChiefLogout={handleChiefLogout}
         onDoctorLogout={handleDoctorLogout}
-        onNavigateToChief={() => navigate('/admin-portal')}
+        onNavigateToChief={() => navigate(hasAuthenticatedTenantAdmin ? '/chief/dashboard' : '/admin-portal')}
         onNavigateToResident={() => navigate('/workspace/login')}
+        onNavigateToMemberWorkspace={() => navigate(currentResident ? '/workspace/home' : '/doctor/home')}
         onLogoClick={() => navigate('/')}
         onNavigateToResidentForm={() => navigate('/workspace/form')}
         onNavigateToAnnouncements={() => navigate('/workspace/announcements')}
@@ -1105,7 +1113,7 @@ function MainAppContent({
                 <LoadingShell />
               ) : currentDoctor && !membershipProjection.tenantAdminMembership ? (
                 <Navigate to={currentResident ? '/workspace/home' : '/doctor/home'} replace />
-              ) : isChiefAuthenticated ? (
+              ) : hasAuthenticatedTenantAdmin || isChiefAuthenticated ? (
                 <Navigate to="/chief/dashboard" replace />
               ) : (
                 <AdminPortalChooserView />
@@ -1115,7 +1123,7 @@ function MainAppContent({
           <Route
             path="/organization/new"
             element={
-              isChiefAuthenticated ? (
+              hasAuthenticatedTenantAdmin || isChiefAuthenticated ? (
                 <Navigate to="/chief/dashboard" replace />
               ) : (
                 <CreateOrganizationView onCreated={handleOrganizationCreated} />
@@ -1143,10 +1151,17 @@ function MainAppContent({
           <Route
             path="/chief/dashboard"
             element={
-              isChiefAuthenticated ? (
+              membershipProjection.state === 'checking' ? (
+                <LoadingShell />
+              ) : hasAuthenticatedTenantAdmin && membershipProjection.tenantAdminMembership ? (
+                <AuthenticatedTenantAdminDashboardView
+                  expectedTenantId={membershipProjection.tenantAdminMembership.tenant_id}
+                  onBackToWorkspace={() => navigate(currentResident ? '/workspace/home' : '/doctor/home')}
+                />
+              ) : isChiefAuthenticated ? (
                 <ChiefDashboardView onLogout={handleChiefLogout} />
               ) : (
-                <Navigate to="/chief/login" replace />
+                <Navigate to={currentDoctor ? (currentResident ? '/workspace/home' : '/doctor/home') : '/chief/login'} replace />
               )
             }
           />

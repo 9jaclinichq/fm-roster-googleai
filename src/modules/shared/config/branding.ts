@@ -4,8 +4,8 @@
 // Two brand profiles exist:
 //   - B2C / Independent Doctor  → "PrivyDoc Medical Workspace"
 //     (shown for an unlinked individual-doctor session — see getFooterBrand)
-//   - B2B Institutional Tenant  → "PrivyDoc Workspace — <tenant org name>"
-//     (the current UCH Family Medicine deployment, and any future tenant)
+//   - B2B Institutional Tenant  → "PrivyDoc Workspace"
+//     (the tenant's configured organisation label is rendered separately)
 //
 // Domain-based branching was removed per 2026-08-14 UX review: the product
 // no longer serves a separate doc.privydoc.com.ng subdomain — everything
@@ -48,23 +48,20 @@ export const B2C_INDEPENDENT_BRAND: BrandProfile = {
   copyrightHolder: 'PrivyDoc',
 };
 
-export const B2B_UCH_BRAND: BrandProfile = {
+export const B2B_INSTITUTIONAL_BRAND: BrandProfile = {
   key: 'b2b_institutional',
-  productName: 'PrivyDoc Workspace — UCH Family Medicine',
+  productName: 'PrivyDoc Workspace',
   shortName: 'PrivyDoc Workspace',
   logoInitials: 'PD',
-  orgLabel: 'UCH Family Medicine',
-  copyrightHolder: 'PrivyDoc — UCH Family Medicine',
+  orgLabel: 'Organisation',
+  copyrightHolder: 'PrivyDoc Workspace',
 };
 
 /**
  * No-session fallback for getFooterBrand() — nobody is signed in yet, so
  * there is no organization or individual name to show. Deliberately
  * carries neither an org name nor a personal-practice label, unlike either
- * real profile above (bug fix, 2026-08-16: getFooterBrand previously fell
- * back to getActiveBrand(), which is always the B2B/institutional profile,
- * so the footer showed "PrivyDoc — UCH Family Medicine" even before login
- * or after logout).
+ * real profile above.
  */
 export const NEUTRAL_BRAND: BrandProfile = {
   key: 'neutral',
@@ -77,12 +74,11 @@ export const NEUTRAL_BRAND: BrandProfile = {
 
 /**
  * The brand active for session-agnostic UI (Navbar logo, tab title, login
- * screen chrome pre-authentication). Always the B2B/institutional profile —
- * the org-vs-individual choice lives at /login (AuthLandingView) and in
- * session-aware surfaces (getFooterBrand), not in the domain.
+ * screen chrome pre-authentication). It is intentionally tenant-neutral;
+ * tenant identity is rendered from configuration after selection.
  */
 export function getActiveBrand(): BrandProfile {
-  return B2B_UCH_BRAND;
+  return B2B_INSTITUTIONAL_BRAND;
 }
 
 /**
@@ -90,11 +86,11 @@ export function getActiveBrand(): BrandProfile {
  * labels the footer the organisation or a personal login" — the footer
  * should reflect who's actually signed in). Every other brand-driven
  * surface (Navbar, login screens, tab title) intentionally keeps using the
- * static getActiveBrand() — this is a narrower, session-aware variant for
+ * tenant-neutral getActiveBrand() — this is a narrower, session-aware variant for
  * the one spot the review flagged, not a replacement.
  *
- * Precedence: an institutional session (a resident/chief — including a
- * doctor account a Chief has linked to a workforce row, migration 18) is
+ * Precedence: an institutional membership session (including a doctor
+ * account linked to a workforce row, migration 18) is
  * always org-branded. An authenticated-but-unlinked individual doctor is
  * always personally-branded. With no session at all (pre-login screens, or
  * after logout), falls back to NEUTRAL_BRAND — there is no org or personal
@@ -104,7 +100,7 @@ export function getFooterBrand(session: {
   hasInstitutionalSession: boolean;
   hasIndividualDoctorSession: boolean;
 }): BrandProfile {
-  if (session.hasInstitutionalSession) return B2B_UCH_BRAND;
+  if (session.hasInstitutionalSession) return B2B_INSTITUTIONAL_BRAND;
   if (session.hasIndividualDoctorSession) return B2C_INDEPENDENT_BRAND;
   return NEUTRAL_BRAND;
 }

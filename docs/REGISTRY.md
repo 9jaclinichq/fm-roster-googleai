@@ -48,6 +48,21 @@ and the HashRouter handles `PASSWORD_RECOVERY` before returning the user to the
 existing linking continuation. Supabase Auth remains authoritative; no account
 was hand-linked, confirmed, or assigned a password by the rollout.
 
+**Authenticated Tenant Administration and Tenant Setup & Vocabulary V1
+[CANDIDATE] (2026-09-10)**: migration 87 makes
+`organisation_memberships.is_tenant_admin` the canonical `TENANT_ADMIN`
+capability, adds closed authority/configuration audit records, exposes an
+authenticated same-tenant dashboard projection, and provides one authoritative
+tenant-configuration write RPC for organisation name, allow-listed presentation
+vocabulary, and three existing module-visibility flags. The new
+`AuthenticatedTenantAdminDashboardView` is routed from the current personal
+membership projection; the transitional shared-code route remains available as
+recovery and cannot create personal authority. Shared runtime defaults and
+branding are tenant-neutral; tenant-specific words come from
+`tenants.terminology_overrides`. This entry records repository candidate state:
+the migration file exists locally but is not proof of live application, grant,
+release, or deployment until separately verified.
+
 **Post-link projection follow-up (2026-09-09)**: the authenticated shell now
 waits for the canonical `organisation_memberships` projection before deciding
 whether a doctor is linked, persists the server-resolved workforce projection
