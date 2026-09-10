@@ -9,6 +9,7 @@ import { OfflineBanner } from './modules/shared/ui/OfflineBanner';
 import { ResidentLoginView } from './modules/auth/components/ResidentLoginView';
 import { PostLoginEmailPrompt } from './modules/auth/components/PostLoginEmailPrompt';
 import { LinkInstitutionalAccessPrompt } from './modules/auth/components/LinkInstitutionalAccessPrompt';
+import { PersonalAccountAccessPrompt } from './modules/auth/components/PersonalAccountAccessPrompt';
 import { InstitutionalAccountLinkInvitationView } from './modules/auth/components/InstitutionalAccountLinkInvitationView';
 import { ClaimWorkforceMemberResult, organisationMembershipService } from './modules/auth/lib/organisationMembershipService';
 import {
@@ -258,7 +259,9 @@ function MainAppContent({
     (isChiefAuthenticated ? localStorage.getItem('fm_chief_tenant_id') : null) ||
     incomingLoginTenantId;
 
-  const hasAuthenticatedTenantAdmin = !!currentDoctor && !!membershipProjection.tenantAdminMembership;
+  const hasAuthenticatedTenantAdmin = !!currentDoctor
+    && membershipProjection.state === 'linked'
+    && !!membershipProjection.tenantAdminMembership;
 
   // The resident's access code, held only in this component's in-memory
   // state — never persisted to localStorage, same pattern already used
@@ -593,6 +596,22 @@ function MainAppContent({
         />
       )}
 
+      {currentResident && !currentDoctor && membershipProjection.state === 'signed-out' && (
+        <PersonalAccountAccessPrompt
+          state="signed-out"
+          onSignIn={() => navigate('/doctor/login')}
+          onRetry={() => window.location.reload()}
+        />
+      )}
+
+      {currentResident && currentDoctor && ['checking', 'error', 'inactive', 'ambiguous', 'unauthorized'].includes(membershipProjection.state) && (
+        <PersonalAccountAccessPrompt
+          state={membershipProjection.state as 'checking' | 'error' | 'inactive' | 'ambiguous' | 'unauthorized'}
+          onSignIn={() => navigate('/doctor/login')}
+          onRetry={() => window.location.reload()}
+        />
+      )}
+
       {/* Institutional Identity Slice 2a — "Link institutional access".
           A link action is offered only after a personal Auth session has
           resolved the canonical membership projection to an explicit
@@ -690,13 +709,13 @@ function MainAppContent({
           <Route
             path="/doctor/login"
             element={
-              currentDoctor ? <Navigate to="/doctor/home" replace /> : <DoctorAuthView />
+              currentDoctor ? <Navigate to="/doctor/home" replace /> : <DoctorAuthView institutionalReauthentication={!!currentResident} />
             }
           />
           <Route
             path="/doctor/register"
             element={
-              currentDoctor ? <Navigate to="/doctor/home" replace /> : <DoctorAuthView />
+              currentDoctor ? <Navigate to="/doctor/home" replace /> : <DoctorAuthView institutionalReauthentication={!!currentResident} />
             }
           />
           <Route
@@ -734,6 +753,10 @@ function MainAppContent({
                 ) : membershipProjection.state === 'ambiguous' ? (
                   <div className="mx-auto my-12 max-w-lg rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900" role="alert">
                     More than one active organization membership was found. Ask support to confirm which workspace you should open; no workspace was guessed.
+                  </div>
+                ) : membershipProjection.state === 'unauthorized' ? (
+                  <div className="mx-auto my-12 max-w-lg rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900" role="alert">
+                    This personal account is not authorized for the requested organization context. No tenant access was granted.
                   </div>
                 ) : (
                   <DoctorHomeView doctor={currentDoctor} onLogout={handleDoctorLogout} />

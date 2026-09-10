@@ -15,11 +15,15 @@ import {
 // component does NOT navigate itself; App.tsx's onDoctorAuthStateChange
 // listener picks up the new session and routes to /doctor/home or
 // /workspace/form (if already linked to an organization) once it resolves.
-export const DoctorAuthView: React.FC = () => {
+interface DoctorAuthViewProps {
+  institutionalReauthentication?: boolean;
+}
+
+export const DoctorAuthView: React.FC<DoctorAuthViewProps> = ({ institutionalReauthentication = false }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [mode, setMode] = useState<'login' | 'register'>(
-    location.pathname === '/doctor/register' ? 'register' : 'login'
+    !institutionalReauthentication && location.pathname === '/doctor/register' ? 'register' : 'login'
   );
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -150,13 +154,17 @@ export const DoctorAuthView: React.FC = () => {
           <div className="mx-auto bg-white/15 text-white w-12 h-12 rounded-xl flex items-center justify-center mb-3 shadow-inner">
             <Stethoscope size={20} />
           </div>
-          <h2 className="text-xl font-bold tracking-tight">Individual Doctor {mode === 'register' ? 'Registration' : 'Login'}</h2>
+          <h2 className="text-xl font-bold tracking-tight">
+            {institutionalReauthentication ? 'Sign in to restore personal access' : `Individual Doctor ${mode === 'register' ? 'Registration' : 'Login'}`}
+          </h2>
           <p className="text-xs text-blue-100/90 mt-1 font-medium">
-            {mode === 'register' ? 'Create your own PrivyDoc account' : 'Sign in with your email and personal password'}
+            {institutionalReauthentication
+              ? 'Use your existing personal account; no institutional access code is required'
+              : mode === 'register' ? 'Create your own PrivyDoc account' : 'Sign in with your email and personal password'}
           </p>
         </div>
 
-        <div className="flex border-b border-slate-100">
+        {!institutionalReauthentication && <div className="flex border-b border-slate-100">
           <button
             type="button"
             onClick={() => switchMode('login')}
@@ -175,7 +183,7 @@ export const DoctorAuthView: React.FC = () => {
           >
             Register
           </button>
-        </div>
+        </div>}
 
         <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-4">
           {confirmationNotice && (
@@ -250,7 +258,7 @@ export const DoctorAuthView: React.FC = () => {
             disabled={isSubmitting || emailAction !== null}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500 text-white rounded-xl text-sm font-bold shadow-sm transition transform active:scale-[0.98] cursor-pointer"
           >
-            {isSubmitting ? 'Please wait...' : mode === 'register' ? 'Create Account' : 'Log In'}
+            {isSubmitting ? 'Please wait...' : institutionalReauthentication ? 'Sign in and verify access' : mode === 'register' ? 'Create Account' : 'Log In'}
           </button>
           {mode === 'login' && (
             <div className="space-y-2 text-center">
@@ -283,7 +291,7 @@ export const DoctorAuthView: React.FC = () => {
         <div className="bg-slate-50 border-t border-slate-100 p-4 text-center">
           <button
             type="button"
-            onClick={() => navigate('/login')}
+            onClick={() => navigate(institutionalReauthentication ? '/workspace/home' : '/login')}
             className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
           >
             &larr; Back

@@ -47,20 +47,45 @@ try {
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
   let sequence = 0;
   const pending = new Map();
-  socket.onmessage = event => { const message = JSON.parse(event.data); if (message.id && pending.has(message.id)) { pending.get(message.id)(message); pending.delete(message.id); } };
+  const browserMessages = [];
+  socket.onmessage = event => {
+    const message = JSON.parse(event.data);
+    if (message.id && pending.has(message.id)) {
+      pending.get(message.id)(message);
+      pending.delete(message.id);
+    } else if (message.method === 'Runtime.exceptionThrown' || message.method === 'Runtime.consoleAPICalled' || message.method === 'Log.entryAdded') {
+      browserMessages.push(JSON.stringify(message.params));
+    }
+  };
   const send = (method, params = {}) => new Promise(resolve => { const id = ++sequence; pending.set(id, resolve); socket.send(JSON.stringify({ id, method, params })); });
   const evaluate = async expression => { const response = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (response.result?.exceptionDetails) throw new Error(response.result.exceptionDetails.text); return response.result?.result?.value; };
-  const waitFor = async (expression, label) => { for (let attempt = 0; attempt < 150; attempt += 1) { if (await evaluate(expression)) return; await new Promise(resolve => setTimeout(resolve, 100)); } throw new Error(`Timed out waiting for ${label}`); };
-  await send('Runtime.enable'); await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
+  const waitFor = async (expression, label) => {
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      if (await evaluate(expression)) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    const diagnostic = await evaluate("({hash:location.hash,text:document.body?.innerText?.slice(0,500),storageKeys:Object.keys(localStorage)})");
+    throw new Error(`Timed out waiting for ${label}: ${JSON.stringify({ diagnostic, browserMessages })}`);
+  };
+  await send('Runtime.enable'); await send('Log.enable'); await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Storage.clearDataForOrigin', { origin: appBase, storageTypes: 'all' });
   await send('Page.navigate', { url: 'about:blank' });
   await waitFor("location.href === 'about:blank'", 'clean browser context');
   await send('Page.navigate', { url: `${appBase}/#/doctor/login` });
   await waitFor("location.hash === '#/doctor/login'", 'application origin');
+  await evaluate(`localStorage.setItem('fm_session_resident', JSON.stringify({ id: '${workforceId}', name: 'Synthetic Member', category: 'Associate', tenant_id: '${tenantId}', hasEmail: true, subadminRoles: [] })); location.hash='#/workspace/home'; location.reload();`);
+  await waitFor("document.body?.innerText.includes('Sign in to restore personal access')", 'signed-out personal-access restoration');
+  assert.ok(!await evaluate("document.body.innerText.includes('Link this institutional profile to a personal account')"), 'signed-out canonical administrator is never offered relinking');
+  await evaluate("[...document.querySelectorAll('button')].find(x=>x.innerText==='Sign in with personal account').click()");
+  await waitFor("location.hash === '#/doctor/login'", 'personal sign-in route');
+  assert.ok(await evaluate("document.body.innerText.includes('Sign in and verify access')"), 'institutional restoration uses the existing login-only personal form');
   const now = Math.floor(Date.now() / 1000); const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
   const accessToken = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ aud: 'authenticated', exp: now + 3600, iat: now, sub: userId, role: 'authenticated' })}.synthetic`;
   const session = { access_token: accessToken, refresh_token: 'synthetic-refresh-token', expires_in: 3600, expires_at: now + 3600, token_type: 'bearer', user: { id: userId, aud: 'authenticated', role: 'authenticated', email: 'synthetic@example.invalid', user_metadata: {} } };
-  await evaluate(`localStorage.setItem('sb-127-auth-token', ${JSON.stringify(JSON.stringify(session))}); location.hash='#/chief/dashboard'; location.reload();`);
+  await evaluate(`localStorage.setItem('sb-127-auth-token', ${JSON.stringify(JSON.stringify(session))}); location.reload();`);
+  await waitFor("document.body?.innerText.includes('Switch to Admin')", 'server-authorized administrator switch after personal sign-in');
+  assert.ok(!await evaluate("document.body.innerText.includes('Link this institutional profile to a personal account')"), 'restored canonical administrator is never offered relinking');
+  await evaluate("[...document.querySelectorAll('button')].find(x=>x.innerText==='Switch to Admin').click()");
   await waitFor("document.body?.innerText.includes('Team Control Room')", 'configured admin dashboard');
   const desktop = await evaluate("({text:document.body.innerText,width:document.documentElement.clientWidth,badge:document.querySelector('[aria-label^=\"Tenant administrator:\"]')?.getAttribute('aria-label'),buttons:[...document.querySelectorAll('button')].map(b=>b.innerText)})");
   assert.ok(desktop.text.includes('Synthetic Cooperative') && desktop.text.includes('Associates'), 'configured non-medical tenant terminology renders');
@@ -90,8 +115,9 @@ try {
   await evaluate(`fetch('http://127.0.0.1:${mockPort}/test/set-non-admin').then(()=>{location.reload()})`);
   await waitFor("location.hash === '#/workspace/home'", 'revoked/non-admin direct-route rejection');
   assert.ok(!await evaluate("document.body.innerText.includes('Team Control Room')"), 'revoked member cannot render admin data');
+  assert.ok(!browserMessages.join('\n').includes('synthetic-refresh-token'), 'browser logs do not expose session credentials');
   socket.close();
-  console.log('synthetic tenant-admin browser verification passed (13 checks)');
+  console.log('synthetic tenant-admin browser verification passed (17 checks)');
 } finally {
   await new Promise(resolve => mockApi.close(resolve));
 }

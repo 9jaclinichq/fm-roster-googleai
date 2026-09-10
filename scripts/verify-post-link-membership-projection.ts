@@ -8,6 +8,8 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8'
 const app = read('src/App.tsx');
 const navbar = read('src/modules/shared/ui/Navbar.tsx');
 const prompt = read('src/modules/auth/components/LinkInstitutionalAccessPrompt.tsx');
+const reauthentication = read('src/modules/auth/components/PersonalAccountAccessPrompt.tsx');
+const doctorAuth = read('src/modules/auth/components/DoctorAuthView.tsx');
 const resolverMigration = read('supabase/migrations/76_institutional_auth_mapping_foundation.sql');
 const gatewayMigration = read('supabase/migrations/85_secure_delivery_gateway_v1.sql');
 let checks = 0;
@@ -48,12 +50,25 @@ check(resolveOrganisationMembershipProjection([
   membership({ membership_id: '10000000-0000-4000-8000-000000000002', tenant_id: '20000000-0000-4000-8000-000000000002', workforce_id: '30000000-0000-4000-8000-000000000002' }),
 ], null).state === 'ambiguous', 'multiple memberships are not selected by array order');
 check(resolveOrganisationMembershipProjection([], null).state === 'unlinked', 'only absence of canonical rows produces unlinked state');
+check(resolveOrganisationMembershipProjection([], membership().workforce_id).state === 'unlinked', 'an authenticated identity with no canonical rows is explicitly unlinked');
+check(resolveOrganisationMembershipProjection([
+  membership({ tenant_id: '20000000-0000-4000-8000-000000000099', workforce_id: '30000000-0000-4000-8000-000000000099', is_tenant_admin: true }),
+], membership().workforce_id).state === 'unauthorized', 'a different workforce or tenant is denied instead of substituted into the active organization context');
+check(resolveOrganisationMembershipProjection([
+  membership({ status: 'revoked' }),
+], membership().workforce_id).state === 'inactive', 'an inactive matching canonical membership remains distinct from unlinked');
 
 check(/projection\.state === 'linked'\s+\? await databaseService\.getWorkforceMemberById/.test(app), 'App resolves canonical workforce before legacy projection');
 check(app.includes("projection.state === 'unlinked' && memberships.length === 0"), 'legacy doctor_id lookup is forbidden once any canonical row exists');
 check(app.includes("localStorage.setItem('fm_session_resident', JSON.stringify(session))"), 'canonical workforce projection is persisted for refresh continuity');
 check(app.includes("currentResident && currentDoctor && membershipProjection.state === 'unlinked'"), 'link prompt requires an authenticated, authoritatively unlinked projection');
-check(!app.includes("!currentDoctor && membershipProjection.state === 'signed-out'"), 'signed-out and code-only sessions cannot infer that a durable membership is absent');
+check(!/!currentDoctor && membershipProjection\.state === 'signed-out'[\s\S]{0,240}<LinkInstitutionalAccessPrompt/.test(app), 'signed-out and code-only sessions cannot infer that a durable membership is absent');
+check(app.includes('<PersonalAccountAccessPrompt') && app.includes('state="signed-out"'), 'signed-out institutional context receives a dedicated personal reauthentication action');
+check(reauthentication.includes('Sign in to restore personal access') && reauthentication.includes('This does not create or relink an account'), 'reauthentication copy is explicit, neutral about authority, and does not solicit institutional linking');
+check(doctorAuth.includes('institutionalReauthentication') && doctorAuth.includes('Sign in and verify access'), 'reauthentication uses the existing personal login mechanism in login-only mode');
+check(app.includes("membershipProjection.state === 'linked'") && app.includes('hasAuthenticatedTenantAdmin'), 'tenant-admin navigation requires a linked canonical projection');
+check(reauthentication.includes("state === 'error'") && reauthentication.includes('Retry access check'), 'lookup failure has a neutral retry state');
+check(reauthentication.includes("state === 'unauthorized'") && reauthentication.includes('No administrator access was granted'), 'cross-context personal identity is denied without granting authority');
 check(!prompt.includes('getCurrentUserMemberships'), 'link prompt no longer races a second membership read');
 check(prompt.includes('onLinked(membership)'), 'successful claim immediately updates the authoritative parent projection');
 check(navbar.includes('!currentDoctor && (!isChiefAuthenticated'), 'personal accounts do not see the legacy Chief portal action');

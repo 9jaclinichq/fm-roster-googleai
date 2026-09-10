@@ -135,6 +135,7 @@ try {
   await waitFor("document.readyState === 'complete' && Boolean(document.body)", 'signed-out restoration readiness');
   await new Promise(resolve => setTimeout(resolve, 250));
   assert.ok(!await evaluate("document.body.innerText.includes('Link this institutional profile to a personal account')"), 'signed-out/code-only restoration does not infer unlinked state or offer relinking');
+  assert.ok(await evaluate("document.body.innerText.includes('Sign in to restore personal access')"), 'signed-out institutional restoration offers personal sign-in');
 
   const now = Math.floor(Date.now() / 1000);
   const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -148,7 +149,7 @@ try {
     user: { id: userId, aud: 'authenticated', role: 'authenticated', email: 'synthetic@example.invalid', user_metadata: {} },
   };
   await evaluate(`(() => {
-    localStorage.setItem('fm_session_resident', JSON.stringify({ id: 'stale-workforce', name: 'Stale Browser State', category: 'Registrar', tenant_id: 'stale-tenant', hasEmail: true, subadminRoles: [] }));
+    localStorage.setItem('fm_session_resident', JSON.stringify({ id: '${workforceId}', name: 'Stale Browser State', category: 'Registrar', tenant_id: 'stale-tenant', hasEmail: true, subadminRoles: [] }));
     localStorage.setItem('sb-127-auth-token', ${JSON.stringify(JSON.stringify(session))});
     location.reload();
   })()`);
@@ -175,7 +176,7 @@ try {
 
   await send('Emulation.setDeviceMetricsOverride', { width: 500, height: 900, deviceScaleFactor: 1, mobile: true });
   await evaluate(`(() => {
-    localStorage.setItem('fm_session_resident', JSON.stringify({ id: 'stale-mobile-workforce', name: 'Stale Mobile State', category: 'Registrar', tenant_id: 'stale-mobile-tenant', hasEmail: true, subadminRoles: [] }));
+    localStorage.setItem('fm_session_resident', JSON.stringify({ id: '${workforceId}', name: 'Stale Mobile State', category: 'Registrar', tenant_id: 'stale-mobile-tenant', hasEmail: true, subadminRoles: [] }));
     location.reload();
   })()`);
   await waitFor(`JSON.parse(localStorage.getItem('fm_session_resident') || '{}').id === '${workforceId}'`, 'mobile canonical workforce projection');
@@ -197,7 +198,7 @@ try {
   assert.ok(await evaluate("document.body.innerText.includes('Link this institutional profile to a personal account')"), 'a genuinely unlinked authenticated identity is still offered the linking journey');
 
   socket.close();
-  console.log('synthetic post-link browser projection passed (13 checks)');
+  console.log('synthetic post-link browser projection passed (14 checks)');
 } finally {
   mockApi.closeAllConnections?.();
   await new Promise(resolve => mockApi.close(resolve));
