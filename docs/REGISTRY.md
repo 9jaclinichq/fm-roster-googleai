@@ -80,7 +80,7 @@ Chief portal entry is no longer shown to an authenticated personal account,
 and an authenticated account without server-derived tenant-admin capability is
 redirected away from `/admin-portal`; no role is inferred or changed.
 
-**Recurring account-link prompt correction [LIVE] (2026-09-10)**: source
+**Recurring account-link prompt correction [ROLLED BACK] (2026-09-10)**: source
 commit `0a5522f93b2a6f08761f8dcc679d006e07a81986` requires an authenticated
 canonical membership lookup to return an explicit `unlinked` result before the
 Link account prompt can render. Signed-out restoration, pending lookup, linked
@@ -89,15 +89,23 @@ unlinked identity; a genuinely authenticated unlinked identity retains the
 existing linking journey. Image digest
 `sha256:d9252506995931927766ecd4106a25025a1f50cca9c715b2d051fc1b738955ac`
 was verified at zero traffic and a 5% canary, then promoted to 100% on Cloud Run
-revision `privydoc-doc-workspace-linkfix-0a5522f`. The tracked service contract
-defines no `/healthz` route; release health used `/readyz`, root reachability,
-Cloud Run `Ready`/`ContainerHealthy` conditions, immutable-asset equality and
-bounded identity regressions. `/healthz` returns the same pre-existing 404 on
-this revision and the former production revision. The former production
-revision `privydoc-doc-workspace-tenantadmin-8b89068` and the earlier
-`privydoc-doc-workspace-postlink-0f1c000` revision remain tagged at zero traffic
-as rollback targets. No migration, membership, tenant configuration or
-production data was changed by this release.
+revision `privydoc-doc-workspace-linkfix-0a5522f`. Human acceptance then failed:
+organisation logout/relogin, institutional identity, prompt suppression, hard
+refresh, My Assignment, Full Roster and Communication Hub passed, but the
+previously verified canonical tenant administrator no longer saw **Switch to
+Admin**. At `2026-09-10T16:48:48Z`, 100% traffic was restored to
+`privydoc-doc-workspace-tenantadmin-8b89068` (digest
+`sha256:dbf553b7d4a09ac9b9f250c65956c624fbca441857dc23fb6b527e88ceff8b49`);
+the failed `privydoc-doc-workspace-linkfix-0a5522f` revision remains tagged at
+zero traffic. The restored revision is Cloud Run `Ready` and
+`ContainerHealthy`; repeated `/readyz` and root checks returned 200 and no 5xx
+requests were found after rollback. An isolated build of exact restored source
+commit `8b89068f1303eb9cb3e8716fa4a173712de6b757` synthetically restored the
+personal session and canonical tenant-admin projection, rendered **Switch to
+Admin** in the member workspace before and after hard refresh, and returned to
+the admin dashboard. The rollback changed only Cloud Run traffic: it invoked no
+link, membership, capability-grant, tenant-configuration, invitation, migration
+or production-data write path.
 
 **Note on migration status (headers, not live verification)**: migrations
 32–35 each carry an explicit "NOT APPLIED LIVE — a human will review and
