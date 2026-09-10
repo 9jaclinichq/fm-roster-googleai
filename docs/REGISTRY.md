@@ -49,7 +49,7 @@ existing linking continuation. Supabase Auth remains authoritative; no account
 was hand-linked, confirmed, or assigned a password by the rollout.
 
 **Authenticated Tenant Administration and Tenant Setup & Vocabulary V1
-[CANDIDATE] (2026-09-10)**: migration 87 makes
+[DATABASE LIVE / FRONTEND CANDIDATE] (2026-09-10)**: migration 87 makes
 `organisation_memberships.is_tenant_admin` the canonical `TENANT_ADMIN`
 capability, adds closed authority/configuration audit records, exposes an
 authenticated same-tenant dashboard projection, and provides one authoritative
@@ -59,9 +59,13 @@ vocabulary, and three existing module-visibility flags. The new
 membership projection; the transitional shared-code route remains available as
 recovery and cannot create personal authority. Shared runtime defaults and
 branding are tenant-neutral; tenant-specific words come from
-`tenants.terminology_overrides`. This entry records repository candidate state:
-the migration file exists locally but is not proof of live application, grant,
-release, or deployment until separately verified.
+`tenants.terminology_overrides`. Migration 87 is verified in the live ledger;
+the one pre-existing canonical linked membership was granted `TENANT_ADMIN`
+once (authority audit `03f239f1…`), and the previous presentation defaults were
+moved into 18 tenant-scoped labels once (configuration audit `943a580e…`) with
+the existing module flags preserved. The frontend remains a repository
+candidate until its release image and Cloud Run traffic are separately
+verified.
 
 **Post-link projection follow-up (2026-09-09)**: the authenticated shell now
 waits for the canonical `organisation_memberships` projection before deciding
