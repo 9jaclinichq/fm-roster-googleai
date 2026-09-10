@@ -107,6 +107,28 @@ the admin dashboard. The rollback changed only Cloud Run traffic: it invoked no
 link, membership, capability-grant, tenant-configuration, invitation, migration
 or production-data write path.
 
+**Returning identity continuity correction [LIVE, HUMAN ACCEPTANCE PENDING]
+(2026-09-10)**: source commit
+`bba1bccd1baa6ad7c20d3061c298d4cb168a87ef` separates a signed-out personal
+session from an authoritatively unlinked identity. A restored institutional
+session now offers existing-personal-account sign-in without an access code;
+only an authenticated canonical projection with no membership row can render
+the linking form. Pending, read-error, inactive, ambiguous, and mismatched
+workforce/tenant states fail closed, and tenant-administrator navigation appears
+only after the linked same-tenant projection confirms the capability. Focused
+auth, account-linking, projection, tenant-admin, tenant-surface, typecheck, build,
+and the existing post-link and tenant-admin browser checks passed. Cloud Build
+`1320c0f5-e09f-445f-aa93-5a25850fe6ec` produced digest
+`sha256:7e2c48f565d56a7096996fab7e62882e247495952dae1e66d672866aa320b082`.
+Revision `privydoc-doc-workspace-reauth-bba1bcc` was verified at zero traffic,
+served a 5% canary, and was promoted to 100% at `2026-09-10T21:03:00Z`;
+candidate and production `/readyz` and root requests returned 200 and no
+revision error/5xx logs were found. The prior healthy revision
+`privydoc-doc-workspace-tenantadmin-8b89068` remains tagged at zero traffic as
+the rollback target. This correction changed no schema, migration, RLS, link,
+membership, capability grant, tenant configuration, invitation, dependency, or
+production data.
+
 **Note on migration status (headers, not live verification)**: migrations
 32–35 each carry an explicit "NOT APPLIED LIVE — a human will review and
 apply the pending batch" header comment; migration 36 carries no such
